@@ -136,7 +136,7 @@ private fun ChannelRow(
             // Name + (optional) current programme subtitle, shown only when guide data exists.
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    channel.name,
+                    channel.number?.let { "$it  ${channel.name}" } ?: channel.name,
                     style = MaterialTheme.typography.bodyMedium,
                     color = when {
                         isCurrent -> colors.primary

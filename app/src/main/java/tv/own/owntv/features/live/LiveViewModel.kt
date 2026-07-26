@@ -292,10 +292,7 @@ class LiveViewModel(
                 val hiddenCats = cs.hiddenCats
                 if (cust.hiddenItems.isEmpty() && cust.itemNames.isEmpty() && hiddenCats.isEmpty()) paging
                 else paging
-                    .filter { ch ->
-                        CustomizeKeys.channel(ch) !in cust.hiddenItems &&
-                            (ch.categoryId == null || ch.categoryId !in hiddenCats)
-                    }
+                    .filter { ch -> isChannelVisible(ch, cust, hiddenCats) }
                     .map { ch -> cust.itemNames[CustomizeKeys.channel(ch)]?.let { ch.copy(name = it) } ?: ch }
             }
         }
@@ -480,7 +477,7 @@ class LiveViewModel(
         setStalkerReconnect(null) // non-Stalker: URLs are stable, replay on reconnect
         previewEngine.play(
             channel.streamUrl, muted = !livePreviewAudio.value,
-            meta = tv.own.owntv.player.MediaMeta(title = channel.name, logoUrl = channel.logoUrl),
+            meta = tv.own.owntv.player.MediaMeta(title = channel.name, subtitle = channel.number?.let { "#$it" }, logoUrl = channel.logoUrl),
             userAgent = sourceUaMap[channel.sourceId],
         )
     }
@@ -504,7 +501,7 @@ class LiveViewModel(
             setStalkerReconnect(channel.streamUrl) // C-3: re-resolve on reconnect if the URL expires
             previewEngine.play(
                 url, muted = !livePreviewAudio.value,
-                meta = tv.own.owntv.player.MediaMeta(title = channel.name, logoUrl = channel.logoUrl),
+                meta = tv.own.owntv.player.MediaMeta(title = channel.name, subtitle = channel.number?.let { "#$it" }, logoUrl = channel.logoUrl),
                 userAgent = source.userAgent,
             )
         }
@@ -519,6 +516,28 @@ class LiveViewModel(
     // The opened channel list, exposed so the in-player channel-list overlay can show & jump within it.
     private val _zapChannels = MutableStateFlow<List<ChannelEntity>>(emptyList())
     val zapChannels: StateFlow<List<ChannelEntity>> = _zapChannels.asStateFlow()
+
+    /** Bumped every time we start a new rebuild OR cancel one. The background rebuild coroutine
+     *  captures this at start; before publishing its result it verifies the captured generation
+     *  still equals [zapRebuildGeneration]. Older builds therefore cannot overwrite the live
+     *  fields after a newer navigation, a newer numeric tune, or a CH+/- fallback. */
+    private var zapRebuildGeneration: Long = 0L
+    private var zapRebuildJob: Job? = null
+
+    /** Fallback CH+/CH- anchor for the window during which the tuned channel is NOT yet in
+     *  [zapList]. Set right before [playChannel] for a numeric tune so the user can still navigate
+     *  via CH+/- while the bounded window rebuilds in the background. Cleared when:
+     *   - the rebuild publishes successfully (the new list contains the tuned channel),
+     *   - normal navigation replaces the playing channel (via [cancelPendingZapRebuild]),
+     *   - CH+/- resolves through the saved anchor (fallback consumption).
+     *  The list reference + index pair is stored together so a concurrent `zapList` replacement
+     *  can't silently redirect CH+/- to an unrelated channel. */
+    private data class PendingDirectTuneZapContext(
+        val targetChannelId: Long,
+        val previousList: List<ChannelEntity>,
+        val previousIndex: Int,
+    )
+    private var pendingDirectTuneZapContext: PendingDirectTuneZapContext? = null
 
     /** True when full-screen is running on the **ExoPlayer** engine (a promoted preview) rather than mpv.
      *  The shell renders the ExoPlayer surface instead of mpv's when this is set. */
@@ -564,30 +583,289 @@ class LiveViewModel(
 
     /** Open a channel fullscreen, remembering [list] so the remote can zap up/down from here. */
     fun watchFullscreen(channel: ChannelEntity, list: List<ChannelEntity>) {
-        zapList = list
-        _zapChannels.value = list
-        _canZap.value = list.size > 1
+        replaceZapList(list)
         ensurePlaying(channel)
     }
 
-    /** Zap to the neighbouring channel ([delta] = +1 down / -1 up) within the opened list, wrapping
-     *  around at the ends so you never dead-end (last → first, first → last). */
+    /** Zap to the neighbouring channel ([delta] = +1 down / -1 up). Two-axis resolution:
+     *
+     *  1. If the currently playing channel is in the live [zapList], apply the existing wrapped
+     *     delta on that list (normal navigation). [ensurePlaying] cancels any pending rebuild.
+     *  2. Otherwise (the common case right after an out-of-window numeric tune, before its
+     *     bounded zap list has finished rebuilding), fall back to [pendingDirectTuneZapContext]'s
+     *     saved list + index so CH+/- is responsive while the rebuild is still running. The saved
+     *     list is paired with its index so a concurrent `zapList` replacement can't redirect the
+     *     delta to an unrelated channel. [ensurePlaying] handles cancellation of the rebuild.
+     */
     fun zap(delta: Int) {
         val list = zapList
-        if (list.size < 2) return
-        val i = list.indexOfFirst { it.id == _previewChannel.value?.id }
-        if (i < 0) return
-        val next = ((i + delta) % list.size + list.size) % list.size // modulo wrap (handles negatives)
-        if (next == i) return
-        ensurePlaying(list[next])
+        val currentId = _previewChannel.value?.id
+        val i = if (currentId != null) list.indexOfFirst { it.id == currentId } else -1
+        if (i >= 0) {
+            // Path 1: normal navigation on the live list.
+            val nextIdx = tv.own.owntv.player.wrappedZapIndex(i, delta, list.size) ?: return
+            ensurePlaying(list[nextIdx])
+            return
+        }
+        // Path 2: fallback via the saved pending context. The context's targetChannelId is the
+        // channel we tuned to; if that no longer matches the playing channel (e.g. a newer numeric
+        // tune or CH+/- already moved us), the anchor is stale — drop it and no-op.
+        val ctx = pendingDirectTuneZapContext ?: return
+        if (ctx.targetChannelId != currentId) {
+            pendingDirectTuneZapContext = null
+            return
+        }
+        val prev = ctx.previousList
+        val nextIdx = tv.own.owntv.player.wrappedZapIndex(ctx.previousIndex, delta, prev.size) ?: run {
+            pendingDirectTuneZapContext = null
+            return
+        }
+        val next = prev[nextIdx]
+        ensurePlaying(next)
     }
 
-    /** Go full-screen on [channel]. ExoPlayer is the **primary** live engine (instant for HLS, and it plays
-     *  the channels mpv struggles to open): promote the running preview if it's already this channel, else
-     *  (re)start ExoPlayer on it. We fall back to the full **mpv** player ONLY if ExoPlayer **errors** (a
-     *  stream it can't open) — never just because it's still loading (clicking OK before the preview is ready
-     *  used to drop to mpv and stick on a black screen for HLS). */
+    /**
+     * Direct-tune: resolve a provider channel number to a channel and tune it.
+     *
+     * Two-stage lookup: the playing channel's source first, then other active Live sources only when
+     * the current source has zero visible matches. Duplicate numbers are resolved via zap-context
+     * tiebreaker. Hidden channels/categories are excluded.
+     *
+     * After resolution, playback starts IMMEDIATELY (no awaiting the bounded zap-list rebuild).
+     * The rebuild runs in [viewModelScope] on [Dispatchers.IO]; publication is guarded by both
+     * the captured generation and the currently playing channel, so a stale or cancelled rebuild
+     * can never overwrite [zapList], [_zapChannels], or [_canZap]. Until the rebuild publishes,
+     * CH+/- falls back to the saved previous-list index recorded at tune time.
+     */
+    suspend fun tuneByNumber(number: Int): tv.own.owntv.player.DirectTuneResult {
+        try {
+            val currentChannel = _previewChannel.value ?: return tv.own.owntv.player.DirectTuneResult.NotFound(number)
+            val snapshotSourceIds = ctx.value.sourceIds
+            // Snapshot the zap list at lookup START so the resolver's zap-context tiebreaker is
+            // stable for the duration of the IO query. After the lookup completes and context
+            // validity is verified we re-read zapList: a previous background rebuild may have
+            // published during the IO window, and the new tune must use the freshest view of the
+            // list for anchor selection and the "already present, skip rebuild" check. Using the
+            // stale snapshot there would lose the fallback anchor or incorrectly skip rebuilding.
+            val snapshotZapList = zapList
+
+            // DB queries on IO; playback on Main (ExoPlayer/mpv require main thread).
+            val resolved = withContext(Dispatchers.IO) {
+                // Resolve hidden categories for sources not in the active set (source may have been removed).
+                val activeHiddenCats = hiddenCategoryIds.value.toMutableSet()
+                if (currentChannel.sourceId !in snapshotSourceIds) {
+                    val cats = categoryDao.observe(listOf(currentChannel.sourceId), MediaType.LIVE).first()
+                    val cust = custom.value
+                    if (cust.hiddenCategories.isNotEmpty()) {
+                        cats.filter { CustomizeKeys.category(it) in cust.hiddenCategories }.forEach { activeHiddenCats += it.id }
+                    }
+                }
+                val currentCustom = custom.value
+
+                // Stage 1: query the currently playing source.
+                val currentSourceCandidates = channelDao.findByNumber(
+                    listOf(currentChannel.sourceId), number,
+                ).filter { isChannelVisible(it, currentCustom, activeHiddenCats) }
+
+                if (currentSourceCandidates.isNotEmpty()) {
+                    val resolvedId = tv.own.owntv.player.resolveDirectTuneCandidate(
+                        currentSourceCandidates.map { it.id },
+                        snapshotZapList.map { it.id }.toSet(),
+                    )
+                    val r = resolvedId?.let { id -> currentSourceCandidates.first { it.id == id } }
+                        ?: return@withContext ChannelNumberLookupResult.Ambiguous(currentSourceCandidates.size)
+                    val customName = currentCustom.itemNames[CustomizeKeys.channel(r)]
+                    return@withContext ChannelNumberLookupResult.Found(customName?.let { r.copy(name = it) } ?: r)
+                }
+
+                // Stage 2: fallback to other active Live sources.
+                val fallbackSourceIds = snapshotSourceIds.filter { it != currentChannel.sourceId }
+                if (fallbackSourceIds.isEmpty()) return@withContext ChannelNumberLookupResult.NotFound
+
+                val fallbackCandidates = channelDao.findByNumber(fallbackSourceIds, number)
+                    .filter { isChannelVisible(it, currentCustom, activeHiddenCats) }
+                if (fallbackCandidates.isEmpty()) return@withContext ChannelNumberLookupResult.NotFound
+
+                val r = tv.own.owntv.player.resolveDirectTuneCandidate(
+                    fallbackCandidates.map { it.id },
+                    snapshotZapList.map { it.id }.toSet(),
+                )?.let { id -> fallbackCandidates.first { it.id == id } }
+                    ?: return@withContext ChannelNumberLookupResult.Ambiguous(fallbackCandidates.size)
+                val customName = currentCustom.itemNames[CustomizeKeys.channel(r)]
+                ChannelNumberLookupResult.Found(customName?.let { r.copy(name = it) } ?: r)
+            }
+
+            // Dispatch the lookup outcome.
+            val tuned = when (val lookup = resolved) {
+                is ChannelNumberLookupResult.Found -> lookup.channel
+                is ChannelNumberLookupResult.Ambiguous ->
+                    return tv.own.owntv.player.DirectTuneResult.Ambiguous(number, lookup.matchCount)
+                ChannelNumberLookupResult.NotFound ->
+                    return tv.own.owntv.player.DirectTuneResult.NotFound(number)
+            }
+
+            // Verify context hasn't changed during lookup. If the playing channel or active source
+            // set moved, the resolved channel is stale — return Cancelled and do nothing.
+            if (_previewChannel.value?.id != currentChannel.id ||
+                ctx.value.sourceIds != snapshotSourceIds
+            ) return tv.own.owntv.player.DirectTuneResult.Cancelled
+
+            // If the tuned channel is already playing, skip playback + rebuild to avoid a stream
+            // restart. Still return Found so the HUD shows normal success feedback.
+            if (tuned.id == currentChannel.id) {
+                return tv.own.owntv.player.DirectTuneResult.Found(
+                    tv.own.owntv.player.DirectTuneChannelInfo(tuned.number, tuned.name),
+                )
+            }
+
+            // Re-read zapList NOW: a previous background rebuild may have published during the IO
+            // window above. Compute anchor data before any state mutation.
+            val currentZapList = zapList
+
+            val alreadyInLiveList = currentZapList.any { it.id == tuned.id }
+
+            val inherited = pendingDirectTuneZapContext
+                ?.takeIf { it.targetChannelId == currentChannel.id }
+
+            val anchorList = inherited?.previousList ?: currentZapList
+            val anchorIndex = inherited?.previousIndex
+                ?: currentZapList.indexOfFirst { it.id == currentChannel.id }
+
+            val hasValidAnchor =
+                anchorList.size >= 2 &&
+                    anchorIndex in anchorList.indices
+
+            if (alreadyInLiveList) {
+                zapRebuildJob?.cancel()
+                zapRebuildJob = null
+                zapRebuildGeneration++
+                pendingDirectTuneZapContext = null
+            }
+
+            // Playback starts IMMEDIATELY — do not await the rebuild.
+            playChannel(tuned)
+
+            // Launch the background rebuild only when the target is outside the current list.
+            if (!alreadyInLiveList) {
+                zapRebuildJob?.cancel()
+                zapRebuildGeneration++
+                val myGeneration = zapRebuildGeneration
+
+                if (hasValidAnchor) {
+                    pendingDirectTuneZapContext = PendingDirectTuneZapContext(
+                        targetChannelId = tuned.id,
+                        previousList = anchorList,
+                        previousIndex = anchorIndex,
+                    )
+                } else {
+                    pendingDirectTuneZapContext = null
+                }
+
+                zapRebuildJob = viewModelScope.launch {
+                    try {
+                        val rebuilt = try {
+                            buildZapList(tuned)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "tuneByNumber: zap rebuild failed", e)
+                            return@launch
+                        }
+                        if (myGeneration != zapRebuildGeneration) return@launch
+                        if (_previewChannel.value?.id != tuned.id) return@launch
+                        replaceZapList(rebuilt)
+                        pendingDirectTuneZapContext = null
+                    } finally {
+                        if (myGeneration == zapRebuildGeneration) {
+                            zapRebuildJob = null
+                        }
+                    }
+                }
+            }
+
+            return tv.own.owntv.player.DirectTuneResult.Found(
+                tv.own.owntv.player.DirectTuneChannelInfo(tuned.number, tuned.name),
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "tuneByNumber($number) failed", e)
+            return tv.own.owntv.player.DirectTuneResult.Failed(number)
+        }
+    }
+
+    /** Leaf outcome of the IO database lookup inside [tuneByNumber]. */
+    private sealed interface ChannelNumberLookupResult {
+        data class Found(val channel: ChannelEntity) : ChannelNumberLookupResult
+        data class Ambiguous(val matchCount: Int) : ChannelNumberLookupResult
+        data object NotFound : ChannelNumberLookupResult
+    }
+
+    private fun isChannelVisible(ch: ChannelEntity, cust: SectionCustomizations, hiddenCats: Set<Long>): Boolean =
+        CustomizeKeys.channel(ch) !in cust.hiddenItems &&
+            (ch.categoryId == null || ch.categoryId !in hiddenCats)
+
+    /** Rebuild the zap list so CH+/- and the channel-list overlay work after jumping outside the
+     *  original list window. Loads a bounded provider-order window centred on the tuned channel
+     *  (half before, half after), applying hidden-channel/category filtering and custom names.
+     *  Pure builder: returns the local list without mutating any shared state, so the caller can
+     *  guard publication by generation/target and discard stale or cancelled results. */
+    private suspend fun buildZapList(channel: ChannelEntity): List<ChannelEntity> = withContext(Dispatchers.IO) {
+        val cust = custom.value
+        val hiddenCats = hiddenCategoryIds.value
+        val half = ZAP_WINDOW_HALF
+        val afterRaw: List<ChannelEntity>
+        val beforeRaw: List<ChannelEntity>
+        if (channel.categoryId != null) {
+            afterRaw = channelDao.channelsAfterCategory(channel.categoryId, channel.sortOrder, channel.id, half)
+            beforeRaw = channelDao.channelsBeforeCategory(channel.categoryId, channel.sortOrder, channel.id, half)
+        } else {
+            afterRaw = channelDao.channelsAfterSource(channel.sourceId, channel.sortOrder, channel.id, half)
+            beforeRaw = channelDao.channelsBeforeSource(channel.sourceId, channel.sortOrder, channel.id, half)
+        }
+        // beforeRaw is in reverse order; combine: before(reversed) + tuned + after
+        val raw = beforeRaw.asReversed() + channel + afterRaw
+        raw
+            .filter { isChannelVisible(it, cust, hiddenCats) }
+            .map { ch -> cust.itemNames[CustomizeKeys.channel(ch)]?.let { ch.copy(name = it) } ?: ch }
+    }
+
+    /** Single main-thread publication point for the three shared zap-list fields. Caller must have
+     *  already verified generation + target before calling. */
+    private fun replaceZapList(list: List<ChannelEntity>) {
+        zapList = list
+        _zapChannels.value = list
+        _canZap.value = list.size > 1
+    }
+
+    /** Cancel any in-flight background zap-list rebuild and discard its pending fallback. Normal
+     *  navigation (CH+/-, channel-list, Guide, ensurePlayingById) calls this before playing the
+     *  new channel so an obsolete rebuild never publishes after the user has moved elsewhere.
+     *  Direct-tune deliberately skips this — it manages the rebuild itself so playback is
+     *  immediate and the new list still finishes in the background. */
+    private fun cancelPendingZapRebuild() {
+        zapRebuildJob?.cancel()
+        zapRebuildJob = null
+        zapRebuildGeneration++
+        pendingDirectTuneZapContext = null
+    }
+
+    /** Go full-screen on [channel]. Cancels any pending direct-tune zap rebuild first, so normal
+     *  navigation always wins over an in-flight rebuild. ExoPlayer is the **primary** live engine
+     *  (instant for HLS, and it plays the channels mpv struggles to open): promote the running
+     *  preview if it's already this channel, else (re)start ExoPlayer on it. We fall back to the
+     *  full **mpv** player ONLY if ExoPlayer **errors** (a stream it can't open) — never just
+     *  because it's still loading (clicking OK before the preview is ready used to drop to mpv and
+     *  stick on a black screen for HLS). */
     fun ensurePlaying(channel: ChannelEntity) {
+        cancelPendingZapRebuild()
+        playChannel(channel)
+    }
+
+    /** Internal playback: the canonical ExoPlayer / mpv / Stalker / history side-effects for a
+     *  channel. Direct-tune's background rebuild path calls this without [cancelPendingZapRebuild]
+     *  so the in-flight rebuild it owns isn't killed by its own play. */
+    private fun playChannel(channel: ChannelEntity) {
         _previewChannel.value = channel
         timeshiftJob?.cancel(); tickJob?.cancel(); _timeshiftOffsetSec.value = null // normal live = not timeshifted
         // Self-learning routing: a channel the user pinned to mpv skips ExoPlayer entirely (no artifacts/silent
@@ -614,7 +892,7 @@ class LiveViewModel(
             setStalkerReconnect(null) // non-Stalker: URLs are stable, replay on reconnect
             previewEngine.play(
                 channel.streamUrl, muted = false,
-                meta = tv.own.owntv.player.MediaMeta(title = channel.name, logoUrl = channel.logoUrl),
+                meta = tv.own.owntv.player.MediaMeta(title = channel.name, subtitle = channel.number?.let { "#$it" }, logoUrl = channel.logoUrl),
                 userAgent = sourceUaMap[channel.sourceId],
             )
         }
@@ -641,7 +919,7 @@ class LiveViewModel(
             setStalkerReconnect(channel.streamUrl) // C-3: re-resolve on reconnect if the URL expires
             previewEngine.play(
                 url, muted = false,
-                meta = tv.own.owntv.player.MediaMeta(title = channel.name, logoUrl = channel.logoUrl),
+                meta = tv.own.owntv.player.MediaMeta(title = channel.name, subtitle = channel.number?.let { "#$it" }, logoUrl = channel.logoUrl),
                 userAgent = source.userAgent,
             )
             watchExoOutcome(channel)
@@ -680,13 +958,7 @@ class LiveViewModel(
 
     suspend fun ensurePlayingByIdAsync(channelId: Long, zapChannels: List<ChannelEntity> = emptyList()): Boolean {
         val channel = channelDao.getById(channelId) ?: return false
-        zapList = zapChannels
-        // Also drive the left-arrow channel-list overlay, which reads _zapChannels. Without this, a
-        // channel launched from Home (Keep Watching / Favourites) left the overlay showing the stale
-        // list from the previous Live-TV session (#55). CH+/CH- already used zapList, so only the
-        // overlay was wrong — keep both in sync here as watchFullscreen() does.
-        _zapChannels.value = zapChannels
-        _canZap.value = zapChannels.size > 1
+        replaceZapList(zapChannels)
         ensurePlaying(channel)
         return true
     }
@@ -741,7 +1013,7 @@ class LiveViewModel(
             if (_previewChannel.value?.streamUrl != channel.streamUrl) return // zapped away while resolving
             // C-3: mpv is now the active engine — install/clear the reconnect provider to match.
             setStalkerReconnect(if (isStalker) channel.streamUrl else null)
-            player.play(url, title = channel.name, logoUrl = channel.logoUrl, isLive = true, muted = false, userAgent = source?.userAgent)
+            player.play(url, title = channel.name, subtitle = channel.number?.let { "#$it" }, logoUrl = channel.logoUrl, isLive = true, muted = false, userAgent = source?.userAgent)
         }
     }
 
@@ -1116,5 +1388,6 @@ class LiveViewModel(
             LiveRailItem(LiveKey.All, "All Channels"),
         )
         const val CATCHUP_LOOKBACK_CAP_MS = 48L * 60 * 60 * 1000 // bounded by the EPG we retain (~2 days)
+        const val ZAP_WINDOW_HALF = 50 // channels loaded on each side of the tuned channel for CH+/-
     }
 }

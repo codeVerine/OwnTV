@@ -68,6 +68,10 @@ import tv.own.owntv.ui.theme.OwnTVTheme
 private val SPEEDS = listOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
 private val TEAL = Color(0xFF52DBC8)
 
+private const val DIRECT_TUNE_TIMEOUT_MS = 2_000L
+private const val DIRECT_TUNE_FEEDBACK_MS = 1_500L
+private const val MAX_DIRECT_TUNE_DIGITS = 5
+
 private enum class HudDialog { NONE, AUDIO, SUBS, SPEED, ZOOM, VOLUME, SUB_TIMING }
 
 @Composable
@@ -93,6 +97,10 @@ fun PlayerHud(
     onGoToLive: (() -> Unit)? = null,
     onScrubLive: ((Int) -> Unit)? = null, // timeline scrub: +sec = back, −sec = toward live
     timeshiftOffsetSec: Int? = null,
+    // Direct tune: enter a provider channel number to switch channels. Null = disabled (not live / no channel).
+    onTuneToNumber: (suspend (Int) -> DirectTuneResult)? = null,
+    // Channel identity key for direct tune: changing this cancels any in-flight submission.
+    directTuneContextKey: Long = 0L,
     // Live "compatibility mode": pin this channel to the mpv engine (fixes UHD artifacts / undecodable
     // streams ExoPlayer can't handle). null = not a live channel; true = currently pinned to mpv.
     compatMode: Boolean? = null,
@@ -166,7 +174,6 @@ fun PlayerHud(
     var channelFlash by remember { mutableIntStateOf(0) }
     var showFlash by remember { mutableStateOf(false) }
     LaunchedEffect(channelFlash) { if (channelFlash > 0) { showFlash = true; delay(3000); showFlash = false } }
-    val zap: (Int) -> Unit = { d -> (if (d < 0) onChannelUp else onChannelDown)?.invoke(); channelFlash++ }
 
     // Engine-switch confirmation toast: a brief "Switched to MPV/ExoPlayer" at the bottom-center when the
     // user flips the engine via the HUD toggle. Mirrors the channel-flash pattern above.
@@ -180,6 +187,96 @@ fun PlayerHud(
     val toggleVod: (() -> Unit)? = onToggleVodEngine?.let { cb -> {
         engineMsg = if (vodOnExo == true) "Switched to MPV" else "Switched to ExoPlayer"; engineFlash++; cb()
     } }
+
+    // ---- Direct tune (channel-number entry) ----
+    var digitBuffer by remember { mutableStateOf("") }
+    var submissionRequest by remember { mutableStateOf<Int?>(null) }
+    var submissionTick by remember { mutableIntStateOf(0) }
+
+    var lookupInFlight by remember { mutableStateOf(false) }
+
+    var tuneOsdText by remember { mutableStateOf<String?>(null) }
+    var tuneOsdIsResult by remember { mutableStateOf(false) }
+    var tuneOsdTick by remember { mutableIntStateOf(0) }
+
+    val digitsActive = digitBuffer.isNotEmpty()
+    val heldDigitKeys = remember { mutableSetOf<Key>() }
+
+    val cancelDirectTune: () -> Unit = {
+        digitBuffer = ""
+        submissionRequest = null
+        tuneOsdText = null
+        tuneOsdIsResult = false
+        heldDigitKeys.clear()
+        submissionTick++
+        tuneOsdTick++
+    }
+
+    val zap: (Int) -> Unit = { d ->
+        cancelDirectTune()
+        (if (d < 0) onChannelUp else onChannelDown)?.invoke(); channelFlash++
+    }
+
+    // Restartable timeout: each new digit restarts the ~2 s window. On expiry, submit.
+    LaunchedEffect(digitBuffer) {
+        if (digitBuffer.isEmpty()) return@LaunchedEffect
+        delay(DIRECT_TUNE_TIMEOUT_MS)
+        val num = digitBuffer.toIntOrNull()
+        digitBuffer = ""
+        if (num != null) { submissionRequest = num; submissionTick++ }
+        else tuneOsdText = null
+    }
+    // Submission: keyed on the immutable tick so setting submissionRequest=null doesn't cancel us.
+    // lookupInFlight covers only the suspend callback, not the 1.5 s result-display period.
+    LaunchedEffect(submissionTick) {
+        val num = submissionRequest ?: return@LaunchedEffect
+        submissionRequest = null
+        lookupInFlight = true
+        val result = try {
+            onTuneToNumber?.invoke(num)
+        } finally {
+            lookupInFlight = false
+        }
+        tuneOsdText = when (result) {
+            is DirectTuneResult.Found -> "#${result.channel.number ?: num} \u00b7 ${result.channel.name}"
+            is DirectTuneResult.NotFound -> "Channel $num not found"
+            is DirectTuneResult.Ambiguous -> "Multiple channels found"
+            is DirectTuneResult.Failed -> "Tune failed"
+            is DirectTuneResult.Cancelled -> null
+            null -> null
+        }
+        if (tuneOsdText != null) {
+            tuneOsdIsResult = true
+            tuneOsdTick++
+        }
+    }
+    // Result-feedback expiry: clears the OSD after DIRECT_TUNE_FEEDBACK_MS if it hasn't been
+    // replaced by a new digit entry. Keyed on tuneOsdTick so a new entry invalidates the old timer.
+    LaunchedEffect(tuneOsdTick) {
+        if (!tuneOsdIsResult || tuneOsdText == null) {
+            return@LaunchedEffect
+        }
+        delay(DIRECT_TUNE_FEEDBACK_MS)
+        if (tuneOsdIsResult) {
+            tuneOsdText = null
+            tuneOsdIsResult = false
+        }
+    }
+    // Cancellation triggers (CH+/-, D-pad, overlay open, HUD dialog open).
+    LaunchedEffect(inert) { if (inert) cancelDirectTune() }
+    LaunchedEffect(dialog) { if (dialog != HudDialog.NONE) cancelDirectTune() }
+    // Channel-key cleanup: narrow to pending entry state only. Do not clear timed result feedback
+    // from a successful tune that changed the playing channel.
+    LaunchedEffect(directTuneContextKey) {
+        if (digitBuffer.isNotEmpty() || submissionRequest != null) {
+            digitBuffer = ""
+            submissionRequest = null
+            heldDigitKeys.clear()
+            submissionTick++
+        }
+    }
+    // Back cancels digit entry before it hides/exits controls.
+    BackHandler(enabled = digitsActive) { digitBuffer = ""; tuneOsdText = null }
 
     LaunchedEffect(forceShow) { if (forceShow) controlsVisible = true }
     LaunchedEffect(controlsVisible, player) { if (controlsVisible) player.refreshStreamChips() }
@@ -208,6 +305,43 @@ fun PlayerHud(
     CompositionLocalProvider(LocalActionSurface provides null) {
     Box(
         modifier = modifier.fillMaxSize().onPreviewKeyEvent { e ->
+            // ---- Direct-tune digit capture (before the existing KeyDown guard) ----
+            if (onTuneToNumber != null && !inert && dialog == HudDialog.NONE) {
+                val digit = keyToDigit(e.key)
+                if (digit != null) {
+                    if (e.type == KeyEventType.KeyUp) {
+                        heldDigitKeys.remove(e.key)
+                        return@onPreviewKeyEvent true
+                    }
+                    if (e.type == KeyEventType.KeyDown) {
+                        if (lookupInFlight || !heldDigitKeys.add(e.key)) {
+                            return@onPreviewKeyEvent true
+                        }
+                        val enteredDigits = digitBuffer + digit
+                        tuneOsdIsResult = false
+                        tuneOsdTick++
+                        tuneOsdText = enteredDigits
+                        if (enteredDigits.length == MAX_DIRECT_TUNE_DIGITS) {
+                            digitBuffer = ""
+                            submissionRequest = enteredDigits.toIntOrNull()
+                            submissionTick++
+                        } else {
+                            digitBuffer = enteredDigits
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                }
+                // Enter/Center/NumpadEnter: submit immediately while digits are pending.
+                if (e.type == KeyEventType.KeyDown && !lookupInFlight && digitsActive &&
+                    (e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter)
+                ) {
+                    val num = digitBuffer.toIntOrNull()
+                    digitBuffer = ""
+                    if (num != null) { submissionRequest = num; submissionTick++ }
+                    return@onPreviewKeyEvent true
+                }
+            }
+            // ---- Existing key handling (unchanged, but skip for digit KeyUp already consumed above) ----
             if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             when {
                 // Channel surfing: dedicated CH+/CH- and media prev/next keys always zap. D-pad Up/Down
@@ -240,6 +374,16 @@ fun PlayerHud(
         // Channel flash card (zapping with the HUD hidden) — shown independently of the full controls.
         if (isLive && showFlash && !controlsVisible) {
             ChannelCard(player, modifier = Modifier.align(Alignment.TopStart).padding(start = 28.dp, top = 28.dp))
+        }
+
+        // Direct-tune OSD: shows typed digits while entering, or brief feedback after a tune result.
+        // Rendered independently of controls visibility so digits are visible even when the HUD is hidden.
+        val activeTuneText = tuneOsdText
+        if (onTuneToNumber != null && activeTuneText != null) {
+            ChannelNumberEntryOverlay(
+                text = activeTuneText,
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 28.dp, top = if (isLive && showFlash && !controlsVisible) 84.dp else 28.dp),
+            )
         }
 
         if (controlsVisible) {
@@ -426,6 +570,21 @@ private fun LiveBadge() {
         Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
         Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
     }
+}
+
+/** Small OSD for direct-tune digit entry and feedback. Shown at the top-left of the player. */
+@Composable
+private fun ChannelNumberEntryOverlay(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.headlineSmall,
+        color = Color.White,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.7f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    )
 }
 
 @Composable
