@@ -80,14 +80,14 @@ data class RailCategory(
 )
 
 /**
- * Layer 2 — the vertical folder rail. Collapsed (focus elsewhere) it shows compact abbreviation
- * pills (FAV, HIS, UK, …); when it holds focus it expands to show full names.
+ * Layer 2 — the vertical folder rail. Always shows full-name pills (no collapse/expand
+ * animation). A pinned [SearchBar] header stays visible above the scrolling [LazyColumn]
+ * so long category lists never hide the filter.
  *
  * Performance notes (providers can have hundreds of categories):
  *  - The pills live in a [LazyColumn], so only the visible ones are composed.
- *  - The rail's slot in the screen layout stays a fixed [Dimens.RailWidth]; the expanded rail is
- *    drawn as an overlay (zIndex) on top of the content pane instead of pushing it, so the channel
- *    grid is never re-laid-out during the expand animation.
+ *  - The rail is a fixed column (no overlay) at [Dimens.RailWidth] — it takes its own layout
+ *    space and nothing reflows when focus enters/leaves it.
  */
 @Composable
 fun CategoryRail(
