@@ -145,7 +145,7 @@ def _key_exists(key: str) -> bool:
 # strings.xml editing
 # ---------------------------------------------------------------------------
 
-def _add_to_strings_xml(key: str, text: str):
+def _add_to_strings_xml(key: str, text: str, source_path: str):
     """Add a <string> entry to strings.xml before the closing </resources> tag."""
     xml_content = STRINGS_XML.read_text("utf-8")
     xml_lines = xml_content.splitlines(keepends=True)
@@ -160,7 +160,9 @@ def _add_to_strings_xml(key: str, text: str):
         return
 
     indent = "    "
-    entry = f'{indent}<!-- Translators: auto-classified user-facing text. -->\n{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
+    # Derive a short section tag from the source path for translator context
+    section = source_path.replace("app/src/main/java/tv/own/owntv/", "").split("/")[0]
+    entry = f'{indent}<!-- Translators: used in {section} ({source_path}) -->\n{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
     xml_lines.insert(insert_at, entry)
     STRINGS_XML.write_text("".join(xml_lines), "utf-8")
     print(f"  ✓ Added R.string.{key} to strings.xml")
@@ -323,7 +325,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             print("  → Skipped")
             return choice
 
-    _add_to_strings_xml(key, text)
+    _add_to_strings_xml(key, text, path)
 
     # Replace in all files that contain this literal
     current_inv = _lib._inventory()
