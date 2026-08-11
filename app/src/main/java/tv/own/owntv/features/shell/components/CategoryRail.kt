@@ -11,10 +11,12 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -111,9 +113,7 @@ fun CategoryRail(
     // focus, so it's fresh every time you open it.
     var query by remember { mutableStateOf("") }
     val visible = remember(categories, query) {
-        val q = query.trim()
-        if (q.isEmpty()) categories.indices.toList()
-        else categories.indices.filter { categories[it].fullName.contains(q, ignoreCase = true) }
+        filterCategories(categories, query)
     }
     // Phase 2 — the rail is a FIXED full-label column (no collapse/abbreviation overlay), so it never
     // reflows the layout on the D-pad. Always "expanded" = full category names.
@@ -143,13 +143,9 @@ fun CategoryRail(
             railModifier
         },
     ) {
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth()
-                // LazyColumn fill is now transparent — the outer Box's roundedPanel surfaceContainerLowest
-                // shows through, keeping panel 1 the same colour as panels 2/3/4 (Phase 6).
+                .fillMaxSize()
                 .onFocusChanged {
                     // Spatial D-pad entry would land on whatever pill is horizontally aligned —
                     // redirect every entry (from the sidebar OR back from the content list) to the
@@ -177,53 +173,63 @@ fun CategoryRail(
                 // on the top bar) — trap vertical exits; Left/Right/Back still leave normally.
                 .trapVerticalFocusExit()
                 .focusGroup(),
-            contentPadding = if (showPanel) {
-                PaddingValues(vertical = Dimens.GapLarge, horizontal = 10.dp)
-            } else {
-                PaddingValues(0.dp)
-            },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Dimens.GapSmall),
         ) {
-            // Category-search field, only while the rail is expanded (focused). Entering the rail lands
-            // here; Down drops into the list, and the filter clears when the rail loses focus.
-            if (hasFocus) {
-                item(key = "__rail_search__") {
-                    SearchBar(
-                        query = query,
-                        onQueryChange = { query = it },
-                        placeholder = stringResource(tv.own.owntv.R.string.content_search_categories),
-                        modifier = Modifier
-                            .focusRequester(searchFocus)
-                            .fillMaxWidth()
-                            .padding(bottom = 4.dp),
+            // Category-search field pinned above the scrolling list so it stays visible as the
+            // user scrolls through a long category rail.
+            SearchBar(
+                query = query,
+                onQueryChange = { query = it },
+                placeholder = stringResource(tv.own.owntv.R.string.content_search_categories),
+                modifier = Modifier
+                    .focusRequester(searchFocus)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
+            )
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = if (showPanel) {
+                    PaddingValues(vertical = Dimens.GapLarge, horizontal = 10.dp)
+                } else {
+                    PaddingValues(0.dp)
+                },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Dimens.GapSmall),
+            ) {
+                items(count = visible.size, key = { visible[it] }) { i ->
+                    val index = visible[i]
+                    RailPill(
+                        category = categories[index],
+                        // RailPill only lights the green "active" fill when this pill is BOTH the current
+                        // category AND focused — so the highlight always follows focus and nothing is auto-lit.
+                        selected = index == selectedIndex,
+                        expanded = expanded,
+                        onClick = { onSelect(index) },
+                        modifier = if (index == selectedIndex) Modifier.focusRequester(selectedFocus) else Modifier,
                     )
                 }
-            }
-            items(count = visible.size, key = { visible[it] }) { i ->
-                val index = visible[i]
-                RailPill(
-                    category = categories[index],
-                    // RailPill only lights the green "active" fill when this pill is BOTH the current
-                    // category AND focused — so the highlight always follows focus and nothing is auto-lit.
-                    selected = index == selectedIndex,
-                    expanded = expanded,
-                    onClick = { onSelect(index) },
-                    modifier = if (index == selectedIndex) Modifier.focusRequester(selectedFocus) else Modifier,
-                )
-            }
-            if (hasFocus && visible.isEmpty()) {
-                item {
-                    Text(
-                        stringResource(tv.own.owntv.R.string.content_no_categories_match),
-                        color = colors.textSecondary,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(12.dp),
-                    )
+                if (visible.isEmpty()) {
+                    item {
+                        Text(
+                            stringResource(tv.own.owntv.R.string.content_no_categories_match),
+                            color = colors.textSecondary,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+/** Exposed for testing: filters category indices by a query string, case-insensitive on fullName. */
+fun filterCategories(categories: List<RailCategory>, query: String): List<Int> {
+    val q = query.trim()
+    return if (q.isEmpty()) categories.indices.toList()
+    else categories.indices.filter { categories[it].fullName.contains(q, ignoreCase = true) }
 }
 
 @Composable
