@@ -145,8 +145,12 @@ def _key_exists(key: str) -> bool:
 # strings.xml editing
 # ---------------------------------------------------------------------------
 
-def _add_to_strings_xml(key: str, text: str, source_path: str):
-    """Add a <string> entry to strings.xml before the closing </resources> tag."""
+def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None):
+    """Add a <string> entry to strings.xml before the closing </resources> tag.
+
+    If *translator_note* is provided it becomes the Translators comment verbatim;
+    otherwise a default comment is generated from the source path.
+    """
     xml_content = STRINGS_XML.read_text("utf-8")
     xml_lines = xml_content.splitlines(keepends=True)
 
@@ -160,9 +164,12 @@ def _add_to_strings_xml(key: str, text: str, source_path: str):
         return
 
     indent = "    "
-    # Derive a short section tag from the source path for translator context
-    section = source_path.replace("app/src/main/java/tv/own/owntv/", "").split("/")[0]
-    entry = f'{indent}<!-- Translators: used in {section} ({source_path}) -->\n{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
+    if translator_note:
+        comment = f"{indent}<!-- Translators: {translator_note} -->\n"
+    else:
+        section = source_path.replace("app/src/main/java/tv/own/owntv/", "").split("/")[0]
+        comment = f"{indent}<!-- Translators: used in {section} ({source_path}) -->\n"
+    entry = f'{comment}{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
     xml_lines.insert(insert_at, entry)
     STRINGS_XML.write_text("".join(xml_lines), "utf-8")
     print(f"  ✓ Added R.string.{key} to strings.xml")
@@ -325,7 +332,10 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             print("  → Skipped")
             return choice
 
-    _add_to_strings_xml(key, text, path)
+    # Optional translator context
+    print(f'\n  Translator context (optional — explain where/how this string is used):')
+    note = input("  > ").strip()
+    _add_to_strings_xml(key, text, path, translator_note=note if note else None)
 
     # Replace in all files that contain this literal
     current_inv = _lib._inventory()
