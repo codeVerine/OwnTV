@@ -326,19 +326,6 @@
 2	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	sub-color
 2	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	sub-pos
 1	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	yes
-2	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	$relativePath$EXPORT_NAME
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	${Environment.DIRECTORY_DOWNLOADS}/
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	${Environment.DIRECTORY_DOWNLOADS}/$EXPORT_NAME
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=?
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	${MediaStore.MediaColumns._ID} DESC
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	Could not create the Download folder
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	Could not create the playback report
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	Could not open the existing playback report
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	Could not open the playback report
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	InlinedApi
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	text/plain
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	w
-1	app/src/main/java/tv/own/owntv/player/PlaybackErrorLog.kt	wt
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	\0
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	429
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	458
