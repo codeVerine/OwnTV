@@ -425,9 +425,11 @@ class TvHomeRepository(
         val showMeta = runCatching { metadata.resolveSeries(show) }
             .onFailure { logW("watch next episode show metadata resolve failed showId=${show.id}", it) }
             .getOrNull()
-        val episodeMeta = runCatching { metadata.resolveEpisode(show, episode) }
-            .onFailure { logW("watch next episode metadata resolve failed episodeId=${episode.id}", it) }
-            .getOrNull()
+        val episodeMeta = showMeta?.let {
+            runCatching { metadata.resolveEpisode(show, episode, it) }
+                .onFailure { logW("watch next episode metadata resolve failed episodeId=${episode.id}", it) }
+                .getOrNull()
+        }
         return episodeWatchNextCardMetadata(show, episode, showMeta, episodeMeta)
     }
 
@@ -464,6 +466,8 @@ class TvHomeRepository(
 
     /** Resolve a movie's card only when the direct publish path would actually write it. */
     private suspend fun resolveMoviePublishCard(profileId: Long, movie: MovieEntity, positionMs: Long, durationMs: Long): ResolvedWatchNextCard? {
+        if (!launcherPlanner.isVisibleToProfile(profileId, movie.sourceId, MediaType.MOVIE)) return null
+        if (CustomizeKeys.movie(movie) in customize.observe(profileId, MediaType.MOVIE).first().hiddenItems) return null
         if (!launcherPlanner.eligibleForWatchNext(positionMs, durationMs)) return null
         val groupId = launcherPlanner.movieStableKeyHash(movie)
         val existing = tvProviderProgramDao.find(profileId, TvProviderSurface.WATCH_NEXT, MediaType.MOVIE, groupId)
@@ -472,6 +476,8 @@ class TvHomeRepository(
 
     /** Resolve an episode's card for the same target [syncEpisode] selects, gated on publication. */
     private suspend fun resolveEpisodePublishCard(profileId: Long, show: SeriesEntity, episode: EpisodeEntity, positionMs: Long, durationMs: Long): ResolvedWatchNextCard? {
+        if (!launcherPlanner.isVisibleToProfile(profileId, show.sourceId, MediaType.SERIES)) return null
+        if (CustomizeKeys.series(show) in customize.observe(profileId, MediaType.SERIES).first().hiddenItems) return null
         val episodes = launcherPlanner.orderedEpisodes(show.id)
         val currentIndex = episodes.indexOfFirst { it.id == episode.id }
         val isComplete = launcherPlanner.isCompleted(positionMs, durationMs)

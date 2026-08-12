@@ -202,9 +202,16 @@ class MetadataRepository(
     suspend fun resolveEpisode(
         series: tv.own.owntv.core.database.entity.SeriesEntity,
         episode: tv.own.owntv.core.database.entity.EpisodeEntity,
+    ): MetadataCacheEntity? = resolveEpisode(series, episode, resolvedShow = null)
+
+    /** Episode resolve that reuses an already-resolved show instead of re-searching it. */
+    suspend fun resolveEpisode(
+        series: tv.own.owntv.core.database.entity.SeriesEntity,
+        episode: tv.own.owntv.core.database.entity.EpisodeEntity,
+        resolvedShow: MetadataCacheEntity?,
     ): MetadataCacheEntity? {
         if (!settings.metadataConfig().enabled) return null
-        val show = resolveSeries(series) ?: return null // no confident show match → no episode lookup
+        val show = resolvedShow ?: resolveSeries(series) ?: return null // no confident show match → no episode lookup
         val tvId = show.tmdbId
         val season = episode.seasonNumber
         val ep = episode.episodeNumber
