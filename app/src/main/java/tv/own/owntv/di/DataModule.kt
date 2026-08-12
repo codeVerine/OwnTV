@@ -172,8 +172,9 @@ val dataModule = module {
     single { LauncherRecommendationPlanner(get(), get(), get(), get()) }
     // sourceDao, channelDao, movieDao, seriesDao, progressDao
     single { LauncherLaunchResolver(get(), get(), get(), get(), get()) }
-    // context, sourceDao, channelDao, movieDao, seriesDao, progressDao, tvProviderProgramDao, customize, settings, localeStore
-    single { TvHomeRepository(androidContext(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    // context, sourceDao, channelDao, movieDao, seriesDao, progressDao, tvProviderProgramDao, customize,
+    // settings, launcherPlanner, localeStore, metadataRepository
+    single { TvHomeRepository(androidContext(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     // planner, resolver, tvHomeRepository
     single { LauncherIntegrationRepository(get(), get(), get()) }
     // downloadDao, okHttpClient, sourceDao, movieDao, seriesDao, streamUrlResolver
