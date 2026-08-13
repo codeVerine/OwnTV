@@ -182,6 +182,12 @@ or **narrow the whole app to just one**.
   **Recent Channels** row (off by default). **Continue Watching series** tiles resolve **episode/show
   artwork from TMDB** when available and show as **landscape cards** (with a `S## E##` chip and a
   progress bar), falling back to the provider poster otherwise.
+- **Android TV home — Watch Next:** when the Android TV home option is enabled, the system's Continue
+  Watching / Watch Next cards for movies and episodes use matched TMDB display names and `w780` landscape
+  artwork when available (movie backdrop; episode still, then show backdrop). Missing, disabled, unmatched,
+  or failed TMDB enrichment safely falls back to provider names and artwork: provider backdrops remain 16:9
+  and provider posters keep their poster ratio. The card's playback destination, resume position, ordering,
+  and Continue/Next type are unchanged; the Recent Live row remains separate.
 - ▶️ **"Continue" chip (top bar, every screen):** a compact chip resumes your **most‑recent** item in one
   press — **Resume** a movie, **Next up** an episode, or your **Last channel** — labelled with the title.
   Reach it from the navigation panel (like the search pill); it hides when there's nothing to resume.

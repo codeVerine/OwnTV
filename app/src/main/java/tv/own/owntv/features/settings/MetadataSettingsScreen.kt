@@ -100,9 +100,9 @@ private fun tmdbLangName(code: String): String = stringResource(
 )
 
 /**
- * Settings → Metadata (TMDB). Phase M1 of the enrichment plan: the master toggle and the two advanced
- * access tiers (own TMDB key / self-host URL), plus a manual "look up title" test that proves the
- * configured tier reaches TMDB end-to-end. Enrichment of actual detail screens arrives in later phases.
+ * Settings → Metadata (TMDB): the metadata mode, two advanced access tiers (own TMDB key / self-host URL),
+ * and a manual "look up title" test that proves the configured tier reaches TMDB end-to-end. Detail, Home,
+ * and Android TV Watch Next surfaces resolve metadata lazily when they need it.
  *
  * Precedence (plan §4): self-host URL > own key > the default caching Worker (zero setup).
  */

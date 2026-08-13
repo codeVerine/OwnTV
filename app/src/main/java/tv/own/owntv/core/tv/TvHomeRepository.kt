@@ -15,9 +15,14 @@ import androidx.tvprovider.media.tv.PreviewProgram
 import androidx.tvprovider.media.tv.TvContractCompat
 import androidx.tvprovider.media.tv.WatchNextProgram
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import tv.own.owntv.R
 import tv.own.owntv.core.customize.CustomizationStore
@@ -39,6 +44,7 @@ import tv.own.owntv.core.launcher.LauncherContinuationItem
 import tv.own.owntv.core.launcher.LauncherContinuationKind
 import tv.own.owntv.core.launcher.LauncherDeepLink
 import tv.own.owntv.core.launcher.LauncherRecommendationPlanner
+import tv.own.owntv.core.metadata.MetadataRepository
 import tv.own.owntv.core.model.MediaType
 import tv.own.owntv.features.settings.data.SettingsRepository
 import java.security.MessageDigest
@@ -61,14 +67,17 @@ class TvHomeRepository(
     private val settings: SettingsRepository,
     private val launcherPlanner: LauncherRecommendationPlanner,
     private val localeStore: LocaleStore,
+    private val metadata: MetadataRepository,
 ) {
     private val resolver: ContentResolver get() = context.contentResolver
     private val channelHelper = PreviewChannelHelper(context)
     private val mutex = Mutex()
+    private val metadataResolutionSemaphore = Semaphore(WATCH_NEXT_METADATA_RESOLUTION_CONCURRENCY)
 
     companion object {
         private const val TAG = "OwnTVHome"
         private const val WATCH_NEXT_PUBLISH_INTERVAL_MS = 60_000L
+        private const val WATCH_NEXT_METADATA_RESOLUTION_CONCURRENCY = 4
         private const val RECENT_LIVE_MAX_ITEMS = 10
         private const val RECENT_LIVE_REFRESH_INTERVAL_MS = 5_000L
         private const val RECENT_LIVE_CHANNEL_GROUP_ID = 0L
@@ -95,9 +104,12 @@ class TvHomeRepository(
             clearProfile(profileId)
             return@withContext
         }
+        val desired = launcherPlanner.buildContinuationItems(profileId)
+        val cards = resolveContinuationCards(profileId, desired)
         mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "refreshProfile")) return@withLock
             logD("refreshProfile profile=$profileId publishing Watch Next and Recent Live rows")
-            refreshWatchNextLocked(profileId)
+            refreshWatchNextLocked(profileId, cards)
             refreshRecentLiveLocked(profileId, allowBrowsableRequest)
         }
         logD("refreshProfile profile=$profileId done")
@@ -113,6 +125,12 @@ class TvHomeRepository(
         logD("clearProfile profile=$profileId done")
     }
 
+    private suspend fun androidTvHomeEnabledAtPublication(profileId: Long, operation: String): Boolean {
+        val enabled = settings.androidTvHomeEnabled.first()
+        if (!enabled) logD("$operation skip profile=$profileId because Android TV home is disabled at publication")
+        return enabled
+    }
+
     suspend fun publishMovieProgress(profileId: Long, movieId: Long, positionMs: Long, durationMs: Long) = withContext(Dispatchers.IO) {
         val enabled = settings.androidTvHomeEnabled.first()
         if (profileId < 0 || !enabled) {
@@ -120,7 +138,12 @@ class TvHomeRepository(
             return@withContext
         }
         logD("publishMovieProgress profile=$profileId movieId=$movieId positionMs=$positionMs durationMs=$durationMs")
-        mutex.withLock { syncMovie(profileId, movieId, positionMs, durationMs) }
+        val movie = movieDao.getById(movieId)
+        val card = movie?.let { resolveMoviePublishCard(profileId, it, positionMs, durationMs) }
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "publishMovieProgress")) return@withLock
+            syncMovie(profileId, movieId, positionMs, durationMs, card = card)
+        }
     }
 
     suspend fun publishEpisodeProgress(profileId: Long, episodeId: Long, positionMs: Long, durationMs: Long) = withContext(Dispatchers.IO) {
@@ -130,7 +153,13 @@ class TvHomeRepository(
             return@withContext
         }
         logD("publishEpisodeProgress profile=$profileId episodeId=$episodeId positionMs=$positionMs durationMs=$durationMs")
-        mutex.withLock { syncEpisode(profileId, episodeId, positionMs, durationMs) }
+        val episode = seriesDao.getEpisodeById(episodeId)
+        val show = episode?.let { seriesDao.getSeriesById(it.seriesId) }
+        val card = if (episode != null && show != null) resolveEpisodePublishCard(profileId, show, episode, positionMs, durationMs) else null
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "publishEpisodeProgress")) return@withLock
+            syncEpisode(profileId, episodeId, positionMs, durationMs, card = card)
+        }
     }
 
     suspend fun refreshRecentLive(profileId: Long, allowBrowsableRequest: Boolean = false) = withContext(Dispatchers.IO) {
@@ -140,10 +169,13 @@ class TvHomeRepository(
             return@withContext
         }
         logD("refreshRecentLive profile=$profileId allowBrowsable=$allowBrowsableRequest")
-        mutex.withLock { refreshRecentLiveLocked(profileId, allowBrowsableRequest) }
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "refreshRecentLive")) return@withLock
+            refreshRecentLiveLocked(profileId, allowBrowsableRequest)
+        }
     }
 
-    private suspend fun refreshWatchNextLocked(profileId: Long) {
+    private suspend fun refreshWatchNextLocked(profileId: Long, cards: Map<String, ResolvedWatchNextCard>) {
         val desired = launcherPlanner.buildContinuationItems(profileId)
         val desiredKeys = desired.map { it.stableKey }.toSet()
         val existing = tvProviderProgramDao.getAllForProfile(profileId)
@@ -157,16 +189,16 @@ class TvHomeRepository(
             }
         }
         for (item in desired) {
-            syncContinuationItem(profileId, item)
+            syncContinuationItem(profileId, item, cards[item.stableKey])
         }
     }
 
-    private suspend fun syncContinuationItem(profileId: Long, item: LauncherContinuationItem, force: Boolean = true) {
+    private suspend fun syncContinuationItem(profileId: Long, item: LauncherContinuationItem, card: ResolvedWatchNextCard?, force: Boolean = true) {
         when (item.kind) {
-            LauncherContinuationKind.MOVIE -> syncMovie(profileId, item.sourceItemId, item.positionMs, item.durationMs, force)
+            LauncherContinuationKind.MOVIE -> syncMovie(profileId, item.sourceItemId, item.positionMs, item.durationMs, force, card)
             LauncherContinuationKind.EPISODE -> {
                 val progress = progressDao.get(profileId, MediaType.EPISODE, item.sourceItemId) ?: return
-                syncEpisode(profileId, item.sourceItemId, progress.positionMs, progress.durationMs, force)
+                syncEpisode(profileId, item.sourceItemId, progress.positionMs, progress.durationMs, force, card)
             }
             LauncherContinuationKind.LIVE -> Unit
         }
@@ -221,7 +253,7 @@ class TvHomeRepository(
         logD("refreshRecentLive profile=$profileId updated channel bookkeeping")
     }
 
-    private suspend fun syncMovie(profileId: Long, movieId: Long, positionMs: Long, durationMs: Long, force: Boolean = false) {
+    private suspend fun syncMovie(profileId: Long, movieId: Long, positionMs: Long, durationMs: Long, force: Boolean = false, card: ResolvedWatchNextCard? = null) {
         val movie = movieDao.getById(movieId) ?: return
         if (!launcherPlanner.isVisibleToProfile(profileId, movie.sourceId, MediaType.MOVIE)) {
             logD("syncMovie skip hidden profile=$profileId movieId=$movieId sourceId=${movie.sourceId}")
@@ -257,10 +289,11 @@ class TvHomeRepository(
             durationMs = durationMs,
         )
         if (!force && !shouldPublish(existing, row.targetItemId, positionMs, durationMs)) return
-        upsertWatchNext(movie, row)
+        val resolvedCard = card?.takeIf { it.targetItemId == movie.id }?.card
+        upsertWatchNext(movie, row, resolvedCard)
     }
 
-    private suspend fun syncEpisode(profileId: Long, episodeId: Long, positionMs: Long, durationMs: Long, force: Boolean = false) {
+    private suspend fun syncEpisode(profileId: Long, episodeId: Long, positionMs: Long, durationMs: Long, force: Boolean = false, card: ResolvedWatchNextCard? = null) {
         val episode = seriesDao.getEpisodeById(episodeId) ?: return
         val show = seriesDao.getSeriesById(episode.seriesId) ?: return
         if (!launcherPlanner.isVisibleToProfile(profileId, show.sourceId, MediaType.SERIES)) {
@@ -322,18 +355,19 @@ class TvHomeRepository(
             "syncEpisode publish profile=$profileId episodeId=$episodeId targetId=${target.id} watchNextType=$watchNextType " +
                 "row=${row.describe()}",
         )
-        upsertWatchNext(show, target, row, watchNextType, launcherPlanner.episodeStableKey(show, episode))
+        val resolvedCard = card?.takeIf { it.targetItemId == target.id }?.card
+        upsertWatchNext(show, target, row, watchNextType, launcherPlanner.episodeStableKey(show, episode), resolvedCard)
     }
 
-    private suspend fun upsertWatchNext(movie: MovieEntity, row: TvProviderProgramEntity) {
+    private suspend fun upsertWatchNext(movie: MovieEntity, row: TvProviderProgramEntity, card: WatchNextCardMetadata? = null) {
         val stableKey = launcherPlanner.movieStableKey(movie)
+        val merged = card ?: movieWatchNextCardMetadata(movie, null)
         val program = WatchNextProgram.Builder()
             .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
             .setType(TvContractCompat.PreviewProgramColumns.TYPE_MOVIE)
-            .setTitle(movie.name)
+            .setTitle(merged.title ?: movie.name)
             .setDescription(movie.year?.toString() ?: renderContext().getString(R.string.launcher_movie_type))
-            .setPosterArtUri(safeMediaArtUri(movie.posterUrl))
-            .setPosterArtAspectRatio(TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_MOVIE_POSTER)
+            .setWatchNextArtwork(merged)
             .setLastPlaybackPositionMillis(safeMillisToInt(row.lastPositionMs))
             .setDurationMillis(safeMillisToInt(row.durationMs))
             .setInternalProviderId(platformInternalId(TvProviderSurface.WATCH_NEXT, row.profileId, MediaType.MOVIE, stableKey))
@@ -350,19 +384,20 @@ class TvHomeRepository(
         row: TvProviderProgramEntity,
         watchNextType: Int,
         rowStableKey: String,
+        card: WatchNextCardMetadata? = null,
     ) {
         val renderContext = renderContext()
+        val merged = card ?: episodeWatchNextCardMetadata(show, episode, null, null)
         val program = WatchNextProgram.Builder()
             .setWatchNextType(watchNextType)
             .setType(TvContractCompat.PreviewProgramColumns.TYPE_TV_EPISODE)
-            .setTitle(episode.name.ifBlank { show.name })
+            .setTitle(merged.title)
             .setDescription(buildList {
-                add(show.name)
+                add(merged.containerTitle)
                 add(renderContext.getString(R.string.player_season_number, episode.seasonNumber))
                 if (episode.episodeNumber > 0) add(renderContext.getString(R.string.launcher_episode_number, episode.episodeNumber))
             }.joinToString(renderContext.getString(R.string.player_metadata_separator)))
-            .setPosterArtUri(safeMediaArtUri(show.posterUrl))
-            .setPosterArtAspectRatio(TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_MOVIE_POSTER)
+            .setWatchNextArtwork(merged)
             .setLastPlaybackPositionMillis(safeMillisToInt(row.lastPositionMs))
             .setDurationMillis(safeMillisToInt(row.durationMs))
             .setInternalProviderId(platformInternalId(TvProviderSurface.WATCH_NEXT, row.profileId, MediaType.EPISODE, rowStableKey))
@@ -383,6 +418,100 @@ class TvHomeRepository(
             .build()
         logD("persistWatchNext episode profile=${row.profileId} row=${row.describe()} watchNextType=$watchNextType")
         persistProgram(row, program)
+    }
+
+    /** Resolve TMDB movie card metadata; any enrichment failure degrades to the provider card. */
+    private suspend fun movieCardMetadata(movie: MovieEntity): WatchNextCardMetadata =
+        metadataResolutionSemaphore.withPermit {
+            val tmdb = runCatching { metadata.resolveMovie(movie) }
+                .onFailure { logW("watch next movie metadata resolve failed movieId=${movie.id}", it) }
+                .getOrNull()
+            movieWatchNextCardMetadata(movie, tmdb)
+        }
+
+    /** Resolve TMDB show + episode card metadata; a failed episode lookup keeps any show metadata. */
+    private suspend fun episodeCardMetadata(show: SeriesEntity, episode: EpisodeEntity): WatchNextCardMetadata =
+        metadataResolutionSemaphore.withPermit {
+            val showMeta = runCatching { metadata.resolveSeries(show) }
+                .onFailure { logW("watch next episode show metadata resolve failed showId=${show.id}", it) }
+                .getOrNull()
+            val episodeMeta = showMeta?.let {
+                runCatching { metadata.resolveEpisode(show, episode, it) }
+                    .onFailure { logW("watch next episode metadata resolve failed episodeId=${episode.id}", it) }
+                    .getOrNull()
+            }
+            episodeWatchNextCardMetadata(show, episode, showMeta, episodeMeta)
+        }
+
+    private data class ResolvedWatchNextCard(
+        val targetItemId: Long,
+        val card: WatchNextCardMetadata,
+    )
+
+    private suspend fun resolveContinuationCards(profileId: Long, desired: List<LauncherContinuationItem>): Map<String, ResolvedWatchNextCard> {
+        val movieHidden = customize.observe(profileId, MediaType.MOVIE).first().hiddenItems
+        val seriesHidden = customize.observe(profileId, MediaType.SERIES).first().hiddenItems
+        return coroutineScope {
+            desired.map { item ->
+                async { item.stableKey to resolveContinuationCard(item, movieHidden, seriesHidden) }
+            }.awaitAll().mapNotNull { (key, card) -> card?.let { key to it } }.toMap()
+        }
+    }
+
+    /** Resolve the card for a planned continuation item, using its target episode for NEXT items. */
+    private suspend fun resolveContinuationCard(item: LauncherContinuationItem, movieHidden: Map<String, String>, seriesHidden: Map<String, String>): ResolvedWatchNextCard? = when (item.kind) {
+        LauncherContinuationKind.MOVIE -> {
+            val movie = movieDao.getById(item.sourceItemId) ?: return null
+            if (CustomizeKeys.movie(movie) in movieHidden) return null
+            ResolvedWatchNextCard(item.targetItemId, movieCardMetadata(movie))
+        }
+        LauncherContinuationKind.EPISODE -> {
+            val episode = seriesDao.getEpisodeById(item.targetItemId) ?: return null
+            val show = seriesDao.getSeriesById(episode.seriesId) ?: return null
+            if (CustomizeKeys.series(show) in seriesHidden) return null
+            ResolvedWatchNextCard(item.targetItemId, episodeCardMetadata(show, episode))
+        }
+        LauncherContinuationKind.LIVE -> null
+    }
+
+    /** Resolve a movie's card only when the direct publish path would actually write it. */
+    private suspend fun resolveMoviePublishCard(profileId: Long, movie: MovieEntity, positionMs: Long, durationMs: Long): ResolvedWatchNextCard? {
+        if (!launcherPlanner.isVisibleToProfile(profileId, movie.sourceId, MediaType.MOVIE)) return null
+        if (CustomizeKeys.movie(movie) in customize.observe(profileId, MediaType.MOVIE).first().hiddenItems) return null
+        if (!launcherPlanner.eligibleForWatchNext(positionMs, durationMs)) return null
+        val groupId = launcherPlanner.movieStableKeyHash(movie)
+        val existing = tvProviderProgramDao.find(profileId, TvProviderSurface.WATCH_NEXT, MediaType.MOVIE, groupId)
+        return if (shouldPublish(existing, movie.id, positionMs, durationMs)) ResolvedWatchNextCard(movie.id, movieCardMetadata(movie)) else null
+    }
+
+    /** Resolve an episode's card for the same target [syncEpisode] selects, gated on publication. */
+    private suspend fun resolveEpisodePublishCard(profileId: Long, show: SeriesEntity, episode: EpisodeEntity, positionMs: Long, durationMs: Long): ResolvedWatchNextCard? {
+        if (!launcherPlanner.isVisibleToProfile(profileId, show.sourceId, MediaType.SERIES)) return null
+        if (CustomizeKeys.series(show) in customize.observe(profileId, MediaType.SERIES).first().hiddenItems) return null
+        val episodes = launcherPlanner.orderedEpisodes(show.id)
+        val currentIndex = episodes.indexOfFirst { it.id == episode.id }
+        val isComplete = launcherPlanner.isCompleted(positionMs, durationMs)
+        if (!isComplete && !launcherPlanner.eligibleForWatchNext(positionMs, durationMs)) return null
+        if (isComplete && currentIndex == episodes.lastIndex) return null
+        val target = (if (isComplete && currentIndex >= 0) episodes.getOrNull(currentIndex + 1) else episode) ?: return null
+        val currentGroupId = launcherPlanner.episodeStableKeyHash(show, episode)
+        val existing = tvProviderProgramDao.find(profileId, TvProviderSurface.WATCH_NEXT, MediaType.EPISODE, currentGroupId)
+        return if (shouldPublish(existing, target.id, positionMs, durationMs)) ResolvedWatchNextCard(target.id, episodeCardMetadata(show, target)) else null
+    }
+
+    private fun watchNextAspectRatio(shape: WatchNextArtShape): Int = when (shape) {
+        WatchNextArtShape.LANDSCAPE -> TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_16_9
+        WatchNextArtShape.POSTER -> TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_MOVIE_POSTER
+    }
+
+    private fun WatchNextProgram.Builder.setWatchNextArtwork(card: WatchNextCardMetadata): WatchNextProgram.Builder {
+        val art = card.artworkUrl?.let { safeMediaArtUri(it) }
+        setPosterArtUri(art)
+        setPosterArtAspectRatio(
+            if (art != null) watchNextAspectRatio(card.shape)
+            else TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_16_9,
+        )
+        return this
     }
 
     private suspend fun persistProgram(row: TvProviderProgramEntity, program: WatchNextProgram) {

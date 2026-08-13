@@ -13,7 +13,7 @@ enum class MetadataType { MOVIE, TV, EPISODE }
 
 /**
  * A slim TMDB search hit — enough to pick a match and show a poster. Full details (cast, rating, genres,
- * imdb_id, backdrop) are fetched lazily on the detail screen in a later phase.
+ * imdb_id, backdrop) are fetched lazily by the detail or home presentation surface that needs them.
  */
 data class MetadataSearchResult(
     val tmdbId: Int,
@@ -89,8 +89,9 @@ data class TrendingFeedPage(
 }
 
 /**
- * Metadata source mode (plan §4.1). Replaces the old on/off master toggle and also selects the render-time
- * field precedence for the merge (§7.1).
+ * Metadata source mode (plan §4.1). Replaces the old on/off master toggle and selects the default
+ * render-time field precedence for the merge (§7.1); presentation-specific surfaces may define their own
+ * safe merge boundary.
  */
 enum class MetadataMode {
     /** Only provider data; TMDB fully off (no lookups). */

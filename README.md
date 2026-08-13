@@ -72,7 +72,7 @@ Scan to join from your phone:
 - **Diagnostics you can send** — a playback log of failures *and* events, "Report this stream" from the info overlay, optional detailed trace, and a one-press export to `Download/owntv-playback-report.txt`
 
 ### 🧭 Browse
-- **Continue Watching** home with TMDB-enriched previews; Live / Movies / Series / Downloads / Guide sections
+- **Continue Watching** home with TMDB-enriched previews and Android TV Watch Next cards; Live / Movies / Series / Downloads / Guide sections
 - **Now Trending** Home showcase — current TMDB movie/series rankings matched to titles your active provider
   can actually play, with trailers, full cast/details, provider language/quality/season signals, and flexible
   movie/series balancing; a dedicated Home setting turns it on/off, and it stays first when enabled
