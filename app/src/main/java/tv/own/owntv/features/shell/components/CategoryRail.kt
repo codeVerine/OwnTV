@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +40,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -116,6 +122,7 @@ fun CategoryRail(
     val expanded = true
 
     val selectedFocus = remember { FocusRequester() }
+    val firstCategoryFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     // Keep the selected category in view when the selection changes — both for the initial load /
@@ -125,7 +132,10 @@ fun CategoryRail(
     LaunchedEffect(selectedIndex, categories.size) {
         if (selectedIndex in categories.indices) {
             runCatching { listState.scrollToItem(selectedIndex) }
-            if (hasFocus) runCatching { selectedFocus.requestFocus() }
+            if (hasFocus) {
+                withFrameNanos { }
+                runCatching { selectedFocus.requestFocus() }
+            }
         }
     }
 
@@ -143,32 +153,26 @@ fun CategoryRail(
             modifier = Modifier
                 .fillMaxSize()
                 .onFocusChanged {
-                    // Spatial D-pad entry would land on whatever pill is horizontally aligned —
-                    // redirect every entry (from the sidebar OR back from the content list) to the
-                    // SELECTED category, so you return to the folder you're actually in (e.g. pressing
-                    // Left from a channel lands back on that channel's category, not the top of the rail).
-                    // Internal moves between pills don't re-trigger this. The redirect must be deferred a
-                    // frame: requesting focus inside onFocusChanged is rejected (the focus transaction is
-                    // still in progress).
+                    // Spatial D-pad entry may initially land on the category aligned with the content
+                    // row. Redirect every entry to Search so returning from content is predictable and
+                    // category filtering is always immediately available. Internal moves between Search
+                    // and category pills don't re-trigger this. The redirect must be deferred a frame:
+                    // requesting focus inside onFocusChanged is rejected while that transaction is active.
                     val entered = it.hasFocus && !hasFocus
                     hasFocus = it.hasFocus
                     if (it.hasFocus) onFocused() else query = "" // reset the search on leaving
                     if (entered) scope.launch {
-                        if (selectedIndex in categories.indices) {
-                            // Land on the current category; the search box (top) is one Up away.
-                            runCatching { listState.scrollToItem(selectedIndex) }
-                            runCatching { selectedFocus.requestFocus() }
-                        } else {
-                            // No selection (e.g. an empty/special rail) — fall back to the search box.
-                            runCatching { listState.scrollToItem(0) }
-                            runCatching { searchFocus.requestFocus() }
-                        }
+                        // Keep the Down target composed: Search moves to the selected category when it is
+                        // visible, or to the first visible category when there is no visible selection.
+                        val target = visible.indexOf(selectedIndex).takeIf { index -> index >= 0 } ?: 0
+                        if (visible.isNotEmpty()) runCatching { listState.scrollToItem(target) }
+                        runCatching { searchFocus.requestFocus() }
                     }
                 }
                 // Held Up/Down can outrun the lazy list's composition and escape the rail (landing
                 // on the top bar) — trap vertical exits; Left/Right/Back still leave normally.
                 .trapVerticalFocusExit()
-                .focusGroup(),
+                .focusGroup()
         ) {
             // Category-search field pinned above the scrolling list so it stays visible as the
             // user scrolls through a long category rail.
@@ -177,6 +181,22 @@ fun CategoryRail(
                 onQueryChange = { query = it },
                 placeholder = stringResource(tv.own.owntv.R.string.content_search_categories),
                 modifier = Modifier
+                    .onPreviewKeyEvent { event ->
+                        if (event.key == Key.DirectionDown && event.type == KeyEventType.KeyDown && visible.isNotEmpty()) {
+                            scope.launch {
+                                val target = visible.indexOf(selectedIndex).takeIf { index -> index >= 0 } ?: 0
+                                runCatching { listState.scrollToItem(target) }
+                                withFrameNanos { }
+                                runCatching {
+                                    if (selectedIndex in visible) selectedFocus.requestFocus()
+                                    else firstCategoryFocus.requestFocus()
+                                }
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .focusRequester(searchFocus)
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp, vertical = 12.dp),
@@ -203,7 +223,11 @@ fun CategoryRail(
                         selected = index == selectedIndex,
                         expanded = expanded,
                         onClick = { onSelect(index) },
-                        modifier = if (index == selectedIndex) Modifier.focusRequester(selectedFocus) else Modifier,
+                        modifier = when {
+                            index == selectedIndex -> Modifier.focusRequester(selectedFocus)
+                            i == 0 -> Modifier.focusRequester(firstCategoryFocus)
+                            else -> Modifier
+                        },
                     )
                 }
                 if (visible.isEmpty()) {

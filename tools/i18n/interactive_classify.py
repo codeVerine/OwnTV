@@ -93,8 +93,63 @@ def _find_all_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
             if line_end == -1:
                 line_end = len(src)
             context_line = src[line_start:line_end].rstrip()
-            occurrences.append(Occurrence(path, line_no, 0, 0, raw, context_line))
+            col_start = start - line_start
+            occurrences.append(Occurrence(path, line_no, col_start, col_start + len(raw), raw, context_line))
     return occurrences
+
+
+def _source_without_literals_or_comments(src: str) -> str:
+    masked = list(src)
+    for start, end, _ in _lib._iter_literals(src):
+        for index in range(start, end):
+            if masked[index] != "\n":
+                masked[index] = " "
+    masked_src = "".join(masked)
+
+    def blank(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    return re.sub(r"//[^\n]*|/\*.*?\*/", blank, masked_src, flags=re.DOTALL)
+
+
+def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
+    masked = _source_without_literals_or_comments(src)
+    stack: list[int] = []
+    matching: dict[int, int] = {}
+    for index, char in enumerate(masked):
+        if char == "{":
+            stack.append(index)
+        elif char == "}" and stack:
+            matching[stack.pop()] = index
+
+    ranges: list[tuple[int, int, bool]] = []
+    function_pattern = re.compile(r"\bfun\s+[A-Za-z_][\w`]*(?:\s*<[^{}]*>)?[^{}]*\{")
+    for match in function_pattern.finditer(masked):
+        opening = match.end() - 1
+        closing = matching.get(opening)
+        if closing is None:
+            continue
+        boundary = max(
+            masked.rfind("}", 0, match.start()),
+            masked.rfind("{", 0, match.start()),
+            masked.rfind(";", 0, match.start()),
+            masked.rfind("\n\n", 0, match.start()),
+        )
+        annotation = masked[boundary + 1:match.start()]
+        is_composable = bool(re.search(r"@\s*(?:[\w.]+\.)?Composable\b", annotation))
+        ranges.append((opening + 1, closing, is_composable))
+    return ranges
+
+
+def _is_composable_occurrence(src: str, occurrence: Occurrence) -> bool:
+    lines = src.splitlines(keepends=True)
+    if not 1 <= occurrence.line_no <= len(lines):
+        return False
+    offset = sum(len(line) for line in lines[:occurrence.line_no - 1]) + occurrence.col_start
+    containing = [item for item in _composable_ranges(src) if item[0] <= offset < item[1]]
+    if not containing:
+        return False
+    return min(containing, key=lambda item: item[1] - item[0])[2]
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +157,11 @@ def _find_all_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
 # ---------------------------------------------------------------------------
 
 _KEY_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_RESOURCE_KEY_RE = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def _is_valid_resource_key(key: str) -> bool:
+    return _RESOURCE_KEY_RE.fullmatch(key) is not None
 
 
 def _suggest_key(path: str, text: str) -> str:
@@ -112,6 +172,8 @@ def _suggest_key(path: str, text: str) -> str:
     slug = _KEY_SLUG_RE.sub("_", text.lower().strip(" _")).strip("_")
     if not slug:
         slug = "label"
+    elif not slug[0].isalpha():
+        slug = f"label_{slug}"
 
     # Try matching an existing prefix from the file
     prefixes: Counter = Counter()
@@ -121,47 +183,72 @@ def _suggest_key(path: str, text: str) -> str:
     if prefixes:
         best_prefix = prefixes.most_common(1)[0][0]
         candidate = f"{best_prefix}_{slug}"
-        if candidate not in existing:
+        if _is_valid_resource_key(candidate) and candidate not in existing:
             return candidate
 
     # Try single-word prefix from any existing key
     for key in existing:
         prefix = key.split("_", 1)[0]
         candidate = f"{prefix}_{slug}"
-        if candidate not in existing:
+        if _is_valid_resource_key(candidate) and candidate not in existing:
             return candidate
 
     # Fallback
     return slug if slug not in existing else f"{slug}_2"
 
 
+def _string_resource_matches(xml_content: str, key: str) -> list[re.Match[str]]:
+    pattern = re.compile(
+        rf"<string(?=\s|>)(?=[^>]*\bname\s*=\s*[\"']{re.escape(key)}[\"'])[^>]*(?:/>|>.*?</string\s*>)",
+        re.DOTALL,
+    )
+    return list(pattern.finditer(xml_content))
+
+
+def _existing_resource_entries(key: str) -> list[tuple[Path, re.Match[str]]]:
+    entries: list[tuple[Path, re.Match[str]]] = []
+    for resource_file in sorted(STRINGS_XML.parent.glob("strings*.xml")):
+        content = resource_file.read_text("utf-8")
+        entries.extend((resource_file, match) for match in _string_resource_matches(content, key))
+    return entries
+
+
 def _key_exists(key: str) -> bool:
-    if not STRINGS_XML.is_file():
-        return False
-    return f'name="{key}"' in STRINGS_XML.read_text("utf-8")
+    return bool(_existing_resource_entries(key))
 
 
 # ---------------------------------------------------------------------------
 # strings.xml editing
 # ---------------------------------------------------------------------------
 
-def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None):
-    """Add a <string> entry to strings.xml before the closing </resources> tag.
+def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None) -> bool:
+    """Add or update one <string> entry in strings.xml."""
+    if not _is_valid_resource_key(key):
+        print(f"  ✗ Invalid Android resource name: {key!r}")
+        return False
 
-    If *translator_note* is provided it becomes the Translators comment verbatim;
-    otherwise a default comment is generated from the source path.
-    """
+    existing = _existing_resource_entries(key)
+    if existing:
+        if len(existing) != 1:
+            print(f"  ✗ Cannot overwrite R.string.{key}: found {len(existing)} entries")
+            return False
+        resource_file, match = existing[0]
+        xml_content = resource_file.read_text("utf-8")
+        element = match.group(0)
+        opening_end = element.find(">")
+        opening = element[:opening_end].rstrip()
+        if opening.endswith("/"):
+            opening = opening[:-1].rstrip()
+        replacement = f'{opening}>{_xml_escape(text)}</string>'
+        resource_file.write_text(xml_content[:match.start()] + replacement + xml_content[match.end():], "utf-8")
+        print(f"  ✓ Updated R.string.{key} in {resource_file.name}")
+        return True
+
     xml_content = STRINGS_XML.read_text("utf-8")
-    xml_lines = xml_content.splitlines(keepends=True)
-
-    insert_at = None
-    for i in range(len(xml_lines) - 1, -1, -1):
-        if "</resources>" in xml_lines[i]:
-            insert_at = i
-            break
-    if insert_at is None:
+    closing = xml_content.rfind("</resources>")
+    if closing == -1:
         print(f"  ✗ Could not find </resources> in {STRINGS_XML}")
-        return
+        return False
 
     indent = "    "
     if translator_note:
@@ -170,9 +257,15 @@ def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: 
         section = source_path.replace("app/src/main/java/tv/own/owntv/", "").split("/")[0]
         comment = f"{indent}<!-- Translators: used in {section} ({source_path}) -->\n"
     entry = f'{comment}{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
-    xml_lines.insert(insert_at, entry)
-    STRINGS_XML.write_text("".join(xml_lines), "utf-8")
+    line_start = xml_content.rfind("\n", 0, closing) + 1
+    if xml_content[line_start:closing].strip():
+        entry = "\n" + entry
+        insertion = closing
+    else:
+        insertion = line_start
+    STRINGS_XML.write_text(xml_content[:insertion] + entry + xml_content[insertion:], "utf-8")
     print(f"  ✓ Added R.string.{key} to strings.xml")
+    return True
 
 
 def _xml_escape(text: str) -> str:
@@ -184,22 +277,27 @@ def _xml_escape(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _replace_all_in_source(path: str, occurrences: list[Occurrence], key: str):
-    """Replace ALL occurrences of a literal in a file with stringResource."""
+    """Replace only the supplied occurrences in a source file."""
+    if not occurrences:
+        return
     full_path = ROOT / path
     src = full_path.read_text("utf-8")
-    text_to_find = _lib._normalize(_lib._decode(occurrences[0].raw))
-
-    # Collect absolute positions via _iter_literals (descending so replacements don't shift)
-    positions = []
-    for start, end, raw in _lib._iter_literals(src):
-        if _lib._normalize(_lib._decode(raw)) == text_to_find:
+    lines = src.splitlines(keepends=True)
+    positions: list[tuple[int, int]] = []
+    for occurrence in occurrences:
+        if not 1 <= occurrence.line_no <= len(lines):
+            continue
+        start = sum(len(line) for line in lines[:occurrence.line_no - 1]) + occurrence.col_start
+        end = start + len(occurrence.raw)
+        if src[start:end] == occurrence.raw:
             positions.append((start, end))
     positions.sort(reverse=True)
 
     for start, end in positions:
         src = src[:start] + f'stringResource(R.string.{key})' + src[end:]
 
-    # Ensure import exists
+    if not positions:
+        return
     if "import tv.own.owntv.R" not in src:
         first_import = src.find("\nimport ")
         if first_import != -1:
@@ -316,8 +414,8 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             break
         elif confirm in ("e", "edit"):
             key = input("  Enter key name (without prefix): ").strip()
-            while not key or not _KEY_SLUG_RE.sub("_", key):
-                print("  Key must be snake_case (a-z, 0-9, _)")
+            while not _is_valid_resource_key(key):
+                print("  Key must match [a-z][a-z0-9_]*")
                 key = input("  Enter key name: ").strip()
         elif confirm in ("s", "skip"):
             print("  → Skipped, literal left unchanged")
@@ -332,19 +430,43 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             print("  → Skipped")
             return choice
 
+    composable_occurrences = [
+        occurrence for occurrence in occurrences
+        if _is_composable_occurrence((ROOT / path).read_text("utf-8"), occurrence)
+    ]
+    if not composable_occurrences:
+        print("  → No @Composable occurrence selected; literal left unchanged")
+        return choice
+
+    approved_occurrences = composable_occurrences
+    if len(composable_occurrences) > 1:
+        valid_numbers = {occurrences.index(occurrence) + 1 for occurrence in composable_occurrences}
+        while True:
+            selection = input("  Replace occurrences [a]ll [numbers] [s]kip > ").strip().lower()
+            if selection in ("", "a", "all"):
+                break
+            if selection in ("s", "skip"):
+                print("  → Skipped, literal left unchanged")
+                return choice
+            try:
+                selected_numbers = {int(value) for value in re.split(r"[ ,]+", selection) if value}
+            except ValueError:
+                selected_numbers = set()
+            if selected_numbers and selected_numbers <= valid_numbers:
+                approved_occurrences = [
+                    occurrence for occurrence in composable_occurrences
+                    if occurrences.index(occurrence) + 1 in selected_numbers
+                ]
+                break
+            print(f"  Choose occurrence numbers from: {', '.join(map(str, sorted(valid_numbers)))}")
+
     # Optional translator context
     print(f'\n  Translator context (optional — explain where/how this string is used):')
     note = input("  > ").strip()
-    _add_to_strings_xml(key, text, path, translator_note=note if note else None)
+    if not _add_to_strings_xml(key, text, path, translator_note=note if note else None):
+        return choice
 
-    # Replace in all files that contain this literal
-    current_inv = _lib._inventory()
-    files_with_text = sorted(set(p for (p, t), c in current_inv.items() if t == text))
-    for file_path in files_with_text:
-        occs = _find_all_occurrences(file_path, text)
-        if occs:
-            _replace_all_in_source(file_path, occs, key)
-
+    _replace_all_in_source(path, approved_occurrences, key)
     _regenerate_baseline()
     return choice
 
