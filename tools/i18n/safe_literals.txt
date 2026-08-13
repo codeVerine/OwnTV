@@ -2479,6 +2479,7 @@
 1	technical	app/src/main/java/tv/own/owntv/core/tv/TvHomeDeepLink.kt	Use tv.own.owntv.core.launcher.LauncherDeepLink
 1	technical	app/src/main/java/tv/own/owntv/core/tv/TvHomeDeepLink.kt	Use tv.own.owntv.core.launcher.LauncherLaunch
 1	empty	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	\0
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	$operation skip profile=$profileId because Android TV home is disabled at publication
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	$profileId|${mediaType.name}|$stableKey
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	${surface.name}:${mediaType.name}:$groupId
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	%02x
@@ -2515,15 +2516,19 @@
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	persistWatchNext update failed profile=${row.profileId} programId=$programId row=${row.describe()}
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	persistWatchNext update profile=${row.profileId} programId=$programId updated=$updated row=${row.describe()}
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	providerId=${providerProgramId ?: -1} surface=$surface mediaType=$mediaType groupId=$groupId targetItemId=$targetItemId lastPositionMs=$lastPositionMs durationMs=$durationMs lastPublishedAt=$lastPublishedAt
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishEpisodeProgress
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishEpisodeProgress profile=$profileId episodeId=$episodeId positionMs=$positionMs durationMs=$durationMs
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishEpisodeProgress skip profile=$profileId enabled=$enabled episodeId=$episodeId positionMs=$positionMs durationMs=$durationMs
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishMovieProgress
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishMovieProgress profile=$profileId movieId=$movieId positionMs=$positionMs durationMs=$durationMs
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	publishMovieProgress skip profile=$profileId enabled=$enabled movieId=$movieId positionMs=$positionMs durationMs=$durationMs
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	recent-live
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshProfile
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshProfile profile=$profileId clearing platform rows because Android TV home is disabled
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshProfile profile=$profileId done
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshProfile profile=$profileId enabled=$enabled allowBrowsable=$allowBrowsableRequest
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshProfile profile=$profileId publishing Watch Next and Recent Live rows
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshRecentLive
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshRecentLive profile=$profileId allowBrowsable=$allowBrowsableRequest
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshRecentLive profile=$profileId channelId=$channelId recent=${recentChannels.size}
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	refreshRecentLive profile=$profileId updated channel bookkeeping
@@ -2542,6 +2547,11 @@
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	syncMovie profile=$profileId movieId=$movieId groupId=$groupId existing=${existing?.providerProgramId ?: -1}
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	syncMovie skip hidden profile=$profileId movieId=$movieId sourceId=${movie.sourceId}
 1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	syncMovie skip user-hidden profile=$profileId movieId=$movieId groupId=$groupId
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	watch next episode metadata resolve failed episodeId=${episode.id}
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	watch next episode show metadata resolve failed showId=${show.id}
+1	log	app/src/main/java/tv/own/owntv/core/tv/TvHomeRepository.kt	watch next movie metadata resolve failed movieId=${movie.id}
+2	empty	app/src/main/java/tv/own/owntv/core/tv/WatchNextCardMetadata.kt	\0
+4	url	app/src/main/java/tv/own/owntv/core/tv/WatchNextCardMetadata.kt	w780
 1	technical	app/src/main/java/tv/own/owntv/core/update/UpdateManager.kt	${context.packageName}.fileprovider
 1	technical	app/src/main/java/tv/own/owntv/core/update/UpdateManager.kt	.apk
 1	technical	app/src/main/java/tv/own/owntv/core/update/UpdateManager.kt	Accept
