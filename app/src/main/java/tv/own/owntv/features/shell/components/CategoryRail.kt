@@ -133,6 +133,7 @@ fun CategoryRail(
     val searchFocus = remember { FocusRequester() }
     var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
     var focusGeneration by remember { mutableStateOf(0) }
+    var focusedCategoryIndex by remember { mutableStateOf<Int?>(null) }
     val requestedVisible = focusCategoryIndex?.let { visible.indexOf(it) } ?: -1
 
     // Keep the selected category in view when the selection changes — both for the initial load /
@@ -146,10 +147,11 @@ fun CategoryRail(
         }
     }
 
-    LaunchedEffect(focusCategoryIndex, hasFocus, visible, focusDestination, focusGeneration) {
+    LaunchedEffect(focusCategoryIndex, hasFocus, visible, focusDestination, focusGeneration, focusedCategoryIndex) {
         if (focusDestination == CategoryRailFocusDestination.SEARCH) return@LaunchedEffect
         val requestedIndex = focusCategoryIndex ?: return@LaunchedEffect
         val generation = focusGeneration
+        val focusedCategoryAtStart = focusedCategoryIndex
         if (!hasFocus || requestedIndex !in categories.indices) {
             onFocusCategoryHandled()
             return@LaunchedEffect
@@ -161,11 +163,16 @@ fun CategoryRail(
         val target = requestedVisible.takeIf { it >= 0 } ?: 0
         runCatching { listState.scrollToItem(target) }
         withFrameNanos { }
-        if (!hasFocus || generation != focusGeneration) return@LaunchedEffect
+        if (
+            !hasFocus ||
+            generation != focusGeneration ||
+            focusCategoryIndex != requestedIndex ||
+            focusedCategoryIndex != focusedCategoryAtStart
+        ) return@LaunchedEffect
         runCatching {
             if (requestedVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
         }
-        if (generation == focusGeneration) onFocusCategoryHandled()
+        if (generation == focusGeneration && focusCategoryIndex == requestedIndex) onFocusCategoryHandled()
     }
 
     LaunchedEffect(focusDestination, hasFocus, visible, focusGeneration, selectedIndex) {
@@ -173,7 +180,7 @@ fun CategoryRail(
         val generation = focusGeneration
         when (destination) {
             CategoryRailFocusDestination.SEARCH -> {
-                if (hasFocus && generation == focusGeneration) {
+                if (hasFocus && generation == focusGeneration && focusDestination == destination) {
                     runCatching { searchFocus.requestFocus() }
                 }
             }
@@ -181,13 +188,19 @@ fun CategoryRail(
             CategoryRailFocusDestination.SELECTED_CATEGORY,
             CategoryRailFocusDestination.FIRST_CATEGORY,
             -> if (hasFocus && visible.isNotEmpty()) {
+                val focusedCategoryAtStart = focusedCategoryIndex
                 val selectedVisible = visible.indexOf(selectedIndex)
                 val focusSelected =
                     destination == CategoryRailFocusDestination.SELECTED_CATEGORY && selectedVisible >= 0
                 val target = if (focusSelected) selectedVisible else 0
                 runCatching { listState.scrollToItem(target) }
                 withFrameNanos { }
-                if (!hasFocus || generation != focusGeneration) return@LaunchedEffect
+                if (
+                    !hasFocus ||
+                    generation != focusGeneration ||
+                    focusDestination != destination ||
+                    focusedCategoryIndex != focusedCategoryAtStart
+                ) return@LaunchedEffect
                 runCatching {
                     if (focusSelected) selectedFocus.requestFocus() else firstCategoryFocus.requestFocus()
                 }
@@ -281,6 +294,21 @@ fun CategoryRail(
                         selected = index == selectedIndex,
                         expanded = expanded,
                         onClick = { onSelect(index) },
+                        onFocusStateChanged = { focused ->
+                            if (focused) {
+                                if (focusCategoryIndex != null) {
+                                    if (focusCategoryIndex != index) focusGeneration++
+                                    onFocusCategoryHandled()
+                                }
+                                focusedCategoryIndex = index
+                            } else if (focusedCategoryIndex == index) {
+                                focusedCategoryIndex = null
+                                if (focusCategoryIndex != null) {
+                                    focusGeneration++
+                                    onFocusCategoryHandled()
+                                }
+                            }
+                        },
                         modifier = when {
                             i == requestedVisible && requestedVisible >= 0 -> Modifier.focusRequester(requestedCategoryFocus)
                             index == selectedIndex -> Modifier.focusRequester(selectedFocus)
@@ -317,6 +345,7 @@ private fun RailPill(
     selected: Boolean,
     expanded: Boolean,
     onClick: () -> Unit,
+    onFocusStateChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -339,6 +368,7 @@ private fun RailPill(
 
     Box(
         modifier = modifier
+            .onFocusChanged { onFocusStateChanged(it.isFocused) }
             .then(if (expanded) Modifier.fillMaxWidth() else Modifier.size(Dimens.RailPillSize))
             .clip(shape)
             // Frosted glass fill when the panel is glassy (idle pills have a transparent ladder fill,

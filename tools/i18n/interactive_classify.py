@@ -147,9 +147,11 @@ _KNOWN_COMPOSABLE_LAMBDA_CALLS = frozenset({
     "Surface",
     "TextButton",
     "composable",
+    "composed",
     "item",
     "items",
     "itemsIndexed",
+    "key",
 })
 
 
@@ -218,7 +220,8 @@ def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
         if opening in function_openings:
             continue
         prefix = masked[max(0, opening - 512):opening].rstrip()
-        if re.search(r"@\s*(?:[\w.]+\.)?Composable\s*$", prefix):
+        local_prefix = re.split(r"[\n;{}]", prefix)[-1].strip()
+        if re.search(r"@\s*(?:[\w.]+\.)?Composable\s*$", local_prefix):
             continue
         if re.search(r"(?:^|[\s;])(?:if|for|while|when|catch|synchronized)\s*(?:\([^{}]*\))?\s*$", prefix):
             continue
@@ -230,7 +233,7 @@ def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
             assignment = prefix.rsplit("=", 1)[0]
             is_composable_assignment = bool(
                 re.search(
-                    r"(?:^|[\n(,{;])\s*[A-Za-z_][\w`]*\s*:\s*@\s*(?:[\w.]+\.)?Composable\b",
+                    r"(?:^|[\n;{])\s*(?:val|var)\s+[A-Za-z_][\w`]*\s*:\s*@\s*(?:[\w.]+\.)?Composable\b[^=]*$",
                     assignment,
                 )
             )
@@ -393,7 +396,9 @@ def _xml_escape(text: str) -> str:
         escaped.append(text[start:end])
         position = end
     escaped.append(text[position:].replace("%", "%%"))
-    android_text = "".join(escaped).replace("'", "\\'")
+    android_text = "".join(escaped).replace("\\", "\\\\").replace("'", "\\'")
+    if text.startswith(("@", "?")):
+        android_text = "\\" + android_text
     return (
         android_text
         .replace("&", "&amp;")
@@ -424,11 +429,32 @@ def _replace_all_in_source(path: str, occurrences: list[Occurrence], key: str):
             positions.append((start, end))
     positions.sort(reverse=True)
 
-    for start, end in positions:
-        src = src[:start] + f'stringResource(R.string.{key})' + src[end:]
-
     if not positions:
         return
+
+    has_string_resource_import = re.search(
+        r"^import[ \t]+androidx\.compose\.ui\.res\.stringResource[ \t]*$",
+        src,
+        flags=re.MULTILINE,
+    )
+    has_aliased_string_resource_import = re.search(
+        r"^import[ \t]+androidx\.compose\.ui\.res\.stringResource[ \t]+as[ \t]+[A-Za-z_]\w*[ \t]*$",
+        src,
+        flags=re.MULTILINE,
+    )
+    call = "androidx.compose.ui.res.stringResource" if has_aliased_string_resource_import else "stringResource"
+    for start, end in positions:
+        src = src[:start] + f'{call}(R.string.{key})' + src[end:]
+
+    if call == "stringResource" and not has_string_resource_import:
+        first_import = src.find("\nimport ")
+        if first_import != -1:
+            src = src[:first_import] + "\nimport androidx.compose.ui.res.stringResource" + src[first_import:]
+        else:
+            pkg_end = src.find("\n", src.find("package "))
+            if pkg_end == -1:
+                pkg_end = 0
+            src = src[:pkg_end + 1] + "import androidx.compose.ui.res.stringResource\n" + src[pkg_end + 1:]
     if "import tv.own.owntv.R" not in src:
         first_import = src.find("\nimport ")
         if first_import != -1:
@@ -509,17 +535,28 @@ def _prompt_category(text: str, count: int) -> str | None:
     return choice
 
 
-def _show_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
+def _show_occurrences(
+    path: str,
+    normalized_text: str,
+    candidate_occurrences: list[Occurrence] | None = None,
+) -> list[Occurrence]:
     """Print all occurrences and return them."""
     occurrences = _find_all_occurrences(path, normalized_text)
+    candidates = candidate_occurrences if candidate_occurrences is not None else occurrences
+    candidate_keys = {(item.line_no, item.col_start) for item in candidates}
     unclassified = _lib._inventory()
     all_files = [p for (p, t), c in unclassified.items() if t == normalized_text]
 
     seen = set()
+    first_candidate = True
     for i, occ in enumerate(occurrences):
         indent = "    "
-        marker = "→" if i == 0 else " "
-        print(f"\n  [{i+1}] {marker} {occ.path}:{occ.line_no}")
+        is_candidate = (occ.line_no, occ.col_start) in candidate_keys
+        marker = "→" if is_candidate and first_candidate else " "
+        if is_candidate:
+            first_candidate = False
+        status = "" if is_candidate else " (already classified)"
+        print(f"\n  [{i+1}] {marker} {occ.path}:{occ.line_no}{status}")
         print(f"{indent}{occ.context.strip()[:120]}")
         seen.add(occ.path)
 
@@ -536,9 +573,11 @@ def _show_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
 
 def _classify_one(path: str, text: str, count: int) -> str | None:
     """Classify one unique string. Returns success, skipped, quit, or failure."""
-    occurrences = _show_occurrences(path, text)
-    if not occurrences:
-        print("  → A safely classified occurrence shares this literal; leaving it unchanged")
+    occurrences = _find_all_occurrences(path, text)
+    candidate_occurrences = occurrences[-count:] if count > 0 else []
+    _show_occurrences(path, text, candidate_occurrences)
+    if not candidate_occurrences:
+        print("  → No unclassified occurrence remains in this file; leaving it unchanged")
         return "skipped"
     choice = _prompt_category(text, count)
     if choice in ("q", None):
@@ -554,11 +593,6 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             return None
         print(f"  → Classified as {label}")
         return "success"
-
-    safe, _, _ = _lib._safe_entries()
-    if safe.get((path, text), 0):
-        print("  → Safe and unclassified occurrences share this literal; leaving it unchanged")
-        return "skipped"
 
     # --- user-facing ---
     key = _suggest_key(path, text)
@@ -586,7 +620,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             return "skipped"
 
     composable_occurrences = [
-        occurrence for occurrence in occurrences
+        occurrence for occurrence in candidate_occurrences
         if _is_composable_occurrence((ROOT / path).read_text("utf-8"), occurrence)
     ]
     if not composable_occurrences:
@@ -630,7 +664,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     _replace_all_in_source(path, replacement_occurrences, key)
     if not _regenerate_baseline():
         return None
-    if len(replacement_occurrences) < len(occurrences):
+    if len(replacement_occurrences) < len(candidate_occurrences):
         print("  → Partially classified; unchanged occurrences remain in the baseline")
         return "partial"
     return "success"
