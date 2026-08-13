@@ -107,6 +107,7 @@ class TvHomeRepository(
         val desired = launcherPlanner.buildContinuationItems(profileId)
         val cards = resolveContinuationCards(profileId, desired)
         mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "refreshProfile")) return@withLock
             logD("refreshProfile profile=$profileId publishing Watch Next and Recent Live rows")
             refreshWatchNextLocked(profileId, cards)
             refreshRecentLiveLocked(profileId, allowBrowsableRequest)
@@ -124,6 +125,12 @@ class TvHomeRepository(
         logD("clearProfile profile=$profileId done")
     }
 
+    private suspend fun androidTvHomeEnabledAtPublication(profileId: Long, operation: String): Boolean {
+        val enabled = settings.androidTvHomeEnabled.first()
+        if (!enabled) logD("$operation skip profile=$profileId because Android TV home is disabled at publication")
+        return enabled
+    }
+
     suspend fun publishMovieProgress(profileId: Long, movieId: Long, positionMs: Long, durationMs: Long) = withContext(Dispatchers.IO) {
         val enabled = settings.androidTvHomeEnabled.first()
         if (profileId < 0 || !enabled) {
@@ -133,7 +140,10 @@ class TvHomeRepository(
         logD("publishMovieProgress profile=$profileId movieId=$movieId positionMs=$positionMs durationMs=$durationMs")
         val movie = movieDao.getById(movieId)
         val card = movie?.let { resolveMoviePublishCard(profileId, it, positionMs, durationMs) }
-        mutex.withLock { syncMovie(profileId, movieId, positionMs, durationMs, card = card) }
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "publishMovieProgress")) return@withLock
+            syncMovie(profileId, movieId, positionMs, durationMs, card = card)
+        }
     }
 
     suspend fun publishEpisodeProgress(profileId: Long, episodeId: Long, positionMs: Long, durationMs: Long) = withContext(Dispatchers.IO) {
@@ -146,7 +156,10 @@ class TvHomeRepository(
         val episode = seriesDao.getEpisodeById(episodeId)
         val show = episode?.let { seriesDao.getSeriesById(it.seriesId) }
         val card = if (episode != null && show != null) resolveEpisodePublishCard(profileId, show, episode, positionMs, durationMs) else null
-        mutex.withLock { syncEpisode(profileId, episodeId, positionMs, durationMs, card = card) }
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "publishEpisodeProgress")) return@withLock
+            syncEpisode(profileId, episodeId, positionMs, durationMs, card = card)
+        }
     }
 
     suspend fun refreshRecentLive(profileId: Long, allowBrowsableRequest: Boolean = false) = withContext(Dispatchers.IO) {
@@ -156,7 +169,10 @@ class TvHomeRepository(
             return@withContext
         }
         logD("refreshRecentLive profile=$profileId allowBrowsable=$allowBrowsableRequest")
-        mutex.withLock { refreshRecentLiveLocked(profileId, allowBrowsableRequest) }
+        mutex.withLock {
+            if (!androidTvHomeEnabledAtPublication(profileId, "refreshRecentLive")) return@withLock
+            refreshRecentLiveLocked(profileId, allowBrowsableRequest)
+        }
     }
 
     private suspend fun refreshWatchNextLocked(profileId: Long, cards: Map<String, ResolvedWatchNextCard>) {
