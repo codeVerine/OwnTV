@@ -112,37 +112,39 @@ def _source_without_literals_or_comments(src: str) -> str:
     return re.sub(r"//[^\n]*|/\*.*?\*/", blank, masked_src, flags=re.DOTALL)
 
 
-_NON_COMPOSABLE_LAMBDA_CALLS = frozenset({
-    "remember",
-    "rememberSaveable",
-    "LaunchedEffect",
-    "DisposableEffect",
-    "SideEffect",
-    "produceState",
-    "derivedStateOf",
-    "snapshotFlow",
-    "runCatching",
-    "runBlocking",
-    "withContext",
-    "launch",
-    "async",
-    "let",
-    "also",
-    "apply",
-    "run",
-    "use",
-    "map",
-    "mapNotNull",
-    "filter",
-    "filterNot",
-    "fold",
-    "forEach",
-    "onEach",
-    "repeat",
-    "withTimeout",
-    "withTimeoutOrNull",
-    "onPreviewKeyEvent",
-    "onFocusChanged",
+_KNOWN_COMPOSABLE_LAMBDA_CALLS = frozenset({
+    "AlertDialog",
+    "AnimatedContent",
+    "AnimatedVisibility",
+    "BasicAlertDialog",
+    "Box",
+    "BoxWithConstraints",
+    "Button",
+    "Card",
+    "Column",
+    "CompositionLocalProvider",
+    "Crossfade",
+    "Dialog",
+    "DropdownMenu",
+    "ElevatedButton",
+    "FilledTonalButton",
+    "LazyColumn",
+    "LazyHorizontalGrid",
+    "LazyRow",
+    "LazyVerticalGrid",
+    "NavHost",
+    "OutlinedButton",
+    "Popup",
+    "ProvideTextStyle",
+    "Row",
+    "Scaffold",
+    "SubcomposeLayout",
+    "Surface",
+    "TextButton",
+    "composable",
+    "item",
+    "items",
+    "itemsIndexed",
 })
 
 
@@ -220,9 +222,17 @@ def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
         if re.search(r"\b(?:class|interface|object|enum)\b[^{}]*$", prefix):
             continue
         if re.search(r"(?:[A-Za-z_][\w.]*)\s*=\s*$", prefix):
-            ranges.append((opening + 1, closing))
+            assignment = prefix.rsplit("=", 1)[0]
+            is_composable_assignment = bool(
+                re.search(
+                    r"(?:^|[\n(,{;])\s*[A-Za-z_][\w`]*\s*:\s*@\s*(?:[\w.]+\.)?Composable\b",
+                    assignment,
+                )
+            )
+            if not is_composable_assignment:
+                ranges.append((opening + 1, closing))
             continue
-        if _lambda_call_name(prefix) in _NON_COMPOSABLE_LAMBDA_CALLS:
+        if _lambda_call_name(prefix) not in _KNOWN_COMPOSABLE_LAMBDA_CALLS:
             ranges.append((opening + 1, closing))
     return ranges
 
@@ -309,8 +319,15 @@ def _key_exists(key: str) -> bool:
 # strings.xml editing
 # ---------------------------------------------------------------------------
 
+def _xml_comment_is_valid(text: str) -> bool:
+    return "--" not in text and not text.endswith("-")
+
+
 def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None) -> bool:
     """Add or update one <string> entry in strings.xml."""
+    if translator_note is not None and not _xml_comment_is_valid(translator_note):
+        print("  ✗ Translator note cannot contain '--' or end with '-'")
+        return False
     if not _is_valid_resource_key(key):
         print(f"  ✗ Invalid Android resource name: {key!r}")
         return False
@@ -404,28 +421,42 @@ def _replace_all_in_source(path: str, occurrences: list[Occurrence], key: str):
 # Add to safe_literals.txt
 # ---------------------------------------------------------------------------
 
-def _add_to_safe(path: str, text: str, count: int, category: str):
+def _add_to_safe(path: str, text: str, count: int, category: str) -> bool:
     safe, categories, errors = _lib._safe_entries()
     if errors:
         for error in errors:
             print(f"  ✗ {error}")
-        return
+        return False
     key = (path, _lib._normalize(text))
     safe[key] = safe.get(key, 0) + count
     categories[key] = category
     entries = {item: (cnt, categories[item]) for item, cnt in safe.items()}
-    SAFE_MANIFEST.write_text(_lib._serialize_safe(entries), "utf-8")
+    try:
+        SAFE_MANIFEST.write_text(_lib._serialize_safe(entries), "utf-8")
+    except OSError as error:
+        print(f"  ✗ Could not update {SAFE_MANIFEST}: {error}")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
 # Baseline regeneration
 # ---------------------------------------------------------------------------
 
-def _regenerate_baseline():
+def _regenerate_baseline() -> bool:
     current = _lib._inventory()
-    safe, _, _ = _lib._safe_entries()
+    safe, _, errors = _lib._safe_entries()
+    if errors:
+        for error in errors:
+            print(f"  ✗ {error}")
+        return False
     baseline = _lib._subtract_counts(current, safe)
-    BASELINE.write_text(_lib._serialize(baseline), "utf-8")
+    try:
+        BASELINE.write_text(_lib._serialize(baseline), "utf-8")
+    except OSError as error:
+        print(f"  ✗ Could not update {BASELINE}: {error}")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -488,8 +519,10 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     label = "ignored (technical)" if choice == "i" else category
 
     if choice != "u":
-        _add_to_safe(path, text, count, category)
-        _regenerate_baseline()
+        if not _add_to_safe(path, text, count, category):
+            return None
+        if not _regenerate_baseline():
+            return None
         print(f"  → Classified as {label}")
         return choice
 
@@ -561,7 +594,8 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
         return choice
 
     _replace_all_in_source(path, approved_occurrences, key)
-    _regenerate_baseline()
+    if not _regenerate_baseline():
+        return None
     return choice
 
 
@@ -573,6 +607,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="list unclassified but don't modify files")
     args = parser.parse_args()
+
+    _, _, safe_errors = _lib._safe_entries()
+    if safe_errors:
+        print("Cannot classify while safe_literals.txt is invalid:")
+        for error in safe_errors:
+            print(f"  {error}")
+        return 1
 
     unclassified = _unclassified()
     if not unclassified:
@@ -603,9 +644,13 @@ def main() -> int:
         if choice == "q":
             print(f"\nQuit after {classified_count} classified. Run again to continue.")
             return 0
+        if choice is None:
+            print("\nClassification failed; stopping.")
+            return 1
         classified_count += 1
 
-    _regenerate_baseline()
+    if not _regenerate_baseline():
+        return 1
     print(f"\n✓ All {classified_count} literals classified.")
     print("  Remember to commit the changed files:")
     print("    strings.xml, safe_literals.txt, hardcoded_baseline.txt, *.kt sources")

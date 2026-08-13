@@ -134,9 +134,10 @@ fun CategoryRail(
     // restored state (rail not yet focused) AND when CH+- paging selects a far-away category while the
     // rail IS focused. While the user D-pads inside, focus handles scrolling for adjacent moves; this
     // covers the case where a CH key changes selectedIndex by a large jump.
-    LaunchedEffect(selectedIndex, categories.size) {
-        if (selectedIndex in categories.indices) {
-            runCatching { listState.scrollToItem(selectedIndex) }
+    LaunchedEffect(selectedIndex, visible) {
+        val selectedVisible = visible.indexOf(selectedIndex)
+        if (selectedVisible >= 0) {
+            runCatching { listState.scrollToItem(selectedVisible) }
         }
     }
 
