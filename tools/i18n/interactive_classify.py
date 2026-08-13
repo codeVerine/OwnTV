@@ -117,7 +117,7 @@ def _source_without_literals_or_comments(src: str) -> str:
     return re.sub(r"//[^\n]*|/\*.*?\*/", blank, masked_src, flags=re.DOTALL)
 
 
-_KNOWN_COMPOSABLE_LAMBDA_CALLS = frozenset({
+_COMPOSABLE_TRAILING_LAMBDA_CALLS = frozenset({
     "AlertDialog",
     "AnimatedContent",
     "AnimatedVisibility",
@@ -143,7 +143,6 @@ _KNOWN_COMPOSABLE_LAMBDA_CALLS = frozenset({
     "ProvideTextStyle",
     "Row",
     "Scaffold",
-    "SubcomposeLayout",
     "Surface",
     "TextButton",
     "composable",
@@ -153,6 +152,42 @@ _KNOWN_COMPOSABLE_LAMBDA_CALLS = frozenset({
     "itemsIndexed",
     "key",
 })
+
+_COMPOSABLE_NAMED_LAMBDA_PARAMS: dict[str, frozenset[str]] = {
+    "AlertDialog": frozenset({"confirmButton", "dismissButton", "icon", "title", "text"}),
+    "AnimatedContent": frozenset({"content"}),
+    "AnimatedVisibility": frozenset({"content"}),
+    "BasicAlertDialog": frozenset({"content"}),
+    "Box": frozenset({"content"}),
+    "BoxWithConstraints": frozenset({"content"}),
+    "Button": frozenset({"content"}),
+    "Card": frozenset({"content"}),
+    "Column": frozenset({"content"}),
+    "CompositionLocalProvider": frozenset({"content"}),
+    "Crossfade": frozenset({"content"}),
+    "Dialog": frozenset({"content"}),
+    "DropdownMenu": frozenset({"content"}),
+    "ElevatedButton": frozenset({"content"}),
+    "FilledTonalButton": frozenset({"content"}),
+    "LazyColumn": frozenset({"content"}),
+    "LazyHorizontalGrid": frozenset({"content"}),
+    "LazyRow": frozenset({"content"}),
+    "LazyVerticalGrid": frozenset({"content"}),
+    "NavHost": frozenset({"content"}),
+    "OutlinedButton": frozenset({"content"}),
+    "Popup": frozenset({"content"}),
+    "ProvideTextStyle": frozenset({"content"}),
+    "Row": frozenset({"content"}),
+    "Scaffold": frozenset({"topBar", "bottomBar", "snackbarHost", "floatingActionButton", "content"}),
+    "Surface": frozenset({"content"}),
+    "TextButton": frozenset({"content"}),
+    "composable": frozenset({"content"}),
+    "composed": frozenset({"factory"}),
+    "item": frozenset({"content"}),
+    "items": frozenset({"itemContent"}),
+    "itemsIndexed": frozenset({"itemContent"}),
+    "key": frozenset({"block"}),
+}
 
 
 def _brace_pairs(masked: str) -> dict[int, int]:
@@ -208,6 +243,60 @@ def _lambda_call_name(prefix: str) -> str | None:
     return match.group(1).rsplit(".", 1)[-1] if match else None
 
 
+def _lambda_argument_prefix(masked: str, opening: int) -> tuple[str, str | None, bool] | None:
+    prefix = masked[:opening].rstrip()
+    if prefix.endswith(")"):
+        call_name = _lambda_call_name(prefix)
+        return (call_name, None, True) if call_name else None
+    if re.search(r"[A-Za-z_][\w.]*$", prefix):
+        call_name = prefix.rsplit(".", 1)[-1].split()[-1]
+        return call_name, None, True
+
+    depth = 0
+    call_opening = None
+    for index in range(len(prefix) - 1, -1, -1):
+        if prefix[index] == ")":
+            depth += 1
+        elif prefix[index] == "(":
+            if depth == 0:
+                call_opening = index
+                break
+            depth -= 1
+    if call_opening is None:
+        return None
+    call_match = re.search(r"([A-Za-z_][\w.]*)\s*$", prefix[:call_opening].rstrip())
+    if call_match is None:
+        return None
+
+    arguments = prefix[call_opening + 1:]
+    nesting = {"(": 0, "[": 0, "{": 0}
+    last_argument = 0
+    for index, char in enumerate(arguments):
+        if char in nesting:
+            nesting[char] += 1
+        elif char == ")":
+            nesting["("] = max(0, nesting["("] - 1)
+        elif char == "]":
+            nesting["["] = max(0, nesting["["] - 1)
+        elif char == "}":
+            nesting["{"] = max(0, nesting["{"] - 1)
+        elif char == "," and not any(nesting.values()):
+            last_argument = index + 1
+    argument = arguments[last_argument:].strip()
+    named = re.match(r"([A-Za-z_][\w`]*)\s*=", argument)
+    return call_match.group(1).rsplit(".", 1)[-1], named.group(1) if named else None, False
+
+
+def _is_known_composable_lambda(masked: str, opening: int) -> bool:
+    context = _lambda_argument_prefix(masked, opening)
+    if context is None:
+        return False
+    call_name, parameter, trailing = context
+    if trailing:
+        return call_name in _COMPOSABLE_TRAILING_LAMBDA_CALLS
+    return parameter in _COMPOSABLE_NAMED_LAMBDA_PARAMS.get(call_name, frozenset())
+
+
 def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
     masked = _source_without_literals_or_comments(src)
     matching = _brace_pairs(masked)
@@ -237,10 +326,10 @@ def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
                     assignment,
                 )
             )
-            if not is_composable_assignment:
+            if not is_composable_assignment and not _is_known_composable_lambda(masked, opening):
                 ranges.append((opening + 1, closing))
             continue
-        if _lambda_call_name(prefix) not in _KNOWN_COMPOSABLE_LAMBDA_CALLS:
+        if not _is_known_composable_lambda(masked, opening):
             ranges.append((opening + 1, closing))
     return ranges
 
@@ -512,12 +601,34 @@ def _add_to_safe(path: str, text: str, count: int, category: str) -> bool:
 # Baseline regeneration
 # ---------------------------------------------------------------------------
 
+def _validate_safe_manifest(current: dict[tuple[str, str], int] | None = None) -> bool:
+    safe, _, errors = _lib._safe_entries()
+    if errors:
+        for error in errors:
+            print(f"  ✗ {error}")
+        return False
+    stale = _lib._subset(safe, _lib._inventory() if current is None else current)
+    if stale:
+        print("  ✗ safe_literals.txt is stale:")
+        for reason in stale:
+            print(f"    {reason}")
+        print("  → Review removed literals before continuing")
+        return False
+    return True
+
+
 def _regenerate_baseline() -> bool:
     current = _lib._inventory()
     safe, _, errors = _lib._safe_entries()
     if errors:
         for error in errors:
             print(f"  ✗ {error}")
+        return False
+    stale = _lib._subset(safe, current)
+    if stale:
+        print("  ✗ safe_literals.txt is stale:")
+        for reason in stale:
+            print(f"    {reason}")
         return False
     baseline = _lib._subtract_counts(current, safe)
     try:
@@ -742,11 +853,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="list unclassified but don't modify files")
     args = parser.parse_args()
 
-    _, _, safe_errors = _lib._safe_entries()
-    if safe_errors:
-        print("Cannot classify while safe_literals.txt is invalid:")
-        for error in safe_errors:
-            print(f"  {error}")
+    if not _validate_safe_manifest():
+        print("Cannot classify while safe_literals.txt is invalid or stale.")
         return 1
 
     unclassified = _unclassified()
