@@ -11,9 +11,10 @@ import tv.own.owntv.features.settings.data.SettingsRepository
 /**
  * On-demand TMDB enrichment orchestrator (plan §3, §7). Resolves a local content item → TMDB metadata,
  * caching both the resolution (match table) and the metadata (cache table) so a second view is instant
- * and offline. NEVER bulk — callers invoke this lazily when a detail screen opens.
+ * and offline. NEVER bulk — callers invoke this lazily when a detail, Home, or Android TV Watch Next
+ * surface needs it.
  *
- * Merge rule (§7.1) is applied by the UI at render time (`providerField ?: tmdbField`); this layer only
+ * Merge rule (§7.1) is applied by each presentation layer at render/publication time; this layer only
  * fetches and caches TMDB fields, never mutating the provider content tables.
  */
 class MetadataRepository(
@@ -195,9 +196,10 @@ class MetadataRepository(
     }
 
     /**
-     * Resolve per-episode TMDB metadata (still, plot, air date, rating). First resolves the show (cached)
-     * to get its TMDB id, then fetches the episode lazily and caches it under `tv:<id>:s<n>e<m>`. Returns
-     * null when enrichment is off, the show has no match, or that episode isn't on TMDB.
+     * Resolve per-episode TMDB metadata (still, plot, air date, rating). The default overload resolves
+     * the show (cached) to get its TMDB id; callers that already resolved the show may supply it to avoid
+     * a second search. The episode is fetched lazily and cached under `tv:<id>:s<n>e<m>`. Returns null
+     * when enrichment is off, the show has no match, or that episode isn't on TMDB.
      */
     suspend fun resolveEpisode(
         series: tv.own.owntv.core.database.entity.SeriesEntity,
