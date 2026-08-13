@@ -303,11 +303,16 @@ def _string_resource_matches(xml_content: str, key: str) -> list[re.Match[str]]:
     return list(pattern.finditer(xml_content))
 
 
+def _base_resource_files() -> list[Path]:
+    return sorted(STRINGS_XML.parent.glob("strings*.xml"))
+
+
 def _existing_resource_entries(key: str) -> list[tuple[Path, re.Match[str]]]:
-    if not STRINGS_XML.is_file():
-        return []
-    content = STRINGS_XML.read_text("utf-8")
-    return [(STRINGS_XML, match) for match in _string_resource_matches(content, key)]
+    entries: list[tuple[Path, re.Match[str]]] = []
+    for resource_file in _base_resource_files():
+        content = resource_file.read_text("utf-8")
+        entries.extend((resource_file, match) for match in _string_resource_matches(content, key))
+    return entries
 
 
 def _key_exists(key: str) -> bool:
@@ -552,7 +557,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             print(f"  Unknown: {confirm!r}")
 
     if _key_exists(key):
-        print(f"  ⚠ R.string.{key} already exists in strings.xml")
+        print(f"  ⚠ R.string.{key} already exists in base resources")
         confirm = input("  Overwrite? [y]es [n]o > ").strip().lower()
         if confirm not in ("y", "yes"):
             print("  → Skipped")
@@ -589,7 +594,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
             print(f"  Choose occurrence numbers from: {', '.join(map(str, sorted(valid_numbers)))}")
 
     resource_text = _lib._decode(approved_occurrences[0].raw)
-    approved_occurrences = [
+    replacement_occurrences = [
         occurrence for occurrence in approved_occurrences
         if _lib._decode(occurrence.raw) == resource_text
     ]
@@ -600,9 +605,12 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     if not _add_to_strings_xml(key, resource_text, path, translator_note=note if note else None):
         return None
 
-    _replace_all_in_source(path, approved_occurrences, key)
+    _replace_all_in_source(path, replacement_occurrences, key)
     if not _regenerate_baseline():
         return None
+    if len(replacement_occurrences) < len(occurrences):
+        print("  → Partially classified; unchanged occurrences remain in the baseline")
+        return "partial"
     return "success"
 
 
@@ -639,6 +647,7 @@ def main() -> int:
 
     items = sorted(unclassified.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
     classified_count = 0
+    partial_count = 0
     skipped_count = 0
     for i, ((path, text), count) in enumerate(items):
         # Skip if already classified by a previous iteration (same text in another file)
@@ -657,13 +666,20 @@ def main() -> int:
             return 1
         if choice == "skipped":
             skipped_count += 1
+        elif choice == "partial":
+            partial_count += 1
         else:
             classified_count += 1
 
     if not _regenerate_baseline():
         return 1
-    if skipped_count:
-        print(f"\n✓ Classified {classified_count} literals; {skipped_count} left unchanged.")
+    if skipped_count or partial_count:
+        details = [f"{classified_count} fully classified"]
+        if partial_count:
+            details.append(f"{partial_count} partially classified")
+        if skipped_count:
+            details.append(f"{skipped_count} left unchanged")
+        print(f"\n✓ {'; '.join(details)}.")
     else:
         print(f"\n✓ All {classified_count} literals classified.")
     print("  Remember to commit the changed files:")

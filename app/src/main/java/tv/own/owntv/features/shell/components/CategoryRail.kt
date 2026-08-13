@@ -132,6 +132,7 @@ fun CategoryRail(
     val requestedCategoryFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
+    var focusGeneration by remember { mutableStateOf(0) }
     val requestedVisible = focusCategoryIndex?.let { visible.indexOf(it) } ?: -1
 
     // Keep the selected category in view when the selection changes — both for the initial load /
@@ -145,8 +146,10 @@ fun CategoryRail(
         }
     }
 
-    LaunchedEffect(focusCategoryIndex, hasFocus, visible) {
+    LaunchedEffect(focusCategoryIndex, hasFocus, visible, focusDestination, focusGeneration) {
+        if (focusDestination == CategoryRailFocusDestination.SEARCH) return@LaunchedEffect
         val requestedIndex = focusCategoryIndex ?: return@LaunchedEffect
+        val generation = focusGeneration
         if (!hasFocus || requestedIndex !in categories.indices) {
             onFocusCategoryHandled()
             return@LaunchedEffect
@@ -158,17 +161,21 @@ fun CategoryRail(
         val target = requestedVisible.takeIf { it >= 0 } ?: 0
         runCatching { listState.scrollToItem(target) }
         withFrameNanos { }
+        if (!hasFocus || generation != focusGeneration) return@LaunchedEffect
         runCatching {
             if (requestedVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
         }
-        onFocusCategoryHandled()
+        if (generation == focusGeneration) onFocusCategoryHandled()
     }
 
-    LaunchedEffect(focusDestination) {
-        val destination = focusDestination
+    LaunchedEffect(focusDestination, hasFocus, visible, focusGeneration) {
+        val destination = focusDestination ?: return@LaunchedEffect
+        val generation = focusGeneration
         when (destination) {
             CategoryRailFocusDestination.SEARCH -> {
-                if (hasFocus) runCatching { searchFocus.requestFocus() }
+                if (hasFocus && generation == focusGeneration) {
+                    runCatching { searchFocus.requestFocus() }
+                }
             }
 
             CategoryRailFocusDestination.SELECTED_CATEGORY,
@@ -180,6 +187,7 @@ fun CategoryRail(
                 val target = if (focusSelected) selectedVisible else 0
                 runCatching { listState.scrollToItem(target) }
                 withFrameNanos { }
+                if (!hasFocus || generation != focusGeneration) return@LaunchedEffect
                 runCatching {
                     if (focusSelected) selectedFocus.requestFocus() else firstCategoryFocus.requestFocus()
                 }
@@ -187,7 +195,7 @@ fun CategoryRail(
 
             null -> Unit
         }
-        focusDestination = null
+        if (generation == focusGeneration && focusDestination == destination) focusDestination = null
     }
 
     // Fixed full-label column in the screen's Row — a real grid column (no overlay), so it takes its own
@@ -211,7 +219,13 @@ fun CategoryRail(
                     // focus transaction completes.
                     val entered = it.hasFocus && !hasFocus
                     hasFocus = it.hasFocus
-                    if (it.hasFocus) onFocused() else query = "" // reset the search on leaving
+                    if (it.hasFocus) {
+                        onFocused()
+                    } else {
+                        query = ""
+                        focusDestination = null
+                        focusGeneration++
+                    }
                     if (entered) {
                         onFocusCategoryHandled()
                         focusDestination = CategoryRailFocusDestination.SEARCH
