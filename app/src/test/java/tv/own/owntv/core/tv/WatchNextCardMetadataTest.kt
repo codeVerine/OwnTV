@@ -128,6 +128,20 @@ class WatchNextCardMetadataTest {
     }
 
     @Test
+    fun providerBackdropRemainsLandscapeWhenItSharesPosterUrl() {
+        val card = movieWatchNextCardMetadata(
+            movie = movie(
+                posterUrl = "https://provider/shared.jpg",
+                backdropUrl = "https://provider/shared.jpg",
+            ),
+            tmdb = null,
+        )
+
+        assertEquals(WatchNextArtworkSource.PROVIDER_BACKDROP, card.artworkSource)
+        assertEquals(WatchNextArtShape.LANDSCAPE, card.shape)
+    }
+
+    @Test
     fun movieWithBlankTmdbFallsBackToProviderBackdropAndPoster() {
         // TMDB matched but its presentation fields are blank/missing: provider art must survive.
         val tmdb = tmdbMovie(title = "", backdropPath = null, posterPath = "  ")

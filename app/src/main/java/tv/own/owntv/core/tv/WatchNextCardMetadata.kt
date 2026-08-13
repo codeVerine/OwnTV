@@ -12,6 +12,13 @@ enum class WatchNextArtShape {
     POSTER,
 }
 
+enum class WatchNextArtworkSource(val shape: WatchNextArtShape) {
+    TMDB_BACKDROP(WatchNextArtShape.LANDSCAPE),
+    TMDB_EPISODE_STILL(WatchNextArtShape.LANDSCAPE),
+    PROVIDER_BACKDROP(WatchNextArtShape.LANDSCAPE),
+    PROVIDER_POSTER(WatchNextArtShape.POSTER),
+}
+
 /**
  * Presentation-only fields for an Android TV Watch Next card, merged from TMDB enrichment and safe
  * provider fallbacks. Deliberately contains no item id, stable key, deep-link identity, progress,
@@ -24,6 +31,12 @@ data class WatchNextCardMetadata(
     val containerTitle: String? = null,
     val artworkUrl: String? = null,
     val shape: WatchNextArtShape = WatchNextArtShape.LANDSCAPE,
+    val artworkSource: WatchNextArtworkSource? = null,
+)
+
+private data class SelectedWatchNextArtwork(
+    val url: String,
+    val source: WatchNextArtworkSource,
 )
 
 /**
@@ -36,11 +49,17 @@ fun movieWatchNextCardMetadata(movie: MovieEntity, tmdb: MetadataCacheEntity?): 
     val tmdbBackdrop = tmdb?.let { MetadataImages.backdrop(it.backdropPath, size = "w780") }
     val providerBackdrop = movie.backdropUrl?.takeIf { it.isNotBlank() }
     val providerPoster = movie.posterUrl?.takeIf { it.isNotBlank() }
-    val artwork = tmdbBackdrop ?: providerBackdrop ?: providerPoster
+    val artwork = when {
+        tmdbBackdrop != null -> SelectedWatchNextArtwork(tmdbBackdrop, WatchNextArtworkSource.TMDB_BACKDROP)
+        providerBackdrop != null -> SelectedWatchNextArtwork(providerBackdrop, WatchNextArtworkSource.PROVIDER_BACKDROP)
+        providerPoster != null -> SelectedWatchNextArtwork(providerPoster, WatchNextArtworkSource.PROVIDER_POSTER)
+        else -> null
+    }
     return WatchNextCardMetadata(
         title = tmdbTitle ?: movie.name,
-        artworkUrl = artwork,
-        shape = if (artwork != null && artwork == providerPoster) WatchNextArtShape.POSTER else WatchNextArtShape.LANDSCAPE,
+        artworkUrl = artwork?.url,
+        shape = artwork?.source?.shape ?: WatchNextArtShape.LANDSCAPE,
+        artworkSource = artwork?.source,
     )
 }
 
@@ -67,12 +86,19 @@ fun episodeWatchNextCardMetadata(
     val tmdbShowBackdrop = showMeta?.let { MetadataImages.backdrop(it.backdropPath, size = "w780") }
     val providerBackdrop = show.backdropUrl?.takeIf { it.isNotBlank() }
     val providerPoster = show.posterUrl?.takeIf { it.isNotBlank() }
-    val artwork = episodeStill ?: tmdbShowBackdrop ?: providerBackdrop ?: providerPoster
+    val artwork = when {
+        episodeStill != null -> SelectedWatchNextArtwork(episodeStill, WatchNextArtworkSource.TMDB_EPISODE_STILL)
+        tmdbShowBackdrop != null -> SelectedWatchNextArtwork(tmdbShowBackdrop, WatchNextArtworkSource.TMDB_BACKDROP)
+        providerBackdrop != null -> SelectedWatchNextArtwork(providerBackdrop, WatchNextArtworkSource.PROVIDER_BACKDROP)
+        providerPoster != null -> SelectedWatchNextArtwork(providerPoster, WatchNextArtworkSource.PROVIDER_POSTER)
+        else -> null
+    }
 
     return WatchNextCardMetadata(
         title = tmdbEpisodeTitle ?: providerEpisodeName ?: tmdbShowTitle ?: providerShowName ?: "",
         containerTitle = tmdbShowTitle ?: providerShowName ?: "",
-        artworkUrl = artwork,
-        shape = if (artwork != null && artwork == providerPoster) WatchNextArtShape.POSTER else WatchNextArtShape.LANDSCAPE,
+        artworkUrl = artwork?.url,
+        shape = artwork?.source?.shape ?: WatchNextArtShape.LANDSCAPE,
+        artworkSource = artwork?.source,
     )
 }

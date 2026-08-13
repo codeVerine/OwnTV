@@ -20,7 +20,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import tv.own.owntv.R
 import tv.own.owntv.core.customize.CustomizationStore
@@ -70,10 +72,12 @@ class TvHomeRepository(
     private val resolver: ContentResolver get() = context.contentResolver
     private val channelHelper = PreviewChannelHelper(context)
     private val mutex = Mutex()
+    private val metadataResolutionSemaphore = Semaphore(WATCH_NEXT_METADATA_RESOLUTION_CONCURRENCY)
 
     companion object {
         private const val TAG = "OwnTVHome"
         private const val WATCH_NEXT_PUBLISH_INTERVAL_MS = 60_000L
+        private const val WATCH_NEXT_METADATA_RESOLUTION_CONCURRENCY = 4
         private const val RECENT_LIVE_MAX_ITEMS = 10
         private const val RECENT_LIVE_REFRESH_INTERVAL_MS = 5_000L
         private const val RECENT_LIVE_CHANNEL_GROUP_ID = 0L
@@ -342,18 +346,12 @@ class TvHomeRepository(
     private suspend fun upsertWatchNext(movie: MovieEntity, row: TvProviderProgramEntity, card: WatchNextCardMetadata? = null) {
         val stableKey = launcherPlanner.movieStableKey(movie)
         val merged = card ?: movieWatchNextCardMetadata(movie, null)
-        val art = merged.artworkUrl?.let { safeMediaArtUri(it) }
         val program = WatchNextProgram.Builder()
             .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
             .setType(TvContractCompat.PreviewProgramColumns.TYPE_MOVIE)
             .setTitle(merged.title ?: movie.name)
             .setDescription(movie.year?.toString() ?: renderContext().getString(R.string.launcher_movie_type))
-            .apply {
-                if (art != null) {
-                    setPosterArtUri(art)
-                    setPosterArtAspectRatio(watchNextAspectRatio(merged.shape))
-                }
-            }
+            .setWatchNextArtwork(merged)
             .setLastPlaybackPositionMillis(safeMillisToInt(row.lastPositionMs))
             .setDurationMillis(safeMillisToInt(row.durationMs))
             .setInternalProviderId(platformInternalId(TvProviderSurface.WATCH_NEXT, row.profileId, MediaType.MOVIE, stableKey))
@@ -374,7 +372,6 @@ class TvHomeRepository(
     ) {
         val renderContext = renderContext()
         val merged = card ?: episodeWatchNextCardMetadata(show, episode, null, null)
-        val art = merged.artworkUrl?.let { safeMediaArtUri(it) }
         val program = WatchNextProgram.Builder()
             .setWatchNextType(watchNextType)
             .setType(TvContractCompat.PreviewProgramColumns.TYPE_TV_EPISODE)
@@ -384,12 +381,7 @@ class TvHomeRepository(
                 add(renderContext.getString(R.string.player_season_number, episode.seasonNumber))
                 if (episode.episodeNumber > 0) add(renderContext.getString(R.string.launcher_episode_number, episode.episodeNumber))
             }.joinToString(renderContext.getString(R.string.player_metadata_separator)))
-            .apply {
-                if (art != null) {
-                    setPosterArtUri(art)
-                    setPosterArtAspectRatio(watchNextAspectRatio(merged.shape))
-                }
-            }
+            .setWatchNextArtwork(merged)
             .setLastPlaybackPositionMillis(safeMillisToInt(row.lastPositionMs))
             .setDurationMillis(safeMillisToInt(row.durationMs))
             .setInternalProviderId(platformInternalId(TvProviderSurface.WATCH_NEXT, row.profileId, MediaType.EPISODE, rowStableKey))
@@ -413,25 +405,27 @@ class TvHomeRepository(
     }
 
     /** Resolve TMDB movie card metadata; any enrichment failure degrades to the provider card. */
-    private suspend fun movieCardMetadata(movie: MovieEntity): WatchNextCardMetadata {
-        val tmdb = runCatching { metadata.resolveMovie(movie) }
-            .onFailure { logW("watch next movie metadata resolve failed movieId=${movie.id}", it) }
-            .getOrNull()
-        return movieWatchNextCardMetadata(movie, tmdb)
-    }
+    private suspend fun movieCardMetadata(movie: MovieEntity): WatchNextCardMetadata =
+        metadataResolutionSemaphore.withPermit {
+            val tmdb = runCatching { metadata.resolveMovie(movie) }
+                .onFailure { logW("watch next movie metadata resolve failed movieId=${movie.id}", it) }
+                .getOrNull()
+            movieWatchNextCardMetadata(movie, tmdb)
+        }
 
     /** Resolve TMDB show + episode card metadata; a failed episode lookup keeps any show metadata. */
-    private suspend fun episodeCardMetadata(show: SeriesEntity, episode: EpisodeEntity): WatchNextCardMetadata {
-        val showMeta = runCatching { metadata.resolveSeries(show) }
-            .onFailure { logW("watch next episode show metadata resolve failed showId=${show.id}", it) }
-            .getOrNull()
-        val episodeMeta = showMeta?.let {
-            runCatching { metadata.resolveEpisode(show, episode, it) }
-                .onFailure { logW("watch next episode metadata resolve failed episodeId=${episode.id}", it) }
+    private suspend fun episodeCardMetadata(show: SeriesEntity, episode: EpisodeEntity): WatchNextCardMetadata =
+        metadataResolutionSemaphore.withPermit {
+            val showMeta = runCatching { metadata.resolveSeries(show) }
+                .onFailure { logW("watch next episode show metadata resolve failed showId=${show.id}", it) }
                 .getOrNull()
+            val episodeMeta = showMeta?.let {
+                runCatching { metadata.resolveEpisode(show, episode, it) }
+                    .onFailure { logW("watch next episode metadata resolve failed episodeId=${episode.id}", it) }
+                    .getOrNull()
+            }
+            episodeWatchNextCardMetadata(show, episode, showMeta, episodeMeta)
         }
-        return episodeWatchNextCardMetadata(show, episode, showMeta, episodeMeta)
-    }
 
     private data class ResolvedWatchNextCard(
         val targetItemId: Long,
@@ -492,6 +486,16 @@ class TvHomeRepository(
     private fun watchNextAspectRatio(shape: WatchNextArtShape): Int = when (shape) {
         WatchNextArtShape.LANDSCAPE -> TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_16_9
         WatchNextArtShape.POSTER -> TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_MOVIE_POSTER
+    }
+
+    private fun WatchNextProgram.Builder.setWatchNextArtwork(card: WatchNextCardMetadata): WatchNextProgram.Builder {
+        val art = card.artworkUrl?.let { safeMediaArtUri(it) }
+        setPosterArtUri(art)
+        setPosterArtAspectRatio(
+            if (art != null) watchNextAspectRatio(card.shape)
+            else TvContractCompat.PreviewProgramColumns.ASPECT_RATIO_16_9,
+        )
+        return this
     }
 
     private suspend fun persistProgram(row: TvProviderProgramEntity, program: WatchNextProgram) {
