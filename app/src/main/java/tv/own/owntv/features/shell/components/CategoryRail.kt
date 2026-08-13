@@ -168,7 +168,7 @@ fun CategoryRail(
         if (generation == focusGeneration) onFocusCategoryHandled()
     }
 
-    LaunchedEffect(focusDestination, hasFocus, visible, focusGeneration) {
+    LaunchedEffect(focusDestination, hasFocus, visible, focusGeneration, selectedIndex) {
         val destination = focusDestination ?: return@LaunchedEffect
         val generation = focusGeneration
         when (destination) {

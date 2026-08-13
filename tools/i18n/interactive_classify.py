@@ -33,6 +33,11 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 import check_hardcoded_strings as _lib  # noqa: E402
 
+try:
+    from tools.i18n.format_specs import _tokens as _format_tokens
+except ModuleNotFoundError:
+    from format_specs import _tokens as _format_tokens
+
 ROOT = _lib.ROOT
 SRC = _lib.SRC
 BASELINE = _lib.BASELINE
@@ -378,7 +383,24 @@ def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: 
 
 
 def _xml_escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    tokens, _ = _format_tokens(text)
+    escaped: list[str] = []
+    position = 0
+    for start, end, _, conversion in tokens:
+        if conversion == "%":
+            continue
+        escaped.append(text[position:start].replace("%", "%%"))
+        escaped.append(text[start:end])
+        position = end
+    escaped.append(text[position:].replace("%", "%%"))
+    android_text = "".join(escaped).replace("'", "\\'")
+    return (
+        android_text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 # ---------------------------------------------------------------------------
