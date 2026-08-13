@@ -238,6 +238,7 @@ fun MoviesScreen(
     LaunchedEffect(contentScrolled) { onContentScrolled(contentScrolled) }
     var gridPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
+    var railFocusRequest by remember { mutableStateOf<Int?>(null) }
     // Returning from the player: scroll to and focus the movie you just played (waits for the grid to load).
     LaunchedEffect(restoreFocus, movies.itemCount) {
         if (!restoreFocus || movies.itemCount == 0) return@LaunchedEffect
@@ -324,6 +325,8 @@ fun MoviesScreen(
             categories = railItems.map { RailCategory(it.displayLabel(R.string.content_category_all_movies), it.icon, showGenreDot = it.key is LiveKey.Folder) },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
+            focusCategoryIndex = railFocusRequest,
+            onFocusCategoryHandled = { railFocusRequest = null },
             listState = catListState,
             showPanel = false,
             modifier = Modifier
@@ -335,7 +338,12 @@ fun MoviesScreen(
                     isFocused = { railPaneFocused },
                     lastIndex = { railItems.size - 1 },
                     currentTargetIndex = { selectedIndex },
-                    onJumpToIndex = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
+                    onJumpToIndex = { idx ->
+                        railItems.getOrNull(idx)?.let {
+                            railFocusRequest = idx
+                            vm.select(it.key)
+                        }
+                    },
                 ),
         )
 

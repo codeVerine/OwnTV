@@ -304,11 +304,10 @@ def _string_resource_matches(xml_content: str, key: str) -> list[re.Match[str]]:
 
 
 def _existing_resource_entries(key: str) -> list[tuple[Path, re.Match[str]]]:
-    entries: list[tuple[Path, re.Match[str]]] = []
-    for resource_file in sorted(STRINGS_XML.parent.glob("strings*.xml")):
-        content = resource_file.read_text("utf-8")
-        entries.extend((resource_file, match) for match in _string_resource_matches(content, key))
-    return entries
+    if not STRINGS_XML.is_file():
+        return []
+    content = STRINGS_XML.read_text("utf-8")
+    return [(STRINGS_XML, match) for match in _string_resource_matches(content, key)]
 
 
 def _key_exists(key: str) -> bool:
@@ -486,8 +485,8 @@ def _prompt_category(text: str, count: int) -> str | None:
 def _show_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
     """Print all occurrences and return them."""
     occurrences = _find_all_occurrences(path, normalized_text)
-    current = _lib._inventory()
-    all_files = [p for (p, t), c in current.items() if t == normalized_text]
+    unclassified = _lib._inventory()
+    all_files = [p for (p, t), c in unclassified.items() if t == normalized_text]
 
     seen = set()
     for i, occ in enumerate(occurrences):
@@ -509,8 +508,11 @@ def _show_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
 
 
 def _classify_one(path: str, text: str, count: int) -> str | None:
-    """Classify one unique string. Returns short key or None to quit."""
+    """Classify one unique string. Returns success, skipped, quit, or failure."""
     occurrences = _show_occurrences(path, text)
+    if not occurrences:
+        print("  → A safely classified occurrence shares this literal; leaving it unchanged")
+        return "skipped"
     choice = _prompt_category(text, count)
     if choice in ("q", None):
         return "q"
@@ -524,7 +526,12 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
         if not _regenerate_baseline():
             return None
         print(f"  → Classified as {label}")
-        return choice
+        return "success"
+
+    safe, _, _ = _lib._safe_entries()
+    if safe.get((path, text), 0):
+        print("  → Safe and unclassified occurrences share this literal; leaving it unchanged")
+        return "skipped"
 
     # --- user-facing ---
     key = _suggest_key(path, text)
@@ -540,7 +547,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
                 key = input("  Enter key name: ").strip()
         elif confirm in ("s", "skip"):
             print("  → Skipped, literal left unchanged")
-            return choice
+            return "skipped"
         else:
             print(f"  Unknown: {confirm!r}")
 
@@ -549,7 +556,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
         confirm = input("  Overwrite? [y]es [n]o > ").strip().lower()
         if confirm not in ("y", "yes"):
             print("  → Skipped")
-            return choice
+            return "skipped"
 
     composable_occurrences = [
         occurrence for occurrence in occurrences
@@ -557,7 +564,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     ]
     if not composable_occurrences:
         print("  → No @Composable occurrence selected; literal left unchanged")
-        return choice
+        return "skipped"
 
     approved_occurrences = composable_occurrences
     if len(composable_occurrences) > 1:
@@ -568,7 +575,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
                 break
             if selection in ("s", "skip"):
                 print("  → Skipped, literal left unchanged")
-                return choice
+                return "skipped"
             try:
                 selected_numbers = {int(value) for value in re.split(r"[ ,]+", selection) if value}
             except ValueError:
@@ -591,12 +598,12 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     print(f'\n  Translator context (optional — explain where/how this string is used):')
     note = input("  > ").strip()
     if not _add_to_strings_xml(key, resource_text, path, translator_note=note if note else None):
-        return choice
+        return None
 
     _replace_all_in_source(path, approved_occurrences, key)
     if not _regenerate_baseline():
         return None
-    return choice
+    return "success"
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +639,7 @@ def main() -> int:
 
     items = sorted(unclassified.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
     classified_count = 0
+    skipped_count = 0
     for i, ((path, text), count) in enumerate(items):
         # Skip if already classified by a previous iteration (same text in another file)
         if i > 0:
@@ -647,11 +655,17 @@ def main() -> int:
         if choice is None:
             print("\nClassification failed; stopping.")
             return 1
-        classified_count += 1
+        if choice == "skipped":
+            skipped_count += 1
+        else:
+            classified_count += 1
 
     if not _regenerate_baseline():
         return 1
-    print(f"\n✓ All {classified_count} literals classified.")
+    if skipped_count:
+        print(f"\n✓ Classified {classified_count} literals; {skipped_count} left unchanged.")
+    else:
+        print(f"\n✓ All {classified_count} literals classified.")
     print("  Remember to commit the changed files:")
     print("    strings.xml, safe_literals.txt, hardcoded_baseline.txt, *.kt sources")
     return 0

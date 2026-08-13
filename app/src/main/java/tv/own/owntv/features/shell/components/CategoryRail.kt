@@ -101,6 +101,8 @@ fun CategoryRail(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     onFocused: () -> Unit = {},
+    focusCategoryIndex: Int? = null,
+    onFocusCategoryHandled: () -> Unit = {},
     modifier: Modifier = Modifier,
     // Caller-supplied list state. Defaulted so existing callers are unchanged, but Live/Movies/Series
     // pass their own so CH+- key paging can drive the rail's scroll position from the screen.
@@ -127,8 +129,10 @@ fun CategoryRail(
 
     val selectedFocus = remember { FocusRequester() }
     val firstCategoryFocus = remember { FocusRequester() }
+    val requestedCategoryFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
+    val requestedVisible = focusCategoryIndex?.let { visible.indexOf(it) } ?: -1
 
     // Keep the selected category in view when the selection changes — both for the initial load /
     // restored state (rail not yet focused) AND when CH+- paging selects a far-away category while the
@@ -139,6 +143,25 @@ fun CategoryRail(
         if (selectedVisible >= 0) {
             runCatching { listState.scrollToItem(selectedVisible) }
         }
+    }
+
+    LaunchedEffect(focusCategoryIndex, hasFocus, visible) {
+        val requestedIndex = focusCategoryIndex ?: return@LaunchedEffect
+        if (!hasFocus || requestedIndex !in categories.indices) {
+            onFocusCategoryHandled()
+            return@LaunchedEffect
+        }
+        if (visible.isEmpty()) {
+            onFocusCategoryHandled()
+            return@LaunchedEffect
+        }
+        val target = requestedVisible.takeIf { it >= 0 } ?: 0
+        runCatching { listState.scrollToItem(target) }
+        withFrameNanos { }
+        runCatching {
+            if (requestedVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
+        }
+        onFocusCategoryHandled()
     }
 
     LaunchedEffect(focusDestination) {
@@ -190,6 +213,7 @@ fun CategoryRail(
                     hasFocus = it.hasFocus
                     if (it.hasFocus) onFocused() else query = "" // reset the search on leaving
                     if (entered) {
+                        onFocusCategoryHandled()
                         focusDestination = CategoryRailFocusDestination.SEARCH
                     }
                 }
@@ -244,6 +268,7 @@ fun CategoryRail(
                         expanded = expanded,
                         onClick = { onSelect(index) },
                         modifier = when {
+                            i == requestedVisible && requestedVisible >= 0 -> Modifier.focusRequester(requestedCategoryFocus)
                             index == selectedIndex -> Modifier.focusRequester(selectedFocus)
                             i == 0 -> Modifier.focusRequester(firstCategoryFocus)
                             else -> Modifier
