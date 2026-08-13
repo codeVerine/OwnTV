@@ -335,6 +335,22 @@ def _xml_comment_is_valid(text: str) -> bool:
     return "--" not in text and not text.endswith("-")
 
 
+def _has_kotlin_interpolation(raw: str) -> bool:
+    is_raw = raw.startswith('"""')
+    body = raw[3:-3] if is_raw else raw[1:-1]
+    index = 0
+    while index < len(body):
+        if not is_raw and body[index] == "\\":
+            index += 2
+            continue
+        if body[index] == "$" and index + 1 < len(body):
+            next_char = body[index + 1]
+            if next_char == "{" or next_char == "_" or next_char.isalpha():
+                return True
+        index += 1
+    return False
+
+
 def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None) -> bool:
     """Add or update one <string> entry in strings.xml."""
     if translator_note is not None and not _xml_comment_is_valid(translator_note):
@@ -346,6 +362,9 @@ def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: 
 
     existing = _existing_resource_entries(key)
     if existing:
+        if any(resource_file.name == "donottranslate.xml" for resource_file, _ in existing):
+            print(f"  ✗ Cannot overwrite protected resource R.string.{key}")
+            return False
         if len(existing) != 1:
             print(f"  ✗ Cannot overwrite R.string.{key}: found {len(existing)} entries")
             return False
@@ -639,7 +658,11 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
         else:
             print(f"  Unknown: {confirm!r}")
 
-    if _key_exists(key):
+    existing_entries = _existing_resource_entries(key)
+    if existing_entries:
+        if any(resource_file.name == "donottranslate.xml" for resource_file, _ in existing_entries):
+            print(f"  → R.string.{key} is protected in donottranslate.xml; skipped")
+            return "skipped"
         print(f"  ⚠ R.string.{key} already exists in base resources")
         confirm = input("  Overwrite? [y]es [n]o > ").strip().lower()
         if confirm not in ("y", "yes"):
@@ -676,9 +699,22 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
                 break
             print(f"  Choose occurrence numbers from: {', '.join(map(str, sorted(valid_numbers)))}")
 
-    resource_text = _lib._decode(approved_occurrences[0].raw)
+    safe_occurrences: list[Occurrence] = []
+    for occurrence in approved_occurrences:
+        decoded = _lib._decode(occurrence.raw)
+        if _has_kotlin_interpolation(occurrence.raw):
+            print(f"  → Skipping interpolated occurrence at line {occurrence.line_no}")
+        elif "%" in decoded:
+            print(f"  → Skipping percent-formatted occurrence at line {occurrence.line_no}")
+        else:
+            safe_occurrences.append(occurrence)
+    if not safe_occurrences:
+        print("  → No safely replaceable occurrence selected; literal left unchanged")
+        return "skipped"
+
+    resource_text = _lib._decode(safe_occurrences[0].raw)
     replacement_occurrences = [
-        occurrence for occurrence in approved_occurrences
+        occurrence for occurrence in safe_occurrences
         if _lib._decode(occurrence.raw) == resource_text
     ]
 

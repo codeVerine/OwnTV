@@ -69,6 +69,7 @@ import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.core.model.DownloadStatus
 import tv.own.owntv.features.live.LiveKey
 import tv.own.owntv.features.live.displayLabel
+import tv.own.owntv.features.live.serialize
 import tv.own.owntv.features.settings.data.PanelSection
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
@@ -238,7 +239,7 @@ fun MoviesScreen(
     LaunchedEffect(contentScrolled) { onContentScrolled(contentScrolled) }
     var gridPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
-    var railFocusRequest by remember { mutableStateOf<Int?>(null) }
+    var railFocusRequest by remember { mutableStateOf<String?>(null) }
     // Returning from the player: scroll to and focus the movie you just played (waits for the grid to load).
     LaunchedEffect(restoreFocus, movies.itemCount) {
         if (!restoreFocus || movies.itemCount == 0) return@LaunchedEffect
@@ -322,10 +323,17 @@ fun MoviesScreen(
     ) {
         CategoryRail(
             width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(R.string.content_category_all_movies), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(R.string.content_category_all_movies),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    stableKey = it.key.serialize(),
+                )
+            },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
-            focusCategoryIndex = railFocusRequest,
+            focusCategoryKey = railFocusRequest,
             onFocusCategoryHandled = { railFocusRequest = null },
             listState = catListState,
             showPanel = false,
@@ -340,7 +348,7 @@ fun MoviesScreen(
                     currentTargetIndex = { selectedIndex },
                     onJumpToIndex = { idx ->
                         railItems.getOrNull(idx)?.let {
-                            railFocusRequest = idx
+                            railFocusRequest = it.key.serialize()
                             vm.select(it.key)
                         }
                     },

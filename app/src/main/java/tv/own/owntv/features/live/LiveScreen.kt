@@ -206,7 +206,7 @@ fun LiveScreen(
     val scope = rememberCoroutineScope()
     var channelPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
-    var railFocusRequest by remember { mutableStateOf<Int?>(null) }
+    var railFocusRequest by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf<ChannelEntity?>(null) }
     var matchingEpg by remember { mutableStateOf<ChannelEntity?>(null) }
     var offsettingEpg by remember { mutableStateOf<ChannelEntity?>(null) }
@@ -343,11 +343,18 @@ fun LiveScreen(
     ) {
         CategoryRail(
             width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    stableKey = it.key.serialize(),
+                )
+            },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
             onFocusCategoryHandled = { railFocusRequest = null },
-            focusCategoryIndex = railFocusRequest,
+            focusCategoryKey = railFocusRequest,
             // Focusing a folder stops the in-pane preview — but only when a preview is actually running.
             // When the player is docked (live PiP) or fullscreen, previewEnabled is false and stopPreview
             // would kill that stream (e.g. while navigating left to leave Live), so we skip it.
@@ -367,7 +374,7 @@ fun LiveScreen(
                     // at once, so this is fast. The rail's LaunchedEffect scrolls + focuses the pill.
                     onJumpToIndex = { idx ->
                         railItems.getOrNull(idx)?.let {
-                            railFocusRequest = idx
+                            railFocusRequest = it.key.serialize()
                             vm.select(it.key)
                         }
                     },

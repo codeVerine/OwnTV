@@ -77,6 +77,7 @@ data class RailCategory(
     // Whether to show the genre hint dot. False for synthetic aggregates ("All Channels/Movies/Series")
     // that combine every provider category — those aren't a real provider genre, so no dot.
     val showGenreDot: Boolean = true,
+    val stableKey: String = fullName,
 )
 
 private enum class CategoryRailFocusDestination {
@@ -101,7 +102,7 @@ fun CategoryRail(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     onFocused: () -> Unit = {},
-    focusCategoryIndex: Int? = null,
+    focusCategoryKey: String? = null,
     onFocusCategoryHandled: () -> Unit = {},
     modifier: Modifier = Modifier,
     // Caller-supplied list state. Defaulted so existing callers are unchanged, but Live/Movies/Series
@@ -134,7 +135,9 @@ fun CategoryRail(
     var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
     var focusGeneration by remember { mutableStateOf(0) }
     var focusedCategoryIndex by remember { mutableStateOf<Int?>(null) }
-    val requestedVisible = focusCategoryIndex?.let { visible.indexOf(it) } ?: -1
+    val requestedKey = focusCategoryKey
+    val requestedCategoryIndex = requestedKey?.let { key -> categories.indexOfFirst { it.stableKey == key } } ?: -1
+    val requestedVisible = requestedCategoryIndex.takeIf { it >= 0 }?.let { visible.indexOf(it) } ?: -1
 
     // Keep the selected category in view when the selection changes — both for the initial load /
     // restored state (rail not yet focused) AND when CH+- paging selects a far-away category while the
@@ -147,11 +150,20 @@ fun CategoryRail(
         }
     }
 
-    LaunchedEffect(focusCategoryIndex, hasFocus, visible, focusDestination, focusGeneration, focusedCategoryIndex) {
+    LaunchedEffect(
+        focusCategoryKey,
+        hasFocus,
+        categories,
+        visible,
+        focusDestination,
+        focusGeneration,
+        focusedCategoryIndex,
+    ) {
         if (focusDestination == CategoryRailFocusDestination.SEARCH) return@LaunchedEffect
-        val requestedIndex = focusCategoryIndex ?: return@LaunchedEffect
+        val targetKey = focusCategoryKey ?: return@LaunchedEffect
         val generation = focusGeneration
-        if (!hasFocus || requestedIndex !in categories.indices) {
+        val targetIndex = categories.indexOfFirst { it.stableKey == targetKey }
+        if (!hasFocus || targetIndex !in categories.indices) {
             onFocusCategoryHandled()
             return@LaunchedEffect
         }
@@ -159,18 +171,22 @@ fun CategoryRail(
             onFocusCategoryHandled()
             return@LaunchedEffect
         }
-        val target = requestedVisible.takeIf { it >= 0 } ?: 0
+        val target = visible.indexOf(targetIndex).takeIf { it >= 0 } ?: 0
         runCatching { listState.scrollToItem(target) }
         withFrameNanos { }
+        val currentTargetKey = focusCategoryKey
+        val currentTargetIndex = categories.indexOfFirst { it.stableKey == targetKey }
+        val currentTargetVisible = visible.indexOf(currentTargetIndex)
         if (
             !hasFocus ||
             generation != focusGeneration ||
-            focusCategoryIndex != requestedIndex
+            currentTargetKey != targetKey ||
+            currentTargetIndex !in categories.indices
         ) return@LaunchedEffect
         runCatching {
-            if (requestedVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
+            if (currentTargetVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
         }
-        if (generation == focusGeneration && focusCategoryIndex == requestedIndex) onFocusCategoryHandled()
+        if (generation == focusGeneration && currentTargetKey == targetKey) onFocusCategoryHandled()
     }
 
     LaunchedEffect(focusDestination, hasFocus, visible, focusGeneration, selectedIndex) {
@@ -283,7 +299,7 @@ fun CategoryRail(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(Dimens.GapSmall),
             ) {
-                items(count = visible.size, key = { visible[it] }) { i ->
+                items(count = visible.size, key = { categories[visible[it]].stableKey }) { i ->
                     val index = visible[i]
                     RailPill(
                         category = categories[index],
@@ -294,8 +310,9 @@ fun CategoryRail(
                         onClick = { onSelect(index) },
                         onFocusStateChanged = { focused ->
                             if (focused) {
-                                if (focusCategoryIndex != null) {
-                                    if (focusCategoryIndex != index) focusGeneration++
+                                val pendingKey = focusCategoryKey
+                                if (pendingKey != null) {
+                                    if (pendingKey != categories[index].stableKey) focusGeneration++
                                     onFocusCategoryHandled()
                                 }
                                 focusedCategoryIndex = index
