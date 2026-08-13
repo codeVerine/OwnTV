@@ -151,7 +151,6 @@ fun CategoryRail(
         if (focusDestination == CategoryRailFocusDestination.SEARCH) return@LaunchedEffect
         val requestedIndex = focusCategoryIndex ?: return@LaunchedEffect
         val generation = focusGeneration
-        val focusedCategoryAtStart = focusedCategoryIndex
         if (!hasFocus || requestedIndex !in categories.indices) {
             onFocusCategoryHandled()
             return@LaunchedEffect
@@ -166,8 +165,7 @@ fun CategoryRail(
         if (
             !hasFocus ||
             generation != focusGeneration ||
-            focusCategoryIndex != requestedIndex ||
-            focusedCategoryIndex != focusedCategoryAtStart
+            focusCategoryIndex != requestedIndex
         ) return@LaunchedEffect
         runCatching {
             if (requestedVisible >= 0) requestedCategoryFocus.requestFocus() else firstCategoryFocus.requestFocus()
@@ -303,10 +301,6 @@ fun CategoryRail(
                                 focusedCategoryIndex = index
                             } else if (focusedCategoryIndex == index) {
                                 focusedCategoryIndex = null
-                                if (focusCategoryIndex != null) {
-                                    focusGeneration++
-                                    onFocusCategoryHandled()
-                                }
                             }
                         },
                         modifier = when {

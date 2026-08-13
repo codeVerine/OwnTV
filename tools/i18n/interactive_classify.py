@@ -312,7 +312,7 @@ def _string_resource_matches(xml_content: str, key: str) -> list[re.Match[str]]:
 
 
 def _base_resource_files() -> list[Path]:
-    return sorted(STRINGS_XML.parent.glob("strings*.xml"))
+    return sorted(STRINGS_XML.parent.glob("*.xml"))
 
 
 def _existing_resource_entries(key: str) -> list[tuple[Path, re.Match[str]]]:
@@ -390,8 +390,6 @@ def _xml_escape(text: str) -> str:
     escaped: list[str] = []
     position = 0
     for start, end, _, conversion in tokens:
-        if conversion == "%":
-            continue
         escaped.append(text[position:start].replace("%", "%%"))
         escaped.append(text[start:end])
         position = end
@@ -571,15 +569,44 @@ def _show_occurrences(
     return occurrences
 
 
+def _select_occurrences(occurrences: list[Occurrence], count: int) -> list[Occurrence] | None:
+    if count <= 0:
+        return []
+    if count > len(occurrences):
+        print("  → The inventory count exceeds the occurrences still present; leaving it unchanged")
+        return []
+    if count == len(occurrences):
+        return occurrences
+
+    print(
+        f"  The manifest records {count} unclassified occurrence(s), but not their positions."
+        " Select their exact occurrence number(s)."
+    )
+    while True:
+        try:
+            selection = input(f"  Select exactly {count} occurrence number(s) > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        try:
+            selected_numbers = {int(value) for value in re.split(r"[ ,]+", selection) if value}
+        except ValueError:
+            selected_numbers = set()
+        if len(selected_numbers) == count and selected_numbers <= set(range(1, len(occurrences) + 1)):
+            return [occurrences[number - 1] for number in sorted(selected_numbers)]
+        print(f"  Choose exactly {count} distinct numbers from 1-{len(occurrences)}")
+
+
 def _classify_one(path: str, text: str, count: int) -> str | None:
     """Classify one unique string. Returns success, skipped, quit, or failure."""
     occurrences = _find_all_occurrences(path, text)
-    candidate_occurrences = occurrences[-count:] if count > 0 else []
-    _show_occurrences(path, text, candidate_occurrences)
+    _show_occurrences(path, text)
+    candidate_occurrences = _select_occurrences(occurrences, count)
+    if candidate_occurrences is None:
+        return "q"
     if not candidate_occurrences:
         print("  → No unclassified occurrence remains in this file; leaving it unchanged")
         return "skipped"
-    choice = _prompt_category(text, count)
+    choice = _prompt_category(text, len(candidate_occurrences))
     if choice in ("q", None):
         return "q"
 
@@ -587,7 +614,7 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
     label = "ignored (technical)" if choice == "i" else category
 
     if choice != "u":
-        if not _add_to_safe(path, text, count, category):
+        if not _add_to_safe(path, text, len(candidate_occurrences), category):
             return None
         if not _regenerate_baseline():
             return None
