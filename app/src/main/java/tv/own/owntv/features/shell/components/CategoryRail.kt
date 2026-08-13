@@ -29,10 +29,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,6 +79,12 @@ data class RailCategory(
     val showGenreDot: Boolean = true,
 )
 
+private enum class CategoryRailFocusDestination {
+    SEARCH,
+    SELECTED_CATEGORY,
+    FIRST_CATEGORY,
+}
+
 /**
  * Layer 2 — the vertical folder rail. Always shows full-name pills (no collapse/expand
  * animation). A pinned [SearchBar] header stays visible above the scrolling [LazyColumn]
@@ -124,7 +128,8 @@ fun CategoryRail(
     val selectedFocus = remember { FocusRequester() }
     val firstCategoryFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
-    val scope = rememberCoroutineScope()
+    var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
+
     // Keep the selected category in view when the selection changes — both for the initial load /
     // restored state (rail not yet focused) AND when CH+- paging selects a far-away category while the
     // rail IS focused. While the user D-pads inside, focus handles scrolling for adjacent moves; this
@@ -132,11 +137,33 @@ fun CategoryRail(
     LaunchedEffect(selectedIndex, categories.size) {
         if (selectedIndex in categories.indices) {
             runCatching { listState.scrollToItem(selectedIndex) }
-            if (hasFocus) {
-                withFrameNanos { }
-                runCatching { selectedFocus.requestFocus() }
-            }
         }
+    }
+
+    LaunchedEffect(focusDestination) {
+        val destination = focusDestination
+        when (destination) {
+            CategoryRailFocusDestination.SEARCH -> {
+                if (hasFocus) runCatching { searchFocus.requestFocus() }
+            }
+
+            CategoryRailFocusDestination.SELECTED_CATEGORY,
+            CategoryRailFocusDestination.FIRST_CATEGORY,
+            -> if (hasFocus && visible.isNotEmpty()) {
+                val selectedVisible = visible.indexOf(selectedIndex)
+                val focusSelected =
+                    destination == CategoryRailFocusDestination.SELECTED_CATEGORY && selectedVisible >= 0
+                val target = if (focusSelected) selectedVisible else 0
+                runCatching { listState.scrollToItem(target) }
+                withFrameNanos { }
+                runCatching {
+                    if (focusSelected) selectedFocus.requestFocus() else firstCategoryFocus.requestFocus()
+                }
+            }
+
+            null -> Unit
+        }
+        focusDestination = null
     }
 
     // Fixed full-label column in the screen's Row — a real grid column (no overlay), so it takes its own
@@ -156,17 +183,13 @@ fun CategoryRail(
                     // Spatial D-pad entry may initially land on the category aligned with the content
                     // row. Redirect every entry to Search so returning from content is predictable and
                     // category filtering is always immediately available. Internal moves between Search
-                    // and category pills don't re-trigger this. The redirect must be deferred a frame:
-                    // requesting focus inside onFocusChanged is rejected while that transaction is active.
+                    // and category pills don't re-trigger this. The destination is requested after the
+                    // focus transaction completes.
                     val entered = it.hasFocus && !hasFocus
                     hasFocus = it.hasFocus
                     if (it.hasFocus) onFocused() else query = "" // reset the search on leaving
-                    if (entered) scope.launch {
-                        // Keep the Down target composed: Search moves to the selected category when it is
-                        // visible, or to the first visible category when there is no visible selection.
-                        val target = visible.indexOf(selectedIndex).takeIf { index -> index >= 0 } ?: 0
-                        if (visible.isNotEmpty()) runCatching { listState.scrollToItem(target) }
-                        runCatching { searchFocus.requestFocus() }
+                    if (entered) {
+                        focusDestination = CategoryRailFocusDestination.SEARCH
                     }
                 }
                 // Held Up/Down can outrun the lazy list's composition and escape the rail (landing
@@ -183,14 +206,10 @@ fun CategoryRail(
                 modifier = Modifier
                     .onPreviewKeyEvent { event ->
                         if (event.key == Key.DirectionDown && event.type == KeyEventType.KeyDown && visible.isNotEmpty()) {
-                            scope.launch {
-                                val target = visible.indexOf(selectedIndex).takeIf { index -> index >= 0 } ?: 0
-                                runCatching { listState.scrollToItem(target) }
-                                withFrameNanos { }
-                                runCatching {
-                                    if (selectedIndex in visible) selectedFocus.requestFocus()
-                                    else firstCategoryFocus.requestFocus()
-                                }
+                            focusDestination = if (selectedIndex in visible) {
+                                CategoryRailFocusDestination.SELECTED_CATEGORY
+                            } else {
+                                CategoryRailFocusDestination.FIRST_CATEGORY
                             }
                             true
                         } else {

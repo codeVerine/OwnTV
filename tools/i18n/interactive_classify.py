@@ -112,8 +112,41 @@ def _source_without_literals_or_comments(src: str) -> str:
     return re.sub(r"//[^\n]*|/\*.*?\*/", blank, masked_src, flags=re.DOTALL)
 
 
-def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
-    masked = _source_without_literals_or_comments(src)
+_NON_COMPOSABLE_LAMBDA_CALLS = frozenset({
+    "remember",
+    "rememberSaveable",
+    "LaunchedEffect",
+    "DisposableEffect",
+    "SideEffect",
+    "produceState",
+    "derivedStateOf",
+    "snapshotFlow",
+    "runCatching",
+    "runBlocking",
+    "withContext",
+    "launch",
+    "async",
+    "let",
+    "also",
+    "apply",
+    "run",
+    "use",
+    "map",
+    "mapNotNull",
+    "filter",
+    "filterNot",
+    "fold",
+    "forEach",
+    "onEach",
+    "repeat",
+    "withTimeout",
+    "withTimeoutOrNull",
+    "onPreviewKeyEvent",
+    "onFocusChanged",
+})
+
+
+def _brace_pairs(masked: str) -> dict[int, int]:
     stack: list[int] = []
     matching: dict[int, int] = {}
     for index, char in enumerate(masked):
@@ -121,7 +154,12 @@ def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
             stack.append(index)
         elif char == "}" and stack:
             matching[stack.pop()] = index
+    return matching
 
+
+def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
+    masked = _source_without_literals_or_comments(src)
+    matching = _brace_pairs(masked)
     ranges: list[tuple[int, int, bool]] = []
     function_pattern = re.compile(r"\bfun\s+[A-Za-z_][\w`]*(?:\s*<[^{}]*>)?[^{}]*\{")
     for match in function_pattern.finditer(masked):
@@ -141,6 +179,54 @@ def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
     return ranges
 
 
+def _lambda_call_name(prefix: str) -> str | None:
+    prefix = prefix.rstrip()
+    if prefix.endswith(")"):
+        depth = 0
+        opening = None
+        for index in range(len(prefix) - 1, -1, -1):
+            if prefix[index] == ")":
+                depth += 1
+            elif prefix[index] == "(":
+                depth -= 1
+                if depth == 0:
+                    opening = index
+                    break
+        if opening is None:
+            return None
+        prefix = prefix[:opening].rstrip()
+    match = re.search(r"([A-Za-z_][\w.]*)\s*$", prefix)
+    return match.group(1).rsplit(".", 1)[-1] if match else None
+
+
+def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
+    masked = _source_without_literals_or_comments(src)
+    matching = _brace_pairs(masked)
+    function_openings = {
+        match.end() - 1
+        for match in re.finditer(r"\bfun\s+[A-Za-z_][\w`]*(?:\s*<[^{}]*>)?[^{}]*\{", masked)
+    }
+    ranges: list[tuple[int, int]] = []
+    for opening, closing in matching.items():
+        if opening in function_openings:
+            continue
+        prefix = masked[max(0, opening - 512):opening].rstrip()
+        if re.search(r"@\s*(?:[\w.]+\.)?Composable\s*$", prefix):
+            continue
+        if re.search(r"(?:^|[\s;])(?:if|for|while|when|catch|synchronized)\s*(?:\([^{}]*\))?\s*$", prefix):
+            continue
+        if re.search(r"(?:^|[\s;])(?:else|try|finally|do)\s*$", prefix):
+            continue
+        if re.search(r"\b(?:class|interface|object|enum)\b[^{}]*$", prefix):
+            continue
+        if re.search(r"(?:[A-Za-z_][\w.]*)\s*=\s*$", prefix):
+            ranges.append((opening + 1, closing))
+            continue
+        if _lambda_call_name(prefix) in _NON_COMPOSABLE_LAMBDA_CALLS:
+            ranges.append((opening + 1, closing))
+    return ranges
+
+
 def _is_composable_occurrence(src: str, occurrence: Occurrence) -> bool:
     lines = src.splitlines(keepends=True)
     if not 1 <= occurrence.line_no <= len(lines):
@@ -149,7 +235,9 @@ def _is_composable_occurrence(src: str, occurrence: Occurrence) -> bool:
     containing = [item for item in _composable_ranges(src) if item[0] <= offset < item[1]]
     if not containing:
         return False
-    return min(containing, key=lambda item: item[1] - item[0])[2]
+    if not min(containing, key=lambda item: item[1] - item[0])[2]:
+        return False
+    return not any(start <= offset < end for start, end in _non_composable_lambda_ranges(src))
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +411,7 @@ def _add_to_safe(path: str, text: str, count: int, category: str):
             print(f"  ✗ {error}")
         return
     key = (path, _lib._normalize(text))
-    safe[key] = count
+    safe[key] = safe.get(key, 0) + count
     categories[key] = category
     entries = {item: (cnt, categories[item]) for item, cnt in safe.items()}
     SAFE_MANIFEST.write_text(_lib._serialize_safe(entries), "utf-8")
@@ -460,10 +548,16 @@ def _classify_one(path: str, text: str, count: int) -> str | None:
                 break
             print(f"  Choose occurrence numbers from: {', '.join(map(str, sorted(valid_numbers)))}")
 
+    resource_text = _lib._decode(approved_occurrences[0].raw)
+    approved_occurrences = [
+        occurrence for occurrence in approved_occurrences
+        if _lib._decode(occurrence.raw) == resource_text
+    ]
+
     # Optional translator context
     print(f'\n  Translator context (optional — explain where/how this string is used):')
     note = input("  > ").strip()
-    if not _add_to_strings_xml(key, text, path, translator_note=note if note else None):
+    if not _add_to_strings_xml(key, resource_text, path, translator_note=note if note else None):
         return choice
 
     _replace_all_in_source(path, approved_occurrences, key)
