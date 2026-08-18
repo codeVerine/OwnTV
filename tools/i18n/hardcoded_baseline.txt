@@ -325,7 +325,6 @@
 2	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	sub-back-color
 2	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	sub-color
 2	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	sub-pos
-1	app/src/main/java/tv/own/owntv/player/OwnTVPlayer.kt	yes
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	\0
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	429
 1	app/src/main/java/tv/own/owntv/player/PlayerDiagnostics.kt	458
