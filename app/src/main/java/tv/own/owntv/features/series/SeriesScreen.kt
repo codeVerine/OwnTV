@@ -69,6 +69,7 @@ import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.core.model.DownloadStatus
 import tv.own.owntv.features.live.LiveKey
 import tv.own.owntv.features.live.displayLabel
+import tv.own.owntv.features.live.serialize
 import tv.own.owntv.features.settings.data.PanelSection
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
@@ -298,6 +299,7 @@ private fun SeriesGrid(
     val catListState = androidx.compose.foundation.lazy.rememberLazyListState()
     var gridPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
+    var railFocusRequest by remember { mutableStateOf<String?>(null) }
 
     // Back from a show's episodes: scroll the grid to the poster you opened, then focus it. It may be
     // far down and not composed, so without scrolling the focus request fails and focus falls to the
@@ -384,9 +386,18 @@ private fun SeriesGrid(
     ) {
         CategoryRail(
             width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(R.string.content_category_all_series), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(R.string.content_category_all_series),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    stableKey = it.key.serialize(),
+                )
+            },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
+            focusCategoryKey = railFocusRequest,
+            onFocusCategoryHandled = { railFocusRequest = null },
             listState = catListState,
             showPanel = false,
             modifier = Modifier
@@ -398,7 +409,12 @@ private fun SeriesGrid(
                     isFocused = { railPaneFocused },
                     lastIndex = { railItems.size - 1 },
                     currentTargetIndex = { selectedIndex },
-                    onJumpToIndex = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
+                    onJumpToIndex = { idx ->
+                        railItems.getOrNull(idx)?.let {
+                            railFocusRequest = it.key.serialize()
+                            vm.select(it.key)
+                        }
+                    },
                 ),
         )
 
