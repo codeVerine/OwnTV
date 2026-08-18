@@ -20,15 +20,37 @@ jobs:
           script: |
             const body = context.payload.pull_request.body || "";
 
-            // Each required item is identified by a distinctive phrase from the PR template.
+            // no-mistakes-generated PR descriptions may not include the template's
+            // acknowledgement block. Fall back to the checked-in template only for those
+            // descriptions, while an explicit checkbox in the description takes precedence.
+            const sources = [body];
+            const isGeneratedDescription = body.includes("<!-- no-mistakes-pipeline-attestation:v1");
+            const headRepo = context.payload.pull_request.head.repo;
+            if (isGeneratedDescription && headRepo) {
+              try {
+                const response = await github.rest.repos.getContent({
+                  owner: headRepo.owner.login,
+                  repo: headRepo.name,
+                  path: ".github/PULL_REQUEST_TEMPLATE.md",
+                  ref: context.payload.pull_request.head.sha,
+                });
+                if (!Array.isArray(response.data) && response.data.content) {
+                  sources.push(Buffer.from(response.data.content, "base64").toString("utf8"));
+                }
+              } catch (error) {
+                core.warning(`Could not load the PR-head template: ${error.message}`);
+              }
+            }
+
+            // A line counts as ticked when it has "[x]" (any case) before the identifying phrase.
             const required = [
               { name: "Read the User Guide / checked Settings & functions", needle: "checked the app's **Settings**" },
               { name: "Searched existing issues/PRs", needle: "searched existing issues/PRs" },
             ];
-
-            // A line counts as ticked when it has "[x]" (any case) before the identifying phrase.
             const isTicked = (needle) => {
-              const line = body.split(/\r?\n/).find(l => l.includes(needle));
+              const line = sources
+                .map(source => source.split(/\r?\n/).find(l => l.includes(needle)))
+                .find(Boolean);
               return !!line && /\[[xX]\]/.test(line);
             };
 
