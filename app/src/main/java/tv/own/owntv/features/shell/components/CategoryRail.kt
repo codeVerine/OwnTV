@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -101,10 +102,10 @@ fun CategoryRail(
     categories: List<RailCategory>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
     focusCategoryKey: String? = null,
     onFocusCategoryHandled: () -> Unit = {},
-    modifier: Modifier = Modifier,
     // Caller-supplied list state. Defaulted so existing callers are unchanged, but Live/Movies/Series
     // pass their own so CH+- key paging can drive the rail's scroll position from the screen.
     listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
@@ -133,7 +134,7 @@ fun CategoryRail(
     val requestedCategoryFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     var focusDestination by remember { mutableStateOf<CategoryRailFocusDestination?>(null) }
-    var focusGeneration by remember { mutableStateOf(0) }
+    var focusGeneration by remember { mutableIntStateOf(0) }
     var focusedCategoryIndex by remember { mutableStateOf<Int?>(null) }
     val requestedKey = focusCategoryKey
     val requestedCategoryIndex = requestedKey?.let { key -> categories.indexOfFirst { it.stableKey == key } } ?: -1
@@ -219,8 +220,6 @@ fun CategoryRail(
                     if (focusSelected) selectedFocus.requestFocus() else firstCategoryFocus.requestFocus()
                 }
             }
-
-            null -> Unit
         }
         if (generation == focusGeneration && focusDestination == destination) focusDestination = null
     }
@@ -356,8 +355,8 @@ private fun RailPill(
     selected: Boolean,
     expanded: Boolean,
     onClick: () -> Unit,
-    onFocusStateChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
+    onFocusStateChanged: (Boolean) -> Unit = {},
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
