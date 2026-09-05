@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
@@ -66,6 +67,8 @@ import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.trapVerticalFocusExit
+import tv.own.owntv.ui.components.InAppToast
+import tv.own.owntv.ui.components.rememberInAppToast
 import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalActionSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
@@ -98,6 +101,8 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     var showNewCatPicker by remember { mutableStateOf(false) }
     var showSortPicker by remember { mutableStateOf(false) }
     var showFilterPicker by remember { mutableStateOf(false) }
+    val invertToast = rememberInAppToast()
+    val context = LocalContext.current
     // The category whose Hide button was clicked to close a range — opens the Show/Hide/Cancel prompt.
     var rangeEnd by remember { mutableStateOf<CustomizeCatRow?>(null) }
     // ＋ New category (issue #87): name prompt, then the empty combined category appears in the list.
@@ -217,8 +222,9 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // Action pills on this panel frost with CARDS (the surface the panel rows use), not the DIALOGS
     // default. Covers the chip/move/unhide buttons; trailing Popups don't inherit this anyway.
     CompositionLocalProvider(LocalActionSurface provides GlassSurface.CARDS) {
+    Box(modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .roundedPanel()
             // Spatial D-pad entry from the sidebar would land mid-list — route it to the first chip.
@@ -273,6 +279,18 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 onClick = { dialogReturn = filterFocus; showFilterPicker = true },
                 style = OwnTVButtonStyle.SECONDARY,
                 modifier = Modifier.focusRequester(filterFocus),
+            )
+            Spacer(Modifier.width(10.dp))
+            // Invert pill — flips Show/Hide for every category in the current filtered list in one
+            // atomic edit. Self-undoing: pressing it again restores the previous state.
+            OwnTVButton(
+                label = stringResource(R.string.settings_customize_invert),
+                onClick = {
+                    vm.invertHidden { count ->
+                        invertToast.show(context.getString(R.string.settings_customize_invert_done, count))
+                    }
+                },
+                style = OwnTVButtonStyle.SECONDARY,
             )
             Spacer(Modifier.width(10.dp))
             // New categories pill — same setting as the old Row2, now compact.
@@ -644,6 +662,9 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             }
         }
     }
+    // Transient confirmation for the Invert action (self-undoing bulk flip).
+    InAppToast(invertToast)
+    } // Box
     } // CompositionLocalProvider
     } // else (selectedCategory == null)
 }

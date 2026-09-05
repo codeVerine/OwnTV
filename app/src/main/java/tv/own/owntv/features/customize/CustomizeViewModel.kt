@@ -292,6 +292,22 @@ class CustomizeViewModel(
         }
     }
 
+    /**
+     * Flips the hidden state of every category currently listed (the visibility filter decides what
+     * is listed) in ONE atomic edit — hidden rows become visible and the other way round. Applying
+     * it again restores the original state. [onDone] reports how many rows were flipped.
+     */
+    fun invertHidden(onDone: (Int) -> Unit) {
+        val pid = ctx.value.profileId
+        if (pid < 0) return
+        val current = rows.value
+        if (current.isEmpty()) return
+        viewModelScope.launch {
+            customize.invertCategoriesHidden(pid, _section.value, current.map { it.key })
+            onDone(current.size)
+        }
+    }
+
     /** Blank name restores the provider's original. */
     fun renameCategory(row: CustomizeCatRow, name: String?) {
         viewModelScope.launch {

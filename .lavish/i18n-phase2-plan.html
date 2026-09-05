@@ -1,0 +1,658 @@
+<title>Phase 2 - Language Picker - Architecture & Implementation Plan</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, h5, h6, li, dd, td, th, .badge, .label) { overflow-wrap: anywhere; }
+
+  /* Force table text readable on dark themes */
+  .readable-table th, .readable-table td { color: #DEE4E1 !important; }
+  .readable-table code { color: #52DBC8 !important; }
+
+  /* OwnTV actual color palette (teal-seeded M3 dark) */
+  :root {
+    --owntv-bg: #040E0B;
+    --owntv-surface: #0E1513;
+    --owntv-container-low: #161D1B;
+    --owntv-container: #1B211F;
+    --owntv-container-high: #252B29;
+    --owntv-container-highest: #303634;
+    --owntv-on-surface: #DEE4E1;
+    --owntv-on-surface-variant: #BFC9C4;
+    --owntv-outline: #89938F;
+    --owntv-outline-variant: #3F4945;
+    --owntv-primary: #52DBC8;
+    --owntv-secondary: #B1CCC3;
+    --owntv-secondary-container: #334B44;
+    --owntv-tertiary: #A9CBE4;
+    --owntv-tertiary-container: #294B5D;
+  }
+
+  /* OwnTV Android TV mockup (using real palette) */
+  .tv-frame { background: var(--owntv-bg); border-radius: 16px; overflow: hidden; border: 1px solid var(--owntv-outline-variant); }
+  .tv-panel { background: var(--owntv-container-low); border-radius: 20px; margin: 12px; padding: 8px 0; }
+  .tv-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-radius: 16px; margin: 2px 8px; cursor: pointer; transition: all 0.15s; color: var(--owntv-on-surface); }
+  .tv-row:hover, .tv-row.focused { background: var(--owntv-container-high); outline: 2px solid var(--owntv-primary); outline-offset: -1px; }
+  .tv-icon-tile { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .tv-icon-tile.primary { background: rgba(82,219,200,0.12); }
+  .tv-icon-tile.secondary { background: rgba(177,204,195,0.12); }
+  .tv-icon-tile.tertiary { background: rgba(169,203,228,0.12); }
+  .tv-icon-tile svg { width: 22px; height: 22px; }
+  .tv-chip { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; background: rgba(82,219,200,0.12); color: var(--owntv-primary); }
+  .tv-chevron { color: var(--owntv-on-surface-variant); font-size: 18px; opacity: 0.6; }
+  .tv-group-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; padding: 12px 24px 4px; color: var(--owntv-on-surface-variant); }
+  .tv-divider { height: 1px; background: var(--owntv-outline-variant); margin: 4px 24px; }
+  .tv-title-desc { flex: 1; }
+  .tv-title { font-size: 15px; font-weight: 500; color: var(--owntv-on-surface); }
+  .tv-desc { font-size: 13px; color: var(--owntv-on-surface-variant); margin-top: 1px; }
+
+  /* Language picker sub-screen */
+  .picker-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px 8px; }
+  .picker-header svg { width: 20px; height: 20px; color: var(--owntv-on-surface-variant); }
+  .picker-header-title { font-size: 20px; font-weight: 600; color: var(--owntv-on-surface); }
+  .picker-search { background: var(--owntv-container); border: 1px solid var(--owntv-outline-variant); border-radius: 12px; padding: 10px 16px; color: var(--owntv-on-surface); width: calc(100% - 40px); margin: 0 20px 8px; font-size: 14px; outline: none; }
+  .picker-row { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-radius: 16px; margin: 2px 8px; cursor: pointer; transition: all 0.15s; color: var(--owntv-on-surface); }
+  .picker-row:hover, .picker-row.focused { background: var(--owntv-container-high); outline: 2px solid var(--owntv-primary); outline-offset: -1px; }
+  .picker-row.selected { background: rgba(82,219,200,0.06); }
+  .picker-check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--owntv-outline); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
+  .picker-check.active { background: var(--owntv-primary); border-color: var(--owntv-primary); color: var(--owntv-bg); font-weight: 700; }
+  .picker-endonym { font-size: 15px; font-weight: 500; font-family: system-ui, -apple-system, sans-serif; }
+  .picker-english { font-size: 12px; color: var(--owntv-on-surface-variant); margin-top: 1px; }
+  .picker-coverage { font-size: 11px; padding: 3px 8px; border-radius: 10px; background: var(--owntv-container); color: var(--owntv-on-surface-variant); font-weight: 500; }
+  .picker-sep { height: 1px; background: var(--owntv-outline-variant); margin: 6px 28px; }
+</style>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const paint = document.createElement("canvas").getContext("2d");
+  function toRgba(color) { paint.clearRect(0,0,1,1); paint.fillStyle="#000"; paint.fillStyle=color; paint.fillRect(0,0,1,1); return paint.getImageData(0,0,1,1).data; }
+  function compositeRgba(f,b){const a=f[3]/255,ba=b[3]/255,al=a+ba*(1-a);if(!al)return[0,0,0,0];return[(f[0]*a+b[0]*ba*(1-a))/al,(f[1]*a+b[1]*ba*(1-a))/al,(f[2]*a+b[2]*ba*(1-a))/al,al*255];}
+  function pageIsDark(){const r=document.documentElement,rb=toRgba(getComputedStyle(r).backgroundColor),bb=document.body?toRgba(getComputedStyle(document.body).backgroundColor):[0,0,0,0],[R,G,B,A]=compositeRgba(bb,rb);if(A>0)return(0.2126*R+0.7152*G+0.0722*B)/255<0.5;const cs=getComputedStyle(r).colorScheme;if(cs.includes("dark")&&!cs.includes("light"))return true;if(cs.includes("light")&&!cs.includes("dark"))return false;return darkQuery.matches;}
+  const diagrams=[...document.querySelectorAll(".mermaid")].map(el=>({el,src:el.textContent}));
+  let applied,rendering=false,queued=false;
+  function queueRender(){queued=true;if(!rendering)void render();}
+  async function render(){rendering=true;try{while(queued){queued=false;const theme=pageIsDark()?"dark":"default";if(theme===applied)continue;mermaid.initialize({startOnLoad:false,theme,securityLevel:"strict"});for(const{el,src}of diagrams){el.removeAttribute("data-processed");el.textContent=src;}try{await mermaid.run({nodes:diagrams.map(d=>d.el)});}catch(e){console.error(e);return;}applied=theme;}}finally{rendering=false;if(queued)queueRender();}}
+  if(document.readyState==="complete")queueRender();else window.addEventListener("load",queueRender,{once:true});
+  const obs=new MutationObserver(queueRender);for(const el of[document.documentElement,document.body])if(el)obs.observe(el,{attributes:true,attributeFilter:["data-theme","class","style"]});
+  document.addEventListener("change",queueRender,true);document.addEventListener("transitionend",({propertyName})=>{if(propertyName==="background-color")queueRender();},true);darkQuery.addEventListener("change",queueRender);
+</script>
+
+<main data-theme="luxury" class="mx-auto max-w-5xl p-6 lg:p-10 min-h-screen">
+
+  <!-- Header -->
+  <div class="mb-8">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="badge badge-soft badge-primary">Phase 2</span>
+      <span class="badge badge-soft badge-accent">i18n</span>
+    </div>
+    <h1 class="text-3xl font-bold mb-2">Language Picker</h1>
+    <p class="text-base-content/60 text-lg">In-app language selection wired through existing settings navigation. Depends on Phase 0's <code class="text-sm">core/i18n/</code> runtime (already landed).</p>
+  </div>
+
+  <!-- Goal & Prerequisites -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-sm uppercase tracking-wider opacity-60">Goal</h3>
+        <p>Let users pick their UI language from 22 rows (System default + 21 catalogue entries). Same-script switch is instant; cross-script triggers one <code>Activity.recreate()</code>.</p>
+      </div>
+    </div>
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-sm uppercase tracking-wider opacity-60">Prerequisites (all landed in Phase 0)</h3>
+        <ul class="list-disc list-inside text-sm space-y-2">
+          <li><code>LocaleStore</code> - SharedPreferences-backed single locale authority</li>
+          <li><code>AppLocale</code> - context wrapping + process-level Locale/LocaleList defaults</li>
+          <li>
+            <code>LocalizedContent</code> - provides the <strong>4 Compose locals</strong> that make string resolution follow the selected locale:
+            <ol class="list-decimal list-inside ml-4 mt-1 text-base-content/60 space-y-0.5">
+              <li><code>LocalResources</code> - what <code>stringResource()</code> reads</li>
+              <li><code>LocalContext</code> - must match Resources (painters read both)</li>
+              <li><code>LocalConfiguration</code> - registers invalidation dependency</li>
+              <li><code>LocalLayoutDirection</code> - must be set manually for RTL</li>
+            </ol>
+            <span class="text-xs text-base-content/40 mt-1 block">Also handles script-family detection and triggers <code>Activity.recreate()</code> when crossing script boundaries (e.g. Latin to Arabic).</span>
+          </li>
+          <li><code>SupportedLocales</code> - generated catalogue from <code>locales.json</code> (21 entries, only en-US currently packaged)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Language FAQ -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Q: What happens on first launch if the device language is not English?</h2>
+      <div class="text-sm space-y-2">
+        <p><strong>Today (before translations ship):</strong> App shows English regardless. No translations exist yet, so Android's resource fallback always picks the source <code>values/</code> (English). The stored locale tag defaults to <code>""</code> (follow system), but "follow system" only matters when translated resources exist for that system locale.</p>
+        <p><strong>After Phase 4 (translations shipped, flags flipped):</strong> If the device is set to e.g. French and <code>fr</code> is packaged, the app auto-launches in French with no user action. The <code>""</code> default means "follow device". Android resolves <code>values-fr/</code> resources automatically via <code>attachBaseContext</code> wrapping. If the device locale isn't in our 21-language catalogue, fallback chain applies (e.g. <code>pt-PT</code> falls to <code>pt</code> if we have it, then to English).</p>
+        <p class="text-base-content/50 text-xs">This is standard Android resource fallback. Phase 2 itself doesn't change this behavior - it adds the picker so users can <em>override</em> the device language within OwnTV.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Architecture Diagram -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title">Architecture: Write Path</h2>
+      <p class="text-sm text-base-content/60 mb-4">User picks a language. Everything downstream is already wired by Phase 0.</p>
+      <div class="mermaid">
+flowchart TD
+    A["LanguageSettingsScreen\n(new Composable)"] -->|"user picks locale"| B["LanguageSettingsViewModel\n(new, Activity-scoped)"]
+    B -->|"coroutineScope.launch"| C["LocaleStore.set(tag)\n(Phase 0, exists)"]
+    C --> D["SharedPreferences.commit()\n(durable, off main thread)"]
+    C --> E["StateFlow update\n_currentTag.value = tag"]
+    C --> F["AppLocale.applyGlobally(tag)\nLocale.setDefault + LocaleList"]
+    E --> G["LocalizedContent\n(observes currentTag)"]
+    G -->|"same script"| H["CompositionLocalProvider\ninstant recomposition"]
+    G -->|"different script"| I["Activity.recreate()\nattachBaseContext wraps new locale"]
+
+    style A fill:#2563eb,color:#fff,stroke:#1d4ed8
+    style B fill:#7c3aed,color:#fff,stroke:#6d28d9
+    style C fill:#059669,color:#fff,stroke:#047857
+    style G fill:#059669,color:#fff,stroke:#047857
+      </div>
+    </div>
+  </div>
+
+  <!-- File Plan -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title mb-4">Files to Create / Modify</h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm readable-table">
+          <thead>
+            <tr><th>File</th><th>Action</th><th>What</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>features/settings/LanguageSettingsScreen.kt</code></td>
+              <td><span class="badge badge-soft badge-success badge-xs">NEW</span></td>
+              <td>Picker UI - searchable list, endonym rows, coverage %, D-pad navigation</td>
+            </tr>
+            <tr>
+              <td><code>features/settings/LanguageSettingsViewModel.kt</code></td>
+              <td><span class="badge badge-soft badge-success badge-xs">NEW</span></td>
+              <td>Thin ViewModel - reads LocaleStore.currentTag, calls LocaleStore.set(), sorts picker rows</td>
+            </tr>
+            <tr>
+              <td><code>features/shell/components/SettingsScreen.kt</code></td>
+              <td><span class="badge badge-soft badge-warning badge-xs">EDIT</span></td>
+              <td>Add LANGUAGE to SettingsTab enum, add row under new "General" group, add SettingsSearchEntry, wire navigation</td>
+            </tr>
+            <tr>
+              <td><code>ui/components/OwnTVIcon.kt</code></td>
+              <td><span class="badge badge-soft badge-warning badge-xs">EDIT</span></td>
+              <td>Add LANGUAGE enum entry (translate icon - "A" with lines)</td>
+            </tr>
+            <tr>
+              <td><code>res/values/strings_settings.xml</code></td>
+              <td><span class="badge badge-soft badge-warning badge-xs">EDIT</span></td>
+              <td>Add ~12 string resources for picker UI text</td>
+            </tr>
+            <tr>
+              <td><code>di/ (Koin module)</code></td>
+              <td><span class="badge badge-soft badge-warning badge-xs">EDIT</span></td>
+              <td>Register LanguageSettingsViewModel</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- UI Mockup -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title mb-1">UI Mockup</h2>
+      <p class="text-sm text-base-content/60 mb-4">OwnTV Android TV - teal-seeded M3 dark theme. D-pad focus shown with teal outline. <code>roundedPanel()</code> + <code>FocusableSurface</code> rows.</p>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Settings Root (partial) -->
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider opacity-50 mb-2">Settings Root (new "General" group above Profile)</div>
+          <div class="tv-frame" style="max-height: 540px;">
+            <div class="tv-panel">
+              <div class="tv-group-label">General</div>
+              <div class="tv-row focused">
+                <div class="tv-icon-tile primary">
+                  <!-- Material Translate icon (Google's standard language icon) -->
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="color: var(--owntv-primary);">
+                    <path d="M5 8l4 0M3 8l2 0M7 3v2M4.5 8C5.5 11 7.5 13 10 14M6.5 8C7.5 11.5 10.5 14 14 15.5"/>
+                    <path d="M14 17l2-5h0l2 5M14.5 16h3"/>
+                  </svg>
+                </div>
+                <div class="tv-title-desc">
+                  <div class="tv-title">Language</div>
+                  <div class="tv-desc">App display language</div>
+                </div>
+                <div class="tv-chip">System default</div>
+                <div class="tv-chevron">&#x203A;</div>
+              </div>
+
+              <div class="tv-divider"></div>
+              <div class="tv-group-label">Profile</div>
+              <div class="tv-row">
+                <div class="tv-icon-tile secondary">
+                  <svg viewBox="0 0 24 24" fill="currentColor" style="color: var(--owntv-secondary);">
+                    <circle cx="12" cy="8" r="4"/><path d="M20 21c0-3.3-3.6-6-8-6s-8 2.7-8 6"/>
+                  </svg>
+                </div>
+                <div class="tv-title-desc">
+                  <div class="tv-title">Profiles</div>
+                  <div class="tv-desc">Manage viewer profiles</div>
+                </div>
+                <div class="tv-chevron">&#x203A;</div>
+              </div>
+
+              <div class="tv-divider"></div>
+              <div class="tv-group-label">Content</div>
+              <div class="tv-row">
+                <div class="tv-icon-tile primary">
+                  <svg viewBox="0 0 24 24" fill="currentColor" style="color: var(--owntv-primary);">
+                    <path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h10v2H4z"/>
+                  </svg>
+                </div>
+                <div class="tv-title-desc">
+                  <div class="tv-title">Playlists</div>
+                  <div class="tv-desc">IPTV playlists and sources</div>
+                </div>
+                <div class="tv-chevron">&#x203A;</div>
+              </div>
+              <div class="tv-row">
+                <div class="tv-icon-tile primary">
+                  <svg viewBox="0 0 24 24" fill="currentColor" style="color: var(--owntv-primary);">
+                    <path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>
+                  </svg>
+                </div>
+                <div class="tv-title-desc">
+                  <div class="tv-title">EPG Sources</div>
+                  <div class="tv-desc">TV guide data</div>
+                </div>
+                <div class="tv-chevron">&#x203A;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Language Picker Screen -->
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider opacity-50 mb-2">Language Picker Sub-screen</div>
+          <div class="tv-frame" style="max-height: 540px;">
+            <div class="tv-panel">
+              <div class="picker-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--owntv-on-surface-variant); cursor: pointer;">
+                  <path d="M15 19l-7-7 7-7"/>
+                </svg>
+                <span class="picker-header-title">Language</span>
+              </div>
+              <input class="picker-search" type="text" placeholder="Search languages..." disabled>
+
+              <div style="overflow-y: auto; max-height: 380px;">
+                <div class="picker-row selected focused">
+                  <div class="picker-check active">&#x2713;</div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">System default</div>
+                    <div class="picker-english">Follows device language</div>
+                  </div>
+                </div>
+
+                <div class="picker-sep"></div>
+
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">Deutsch</div>
+                    <div class="picker-english">German</div>
+                  </div>
+                  <div class="picker-coverage">100%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">English</div>
+                    <div class="picker-english">English</div>
+                  </div>
+                  <div class="picker-coverage">100%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">Español (España)</div>
+                    <div class="picker-english">Spanish (Spain)</div>
+                  </div>
+                  <div class="picker-coverage">98%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">Français</div>
+                    <div class="picker-english">French</div>
+                  </div>
+                  <div class="picker-coverage">100%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">Italiano</div>
+                    <div class="picker-english">Italian</div>
+                  </div>
+                  <div class="picker-coverage">95%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym">Türkçe</div>
+                    <div class="picker-english">Turkish</div>
+                  </div>
+                  <div class="picker-coverage">92%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym" style="font-family: system-ui, sans-serif;">العربية</div>
+                    <div class="picker-english">Arabic</div>
+                  </div>
+                  <div class="picker-coverage">87%</div>
+                </div>
+                <div class="picker-row">
+                  <div class="picker-check"></div>
+                  <div style="flex: 1;">
+                    <div class="picker-endonym" style="font-family: system-ui, sans-serif;">日本語</div>
+                    <div class="picker-english">Japanese</div>
+                  </div>
+                  <div class="picker-coverage">91%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Coverage % & Contribution Idea -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Coverage Badge: What It Is & Future Contribution Ideas</h2>
+      <div class="text-sm space-y-3">
+        <p>The <strong>%</strong> badge shows <strong>translation coverage</strong> - what percentage of the source English strings have a translation in that locale. Computed by <code>gen_supported_locales.py</code> at build time from the actual resource files.</p>
+
+        <div class="divider text-xs opacity-50">Future idea (not Phase 2 scope - discuss for Phase 4 or later)</div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="card card-border bg-base-300">
+            <div class="card-body p-4">
+              <h4 class="font-semibold text-sm mb-2" style="color: var(--owntv-primary);">Contribution CTA when coverage &lt; 100%</h4>
+              <ul class="text-xs space-y-1 list-disc list-inside text-base-content/70">
+                <li>If coverage &lt; 100%, show a small "Help translate" link or icon</li>
+                <li>Opens Weblate URL for that locale directly</li>
+                <li>Since this is an Android TV app, could show a QR code that opens Weblate on the user's phone</li>
+                <li>Could also show it in the Companion web UI (phone-facing) for even easier access</li>
+              </ul>
+            </div>
+          </div>
+          <div class="card card-border bg-base-300">
+            <div class="card-body p-4">
+              <h4 class="font-semibold text-sm mb-2" style="color: var(--owntv-primary);">Where this fits in the plan</h4>
+              <ul class="text-xs space-y-1 list-disc list-inside text-base-content/70">
+                <li>Phase 2 ships the picker with coverage % as a read-only badge</li>
+                <li>Phase 4b sets up Weblate - contribution URLs only exist after that</li>
+                <li>A "Help translate" CTA naturally belongs after 4b, as a follow-up</li>
+                <li>QR code for Weblate is a nice addition to Companion HTML (Phase 1 batch 10)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <p class="text-base-content/50 text-xs">This is worth adding to the roadmap but not blocking Phase 2 on it. We can discuss the exact UX (QR code? Companion link? Both?) once Weblate is live.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Icon Discussion -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Icon Choice: Translate vs Globe</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="card card-border bg-base-300 text-center p-4">
+          <div style="font-size: 40px; margin-bottom: 8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 40px; height: 40px; color: var(--owntv-primary); margin: 0 auto;">
+              <path d="M5 8l4 0M3 8l2 0M7 3v2M4.5 8C5.5 11 7.5 13 10 14M6.5 8C7.5 11.5 10.5 14 14 15.5"/>
+              <path d="M14 17l2-5h0l2 5M14.5 16h3"/>
+            </svg>
+          </div>
+          <div class="font-semibold text-sm">Translate (A文)</div>
+          <div class="text-xs text-base-content/60 mt-1">Google's Material "translate" icon. Used by Google Translate, Chrome translate bar, Android Settings > System > Language. Most recognizable for language switching.</div>
+          <span class="badge badge-soft badge-primary badge-sm mt-2">Recommended</span>
+        </div>
+        <div class="card card-border bg-base-300 text-center p-4">
+          <div style="font-size: 40px; margin-bottom: 8px;">🌐</div>
+          <div class="font-semibold text-sm">Globe</div>
+          <div class="text-xs text-base-content/60 mt-1">Facebook, Apple's language selector. More generic - also used for "web", "international", "network". Could be confused with network/internet settings.</div>
+        </div>
+        <div class="card card-border bg-base-300 text-center p-4">
+          <div style="font-size: 40px; margin-bottom: 8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 40px; height: 40px; color: var(--owntv-primary); margin: 0 auto;">
+              <path d="M12.87 15.07l-2.54-2.51M5.32 11.65l.99-.27c.56-.16.84-.68 1.12-1.09a3.5 3.5 0 0 1 4.07-1.15c.56.19.83.67 1.11 1.09l.82 1.22"/>
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <div class="font-semibold text-sm">Globe with meridians</div>
+          <div class="text-xs text-base-content/60 mt-1">More detailed globe. Still generic but more distinct from simple network icons. Used by some i18n libraries.</div>
+        </div>
+      </div>
+      <p class="text-sm text-base-content/50 mt-3">All existing OwnTV icons are custom Canvas-drawn paths (no emoji, no Material lib dependency). Whichever icon we pick, it gets drawn as a Canvas path in <code>OwnTVIcon.kt</code>. Google's "translate" icon is the industry standard for language settings.</p>
+    </div>
+  </div>
+
+  <!-- Implementation Steps -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title mb-4">Implementation Plan</h2>
+      <ul class="steps steps-vertical w-full">
+        <li class="step step-primary" data-content="1">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Add LANGUAGE icon to OwnTVIcon enum</div>
+            <div class="text-sm opacity-60">Translate-style glyph via Canvas path (A with lines - standard language icon). Small, isolated change.</div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="2">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Add string resources</div>
+            <div class="text-sm opacity-60"><code>strings_settings.xml</code>: ~12 strings for picker UI (title, description, system default label, search hint, coverage format, search keywords).</div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="3">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Create LanguageSettingsViewModel</div>
+            <div class="text-sm opacity-60">Inject <code>LocaleStore</code>. Expose <code>currentTag: StateFlow</code>, <code>pickerRows: List&lt;SupportedLocale&gt;</code> (sorted by endonym, filtered by <code>packaged && pickerVisible</code>), and <code>setLocale(tag: String)</code>. Filter rows by search query.</div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="4">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Create LanguageSettingsScreen composable</div>
+            <div class="text-sm opacity-60">Follows existing sub-screen pattern (<code>Header</code> + <code>roundedPanel()</code> + <code>FocusableSurface</code> rows): <code>onBack: () -> Unit, modifier: Modifier</code>. SearchBar at top, scrollable Column of locale rows. Each row: radio check + endonym (<code>FontFamily.SansSerif</code>) + English name + coverage badge. System default pinned first.</div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="5">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Wire into SettingsScreen</div>
+            <div class="text-sm opacity-60">
+              <div>a. Add <code>LANGUAGE</code> to <code>SettingsTab</code> enum</div>
+              <div>b. Add new "General" <code>GroupLabel</code> above existing "Profile" group</div>
+              <div>c. Add <code>SettingsRow</code> with translate icon, chip showing current language endonym or "System default"</div>
+              <div>d. Add <code>SettingsTab.LANGUAGE -> LanguageSettingsScreen(...)</code> in the <code>when</code> block</div>
+              <div>e. Add <code>SettingsSearchEntry</code> with keywords "language locale translation international i18n"</div>
+              <div>f. Add <code>FocusRequester</code> for the new row</div>
+            </div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="6">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Register ViewModel in Koin</div>
+            <div class="text-sm opacity-60">Add <code>viewModel { LanguageSettingsViewModel(get()) }</code> to existing settings DI module.</div>
+          </div>
+        </li>
+        <li class="step step-primary" data-content="7">
+          <div class="text-left ml-2">
+            <div class="font-semibold">Build, install, test on device</div>
+            <div class="text-sm opacity-60">Verify D-pad navigation, search filtering, same-script instant switch, cross-script recreate, System default behavior, back navigation, chip update on root screen.</div>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Key Design Decisions -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-base">Sorting Order</h3>
+        <div class="text-sm space-y-2">
+          <div class="flex items-start gap-2">
+            <span class="badge badge-xs badge-primary mt-1">1</span>
+            <span>"System default" pinned first (tag = <code>""</code>)</span>
+          </div>
+          <div class="flex items-start gap-2">
+            <span class="badge badge-xs badge-secondary mt-1">2</span>
+            <span>Remaining rows A-Z by endonym (native name in its own script)</span>
+          </div>
+          <div class="mt-2 text-base-content/50 text-xs">
+            Plan mentions "recently used" between pinned and A-Z. Skipping this for now - 22 rows is small enough that recency adds complexity without clear benefit. Can revisit.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-base">Font Handling</h3>
+        <div class="text-sm space-y-2">
+          <p>Endonyms render with <code>FontFamily.SansSerif</code>, never bundled Lora. This is critical: Lora has no CJK, Arabic, Hebrew, Indic, or Thai glyphs. SansSerif uses the platform's Noto fallback stack which covers all scripts.</p>
+          <p class="text-base-content/50 text-xs">English name and coverage badge can use the app's normal font since they're always Latin.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-base">Visibility Filter</h3>
+        <div class="text-sm space-y-2">
+          <p>Only rows where <code>packaged = true AND pickerVisible = true</code> appear. Currently only <code>en-US</code> meets both. All other entries have <code>packaged = false, pickerVisible = false</code>.</p>
+          <p class="text-base-content/50 text-xs">This means Phase 2 ships with a functioning picker that shows only English + System default until Phase 4 flips the flags. The picker infrastructure is ready but not prematurely exposed.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-border bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title text-base">Script-Change Behavior</h3>
+        <div class="text-sm space-y-2">
+          <p><strong>Same script</strong> (Latin to Latin, e.g. English to French): Instant. <code>LocalizedContent</code> updates Compose locals, full subtree recomposes.</p>
+          <p><strong>Cross script</strong> (Latin to Arab, e.g. English to Arabic): One <code>Activity.recreate()</code>. <code>LocalLocaleList</code> is <code>@RestrictTo</code> and can't be overridden, so CJK/RTL font shaping needs a fresh Activity context.</p>
+          <p class="text-base-content/50 text-xs">Already handled by <code>LocalizedContent</code>'s <code>sameScriptFamily()</code> check.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Settings Root Chip -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Chip on Settings Root Row</h2>
+      <p class="text-sm mb-3">The Language row on the root settings screen shows the current selection as a chip, same pattern as Theme/Accent/etc:</p>
+      <div class="overflow-x-auto">
+        <table class="table table-sm readable-table">
+          <thead><tr><th>State</th><th>Chip Text</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td>System default (<code>""</code>)</td><td>"System default"</td><td><code>stringResource(R.string.settings_language_system_default)</code></td></tr>
+            <tr><td>Explicit locale</td><td>Endonym (e.g. "Deutsch")</td><td><code>SupportedLocales.all.find { it.languageTag == tag }?.endonym</code></td></tr>
+            <tr><td>Unknown tag (corrupt prefs)</td><td>"System default"</td><td>Fallback - <code>LocaleStore.readBlocking()</code> normalizes to <code>""</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ViewModel Shape -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">ViewModel Shape</h2>
+      <pre class="bg-base-300 rounded-lg p-4 text-sm overflow-x-auto" style="color: var(--owntv-on-surface);"><code>class LanguageSettingsViewModel(
+    private val localeStore: LocaleStore,
+) : ViewModel() {
+
+    val currentTag: StateFlow&lt;String&gt; = localeStore.currentTag
+
+    val pickerRows: List&lt;SupportedLocale&gt; =
+        SupportedLocales.pickerRows.sortedBy { it.endonym.lowercase() }
+
+    fun setLocale(tag: String) {
+        viewModelScope.launch { localeStore.set(tag) }
+    }
+}</code></pre>
+      <p class="text-sm text-base-content/50 mt-2">Thin by design. <code>LocaleStore</code> does all persistence and process-level locale application. <code>SupportedLocales.pickerRows</code> handles the packaged+visible filter. ViewModel just bridges the picker UI to the store.</p>
+    </div>
+  </div>
+
+  <!-- Risks & Edge Cases -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Risks & Edge Cases</h2>
+      <div class="space-y-3">
+        <div role="alert" class="alert alert-soft alert-warning text-sm">
+          <span><strong>Only English visible on ship.</strong> Since only <code>en-US</code> has <code>packaged=true, pickerVisible=true</code>, the picker shows 2 rows (System default + English). This is correct per plan - the picker ships ready but doesn't expose untranslated locales. Phase 4 flips the flags.</span>
+        </div>
+        <div role="alert" class="alert alert-soft alert-info text-sm">
+          <span><strong>No "recently used" sorting.</strong> Plan mentions it. With 22 max rows it adds complexity for minimal benefit. Omitting for now - trivially addable later (persist last-3 tags in LocaleStore, sort them between pinned and alphabetical).</span>
+        </div>
+        <div role="alert" class="alert alert-soft alert-info text-sm">
+          <span><strong>Search filtering at this size.</strong> Useful for non-Latin endonyms (typing "jap" finds "日本語"), but optional. Including it since the SearchBar component already exists and is one line to add.</span>
+        </div>
+        <div role="alert" class="alert alert-soft alert-info text-sm">
+          <span><strong>D-pad focus on recreate.</strong> After a script-change recreate, focus returns to the settings root (recreate kills the picker's state). Acceptable - the language already changed, user sees the result. No special handling needed.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scope Boundary -->
+  <div class="card card-border bg-base-200 mb-8">
+    <div class="card-body">
+      <h2 class="card-title text-base mb-3">Scope Boundary</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <h4 class="font-semibold text-sm mb-2 text-success">In Scope</h4>
+          <ul class="text-sm space-y-1 list-disc list-inside">
+            <li>New LanguageSettingsScreen + ViewModel</li>
+            <li>LANGUAGE icon in OwnTVIcon</li>
+            <li>"General" group in settings root</li>
+            <li>Settings row + search entry</li>
+            <li>~12 new string resources</li>
+            <li>Koin registration</li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="font-semibold text-sm mb-2 text-error">Out of Scope</h4>
+          <ul class="text-sm space-y-1 list-disc list-inside">
+            <li>Translations (Phase 4)</li>
+            <li>Backup export/import of locale (Phase 0b already wired)</li>
+            <li>RTL layout fixes (Phase 3)</li>
+            <li>Font fallback for non-Latin scripts (Phase 3a)</li>
+            <li>Pseudolocale testing (Phase 3g)</li>
+            <li>locales.json flag flipping (Phase 4)</li>
+            <li>"Help translate" / Weblate contribution CTA (post Phase 4b)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>

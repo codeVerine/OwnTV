@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OwnTV — i18n Context Verification</title>
+<style>
+:root{color-scheme:dark;--bg:#040e0b;--panel:#0e1513;--panel2:#1b211f;--panel3:#252b29;--text:#dee4e1;--muted:#bfc9c4;--accent:#52dbc8;--danger:#ffb4ab;--warn:#f4cf74;--ok:#87dfc9;--line:#3f4945}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 85% 0,#12352d 0,transparent 30%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif} main{max-width:1180px;margin:auto;padding:36px 22px 64px} h1{font-size:clamp(30px,5vw,52px);line-height:1.05;margin:8px 0 12px} h2{font-size:22px;margin:32px 0 12px} p{margin:6px 0}.eyebrow{color:var(--accent);text-transform:uppercase;letter-spacing:.12em;font-weight:800}.lead{font-size:18px;color:var(--muted);max-width:850px}.verdict{margin:26px 0;padding:20px;border:1px solid #74564f;border-left:5px solid var(--danger);border-radius:16px;background:#211815}.verdict strong{font-size:22px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:22px 0}.stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}.stat b{display:block;font-size:28px}.stat span{color:var(--muted)}.bad{color:var(--danger)}.good{color:var(--ok)}.warn{color:var(--warn)}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--panel)}table{border-collapse:collapse;width:100%;min-width:850px}th,td{text-align:left;vertical-align:top;padding:14px;border-bottom:1px solid var(--line)}th{background:var(--panel3);font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}tr:last-child td{border-bottom:0}.sev{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:800;font-size:12px}.p1{background:#5a2626;color:#ffd8d3}.p2{background:#5a481d;color:#ffe8a3}.p3{background:#243e3a;color:#b8f4e8}code{font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:#09110f;border:1px solid #30403b;border-radius:6px;padding:2px 5px;overflow-wrap:anywhere}.evidence{color:var(--muted);font-size:13px}.checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.check{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.check b{display:block}.next{background:linear-gradient(135deg,#143c34,#0e211d);border:1px solid #337568;border-radius:16px;padding:20px}.next ol{margin-bottom:0}.foot{margin-top:28px;color:var(--muted);font-size:13px}@media(max-width:760px){.stats,.checks{grid-template-columns:1fr 1fr}main{padding:24px 14px 48px}}@media(max-width:460px){.stats,.checks{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main>
+<div class="eyebrow">OwnTV · implementation review</div>
+<h1>Translator context is broad, but not yet verified accurate</h1>
+<p class="lead">Review of commits <code>fab75c3</code> and <code>4a9fc8a</code>, plus the current working tree. No no-mistakes pipeline was used for this verification.</p>
+<div class="verdict"><strong>Changes requested</strong><p>The XML compiles and almost every resource has a comment, but the literal ratchet currently fails, one resource has no translator comment, and spot checks found multiple factually incorrect comments. Do not merge in the current state.</p></div>
+<section class="stats">
+<div class="stat"><b>1,514</b><span>source resources</span></div>
+<div class="stat"><b class="warn">1,513</b><span>immediately annotated</span></div>
+<div class="stat"><b class="bad">15</b><span>hardcoded regressions</span></div>
+<div class="stat"><b class="good">0</b><span>lint errors</span></div>
+</section>
+<h2>Findings</h2>
+<div class="table-wrap"><table><thead><tr><th>Severity</th><th>Finding</th><th>Evidence</th><th>Required action</th></tr></thead><tbody>
+<tr><td><span class="sev p1">P1 · Blocker</span></td><td><b>The hardcoded-literal ratchet fails.</b><p>Compatibility strings were added to the shrinking debt baseline instead of explicitly classifying them as stable migration/comparison literals.</p></td><td class="evidence"><code>tools/i18n/hardcoded_baseline.txt</code> gained 15 entries. Verification against <code>a422e61</code> reports 15 REGRESSION failures.</td><td>Restore the baseline to headers only. Classify the 14 exact legacy playback reasons and the legacy episode suffix as reviewed <code>protocol</code> comparison literals.</td></tr>
+<tr><td><span class="sev p2">P2</span></td><td><b>One source resource lacks an immediate translator comment.</b></td><td class="evidence"><code>strings_settings.xml:509</code> — <code>settings_group_profile</code> is preceded by a generic keyword-bag group comment, not <code>Translators:</code>.</td><td>Add accurate context for the Profile settings-search group label.</td></tr>
+<tr><td><span class="sev p2">P2</span></td><td><b>Some added context is factually wrong.</b><p>That is worse than missing context because it can drive a wrong translation.</p></td><td class="evidence"><code>common_resume</code> says “state, not a command,” but both usages are buttons. <code>settings_sort_playlist</code> says dialog title, but it is the current-mode label in <code>SortChip</code>. <code>settings_auto</code> claims temperature/general usage, but its only use is automatic weather location. <code>sync_counts_separator</code> calls a visible single middle dot “invisible” and “double.”</td><td>Correct these notes and perform another usage-backed spot audit, especially short labels and comments containing broad “generic/used throughout” claims.</td></tr>
+<tr><td><span class="sev p2">P2</span></td><td><b>The safe-literal metadata was corrupted while regenerating.</b></td><td class="evidence"><code>PlaybackErrorLog.kt</code> empty literals changed from <code>7 empty</code> to <code>6 protocol</code>. The count change is expected after code changes; the category is not.</td><td>Use <code>6 empty</code>. Add separate <code>protocol</code> entries for the actual compatibility needles.</td></tr>
+<tr><td><span class="sev p3">P3</span></td><td><b>The authoring guide contradicts itself.</b></td><td class="evidence"><code>docs/i18n.md:51</code> correctly recommends preceding XML comments, but line 88 still requires a <code>comment=</code> attribute.</td><td>Replace the stale line with the preceding <code>&lt;!-- Translators: ... --&gt;</code> convention.</td></tr>
+</tbody></table></div>
+<h2>Validation results</h2>
+<div class="checks">
+<div class="check"><b class="good">PASS · i18n tools</b><span>74 Python tests</span></div>
+<div class="check"><b class="good">PASS · release strings</b><span><code>validate_strings.py --release</code></span></div>
+<div class="check"><b class="good">PASS · locale catalogue</b><span>22 locales, 1,514 source keys</span></div>
+<div class="check"><b class="good">PASS · JVM tests</b><span>Full suite plus targeted tests rerun</span></div>
+<div class="check"><b class="good">PASS · debug build</b><span>Standard and x86_64 debug APKs</span></div>
+<div class="check"><b class="good">PASS · lint</b><span>0 errors; 102 existing warnings</span></div>
+<div class="check"><b class="bad">FAIL · literal ratchet</b><span>15 new/extra literals against merge base</span></div>
+<div class="check"><b class="warn">PARTIAL · comment coverage</b><span>1,513 / 1,514 immediate comments</span></div>
+</div>
+<h2>Recommended correction order</h2>
+<div class="next"><ol><li>Fix safe-literal classifications and return <code>hardcoded_baseline.txt</code> to empty.</li><li>Add the missing <code>settings_group_profile</code> translator note.</li><li>Correct the four demonstrated false notes, then audit similarly broad claims.</li><li>Fix the stale documentation line.</li><li>Rerun the literal verifier against the merge base, validation, JVM tests, build, and lint.</li></ol></div>
+<p class="foot">Design source: OwnTV’s dark near-black/teal palette from <code>ui/theme/Color.kt</code>, used to match the project rather than a generic report theme.</p>
+</main></body></html>
