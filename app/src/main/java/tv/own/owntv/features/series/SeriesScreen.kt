@@ -120,6 +120,7 @@ import tv.own.owntv.ui.theme.Dimens
 import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
+import tv.own.owntv.ui.format.rememberBestDateFormatter
 import tv.own.owntv.core.live.LiveKey
 
 @Composable
@@ -897,10 +898,14 @@ private fun EpisodeDetailPane(
     val title = if (tmdbWins) meta?.title?.takeIf { it.isNotBlank() } ?: episodeDisplayTitle(episode) else episodeDisplayTitle(episode)
     val plot = if (tmdbWins) meta?.overview ?: episode.plot?.takeIf { it.isNotBlank() }
         else episode.plot?.takeIf { it.isNotBlank() } ?: meta?.overview
+    // Provider "added" stamp (Xtream only; null elsewhere) — the date a show's episode landed on
+    // the portal (group feedback: Tuntematon). Formatted in the device locale.
+    val addedDate = rememberBestDateFormatter("d MMM yyyy")(episode.addedAt ?: 0L)
     val bits = listOfNotNull(
         stringResource(R.string.content_season_episode, episode.seasonNumber, episode.episodeNumber),
         meta?.year?.let { localizedInteger(it, grouping = false) },
         meta?.rating?.takeIf { it > 0 }?.let { stringResource(R.string.content_rating, it) },
+        episode.addedAt?.takeIf { it > 0 }?.let { stringResource(R.string.content_added_date, addedDate) },
     )
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Dimens.GapLarge)) {
         // Non-focusable status strip — the focused episode's own download, else the series' aggregate.

@@ -192,6 +192,7 @@
 1	log	app/src/main/java/tv/own/owntv/features/search/SearchViewModel.kt	record history failed profile=$pid type=$type itemId=$itemId
 1	log	app/src/main/java/tv/own/owntv/features/search/SearchViewModel.kt	stalker resolve failed movieId=${movie.id}
 1	technical	app/src/main/java/tv/own/owntv/features/series/SeriesScreen.kt	,
+1	technical	app/src/main/java/tv/own/owntv/features/series/SeriesScreen.kt	d MMM yyyy
 1	preference-key	app/src/main/java/tv/own/owntv/features/series/SeriesScreen.kt	delete_subtitles
 2	preference-key	app/src/main/java/tv/own/owntv/features/series/SeriesScreen.kt	download
 1	preference-key	app/src/main/java/tv/own/owntv/features/series/SeriesScreen.kt	favourite
@@ -523,6 +524,7 @@
 1	protocol	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	mpv
 2	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	png
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	popup_size
+1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	profile_avatars
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	quick_autoplay
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	quick_channel_numbers
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	quick_check_update
@@ -536,7 +538,6 @@
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	tab_${tab.name}
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	theme
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	ui_zoom
-1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	profile_avatars
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	update_startup
 2	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	v${tv.own.owntv.BuildConfig.VERSION_NAME}
 2	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	webp
