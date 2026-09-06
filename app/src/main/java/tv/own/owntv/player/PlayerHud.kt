@@ -185,6 +185,10 @@ fun PlayerHud(
     // (no item context). [favorite] = current state — fills the star teal when true.
     favorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
+    // Live: D-pad Up/Down keeps zapping channels even while the HUD bar is up (group feedback:
+    // "ch+/- works. Not pad up und down, when there is the bar"). Off by default — with the bar up,
+    // Up/Down navigate the controls, which some users rely on.
+    zapWithDpadAlways: Boolean = false,
     // Live guide card (Before / Now playing / Next for the playing channel) — supplied by the shell
     // (the EPG data lives in LiveViewModel, not the player). Rendered on the right edge whenever the
     // controls are visible, like the top-bar channel card; informational only, never focusable.
@@ -503,6 +507,8 @@ fun PlayerHud(
                 // above. D-pad Up/Down zap ONLY on live streams while the HUD is hidden (when it's visible,
                 // Up/Down navigate the controls) —
                 // this is the only way to change channels on remotes without CH keys (e.g. Fire TV).
+                // zapWithDpadAlways lifts the hidden-HUD gate so Up/Down keep zapping with the bar up
+                // (group feedback: JUL) — controls are then reached with Left/Right or Back.
                 //
                 // Direction is channel-number order, not list-position order: "up" (CH+, D-pad Up) is
                 // always the NEXT channel — further down an ascending list, delta +1 — matching the
@@ -511,8 +517,8 @@ fun PlayerHud(
                 // intended: CH-/Down from the first channel lands on the last, and vice versa.
                 canZap && e.key == Key.MediaNext -> { zap(1); true }
                 canZap && e.key == Key.MediaPrevious -> { zap(-1); true }
-                canZap && isLive && !controlsVisible && e.key == Key.DirectionUp -> { zap(1); true }
-                canZap && isLive && !controlsVisible && e.key == Key.DirectionDown -> { zap(-1); true }
+                canZap && isLive && (!controlsVisible || zapWithDpadAlways) && e.key == Key.DirectionUp -> { zap(1); true }
+                canZap && isLive && (!controlsVisible || zapWithDpadAlways) && e.key == Key.DirectionDown -> { zap(-1); true }
                 // The category list lives at logical Start; history lives at logical End.
                 onOpenChannelList != null && !controlsVisible &&
                     e.key.horizontalDirection(layoutDirection) == HorizontalDirection.START -> { onOpenChannelList(); true }

@@ -224,6 +224,9 @@ fun OwnTVShell(
     // there is exactly ONE zap path: liveVm's. The Guide keeps its own EpgViewModel only for the grid.
     val liveVm = org.koin.androidx.compose.koinViewModel<LiveViewModel>()
     val epgVm = org.koin.androidx.compose.koinViewModel<tv.own.owntv.features.epg.EpgViewModel>()
+    // Livezap-with-D-pad preference (group feedback: JUL) — Up/Down keep zapping with the HUD bar up.
+    val settingsVm = org.koin.androidx.compose.koinViewModel<tv.own.owntv.features.settings.SettingsViewModel>()
+    val zapWithDpadAlways by settingsVm.zapWithDpadAlways.collectAsStateWithLifecycle()
     val liveCanZap by liveVm.canZap.collectAsStateWithLifecycle()
     // Full-screen is running on the ExoPlayer engine (a promoted Live preview) rather than mpv.
     val liveOnExo by liveVm.liveOnExo.collectAsStateWithLifecycle()
@@ -1187,6 +1190,7 @@ fun OwnTVShell(
                     inert = showChannelList || showHistoryList || showCategoryBrowser || showSubtitleSearch || showLocalSubPicker,
                     onChannelUp = zap?.let { z -> { z(-1) } },
                     onChannelDown = zap?.let { z -> { z(1) } },
+                    zapWithDpadAlways = zapWithDpadAlways,
                     onOpenChannelList = if (isTunedLive && liveCanZap) { { showChannelList = true } } else null,
                     onOpenHistoryList = if (isTunedLive) { { showHistoryList = true } } else null,
                     onRewindLive = if (isTunedLive && canRewindLive) liveVm::rewindLive else null,

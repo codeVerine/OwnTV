@@ -452,6 +452,7 @@ fun VideoPlayerSettingsScreen(
     val subLang by vm.preferredSubLang.collectAsStateWithLifecycle()
     val resumeMode by vm.resumeMode.collectAsStateWithLifecycle()
     val liveLatency by vm.liveLatencyMode.collectAsStateWithLifecycle()
+    val zapWithDpadAlways by vm.zapWithDpadAlways.collectAsStateWithLifecycle()
     val liveCustomSecs by vm.liveLatencyCustomSecs.collectAsStateWithLifecycle()
     val livePreroll by vm.livePrerollSecs.collectAsStateWithLifecycle()
     val liveTuneTimeout by vm.liveTuneTimeoutSecs.collectAsStateWithLifecycle()
@@ -960,6 +961,16 @@ fun VideoPlayerSettingsScreen(
             chip = stringResource(if (livePreview) R.string.common_on else R.string.common_off), primaryChip = livePreview,
             modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_PREVIEW_PANEL)),
             onClick = toggleLivePreview,
+        )
+        // D-pad zapping with the player bar up (group feedback: JUL — "ch+/- works. Not pad up und
+        // down, when there is the bar"). Off keeps the shipped behaviour: with the bar visible,
+        // Up/Down navigate the bar's controls.
+        Row2(
+            quickKey = "vp_zap_dpad_always",
+            icon = OwnTVIcon.LIVE_TV, title = stringResource(R.string.settings_zap_dpad_always),
+            desc = stringResource(R.string.settings_zap_dpad_always_description),
+            chip = stringResource(if (zapWithDpadAlways) R.string.common_on else R.string.common_off), primaryChip = zapWithDpadAlways,
+            onClick = { vm.setZapWithDpadAlways(!zapWithDpadAlways) },
         )
         if (livePreview) {
             Row2(

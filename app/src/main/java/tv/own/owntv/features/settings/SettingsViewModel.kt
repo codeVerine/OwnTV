@@ -765,6 +765,13 @@ class SettingsViewModel(
         viewModelScope.launch { settings.setLiveLatencyCustomSecs(secs) }
     }
 
+    /** Live: D-pad Up/Down keep zapping channels even while the player bar is up. */
+    val zapWithDpadAlways: StateFlow<Boolean> =
+        settings.zapWithDpadAlways.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    fun setZapWithDpadAlways(enabled: Boolean) {
+        viewModelScope.launch { settings.setZapWithDpadAlways(enabled) }
+    }
+
     /** "Pre-buffer" (F07): the global choice, in seconds (0 = Off). */
     val livePrerollSecs: StateFlow<Int> =
         settings.livePrerollSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.LiveBuffer.PREROLL_OFF)

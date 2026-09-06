@@ -412,6 +412,7 @@
 4	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_preroll
 4	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_preroll_sources
 3	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_preview_audio
+1	technical	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_zap_dpad_always
 4	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_reset_audio_delay
 4	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_reset_pins
 4	preference-key	app/src/main/java/tv/own/owntv/features/settings/VideoPlayerSettingsScreen.kt	vp_reset_volume
