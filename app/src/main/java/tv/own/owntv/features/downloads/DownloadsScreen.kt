@@ -35,8 +35,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tv.own.owntv.ui.components.InAppToast
+import tv.own.owntv.ui.components.rememberInAppToast
 import coil3.compose.AsyncImage
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
@@ -48,6 +51,9 @@ import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.ContentPanelFill
+import tv.own.owntv.ui.components.dialogPanel
+import tv.own.owntv.ui.components.modalScrim
+import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapVerticalFocusExit
 import tv.own.owntv.ui.theme.Dimens
@@ -70,6 +76,10 @@ fun DownloadsScreen(
     val externalPlayerOn by vm.externalPlayerOn.collectAsStateWithLifecycle()
     val storage by vm.storage.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
+    val context = LocalContext.current
+    val bulkActionsToast = rememberInAppToast()
+    val bulkActionsFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    var showClearCompleted by remember { mutableStateOf(false) }
 
     // Grouped rows (Active / Waiting / Completed / Failed) with section headers interleaved.
     val rows = remember(downloads) { buildDownloadRows(downloads) }
@@ -143,6 +153,51 @@ fun DownloadsScreen(
             Spacer(Modifier.height(16.dp))
         }
 
+        // Bulk queue controls (group feedback: "manage downloads"). Only the relevant actions show:
+        // Pause all while anything is queued/running, Resume all while something is parked, Clear
+        // completed (destructive — confirmed) while anything completed exists.
+        val hasActive = downloads.any { it.status == DownloadStatus.QUEUED || it.status == DownloadStatus.RUNNING }
+        val hasPaused = downloads.any { it.status == DownloadStatus.PAUSED }
+        val hasCompleted = downloads.any { it.status == DownloadStatus.COMPLETED }
+        if (hasActive || hasPaused || hasCompleted) {
+            val clearCompletedMessage = context.getString(R.string.content_downloads_cleared, 0)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 14.dp)) {
+                if (hasActive) {
+                    OwnTVButton(stringResource(R.string.content_downloads_pause_all), onClick = { vm.pauseAll() }, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.focusRequester(bulkActionsFocus))
+                }
+                if (hasPaused) {
+                    OwnTVButton(
+                        stringResource(R.string.content_downloads_resume_all),
+                        onClick = { vm.resumeAll() },
+                        style = OwnTVButtonStyle.SECONDARY,
+                        modifier = if (!hasActive) Modifier.focusRequester(bulkActionsFocus) else Modifier,
+                    )
+                }
+                if (hasCompleted) {
+                    OwnTVButton(
+                        stringResource(R.string.content_downloads_clear_completed),
+                        onClick = { showClearCompleted = true },
+                        style = OwnTVButtonStyle.SECONDARY,
+                        modifier = if (!hasActive && !hasPaused) Modifier.focusRequester(bulkActionsFocus) else Modifier,
+                    )
+                }
+            }
+        }
+        if (showClearCompleted) {
+            BulkConfirmDialog(
+                title = stringResource(R.string.content_downloads_clear_completed_title),
+                message = stringResource(R.string.content_downloads_clear_completed_message),
+                confirmLabel = stringResource(R.string.content_downloads_clear_completed),
+                onConfirm = {
+                    showClearCompleted = false
+                    vm.deleteCompleted { count ->
+                        bulkActionsToast.show(context.getString(R.string.content_downloads_cleared, count))
+                    }
+                },
+                onDismiss = { showClearCompleted = false },
+            )
+        }
+
         if (downloads.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.content_downloads_empty), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
@@ -174,6 +229,45 @@ fun DownloadsScreen(
                         }
                     }
                 }
+            }
+        }
+        InAppToast(bulkActionsToast)
+    }
+}
+
+/**
+ * Yes/No confirmation for the destructive bulk action (Clear completed). Mirrors the Customize
+ * screen's confirm scrims so D-pad focus and Back behave the same way.
+ */
+@Composable
+private fun BulkConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = OwnTVTheme.colors
+    val confirmFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { confirmFocus.requestFocus() } }
+    androidx.activity.compose.BackHandler { onDismiss() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .modalScrim()
+            .trapAllFocusExit()
+            .focusGroup(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(Modifier.dialogPanel(width = 480.dp, padding = 28.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, color = colors.onSurface)
+            Spacer(Modifier.height(6.dp))
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(22.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OwnTVButton(stringResource(R.string.common_cancel), onClick = onDismiss, style = OwnTVButtonStyle.SECONDARY)
+                Spacer(Modifier.weight(1f))
+                OwnTVButton(confirmLabel, onClick = onConfirm, modifier = Modifier.focusRequester(confirmFocus))
             }
         }
     }
