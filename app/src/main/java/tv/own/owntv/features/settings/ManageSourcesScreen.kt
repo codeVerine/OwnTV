@@ -93,6 +93,9 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // Within "Add source": null = the Remote|Manual chooser, else the chosen path.
     var addMode by remember { mutableStateOf<AddMode?>(null) }
     var editingSource by remember { mutableStateOf<SourceEntity?>(null) }
+    // Set when "Duplicate" opened the add form: fields pre-fill from this source but the entry is a
+    // NEW one (Stalker multi-MAC: same portal URL, next MAC).
+    var duplicateSource by remember { mutableStateOf<SourceEntity?>(null) }
     var confirmDelete by remember { mutableStateOf<SourceEntity?>(null) }
     var resyncChoice by remember { mutableStateOf<SourceEntity?>(null) }
     val addFocus = remember { FocusRequester() }
@@ -142,7 +145,7 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
     // Leaving "Add source" always returns to the Remote|Manual chooser next time (and drops any
     // running Remote listener), so a prior choice never skips the chooser.
-    LaunchedEffect(showAdd) { if (!showAdd) { addMode = null; vm.stopRemoteListener() } }
+    LaunchedEffect(showAdd) { if (!showAdd) { addMode = null; duplicateSource = null; vm.stopRemoteListener() } }
     // A failed import/re-sync swaps the form for an error screen — move focus onto its action button.
     LaunchedEffect(importState) {
         if (importState is SettingsViewModel.ImportState.Failed) {
@@ -210,6 +213,8 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         modifier = Modifier,
                     )
                     AddMode.MANUAL -> AddSourceScreen(
+                        // "Duplicate" lands here pre-filled (Stalker multi-MAC: same portal, next MAC).
+                        duplicateOf = duplicateSource,
                         onStartXtream = { n, server, u, p, ua, epg, autoRefresh, live, movies, series, isDefault, preferHls ->
                             vm.addXtream(n.ifBlank { defaultIptvName }, server, u, p, ua, epg, autoRefresh, live, movies, series, isDefault, preferHls)
                         },
@@ -341,6 +346,9 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                     else -> Modifier
                                 },
                                 onEdit = { contextId = source.id; contextIndex = index; editingSource = source },
+                                onDuplicate = source.type.takeIf { it == SourceType.STALKER }?.let {
+                                    { contextId = source.id; contextIndex = index; duplicateSource = source; showAdd = true; addMode = AddMode.MANUAL }
+                                },
                                 onTest = { contextId = source.id; contextIndex = index; vm.testSource(source) },
                                 onResync = { contextId = source.id; contextIndex = index; resyncChoice = source },
                                 onCancelSync = { contextId = source.id; contextIndex = index; vm.cancelResync(source) },
@@ -387,6 +395,7 @@ private fun SourceRow(
     isDeleting: Boolean,
     rowModifier: Modifier,
     onEdit: () -> Unit,
+    onDuplicate: (() -> Unit)?,
     onTest: () -> Unit,
     onResync: () -> Unit,
     onCancelSync: () -> Unit,
@@ -463,6 +472,13 @@ private fun SourceRow(
             Text(stringResource(R.string.settings_sources_removing_detail), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
         } else {
             OwnTVButton(stringResource(R.string.settings_sources_edit), onClick = onEdit, style = OwnTVButtonStyle.SECONDARY)
+            // One portal per MAC is the Stalker model; "Duplicate" pre-fills a second entry from this
+            // one (URL/user/EPG kept, MAC cleared) so the sanctioned multi-MAC workaround is one tap
+            // instead of re-typing the whole portal (group feedback: Blizznow).
+            onDuplicate?.let { dup ->
+                Spacer(Modifier.width(10.dp))
+                OwnTVButton(stringResource(R.string.settings_sources_duplicate), onClick = dup, style = OwnTVButtonStyle.SECONDARY)
+            }
             Spacer(Modifier.width(10.dp))
             OwnTVButton(stringResource(R.string.settings_test), onClick = onTest, style = OwnTVButtonStyle.SECONDARY)
             Spacer(Modifier.width(10.dp))

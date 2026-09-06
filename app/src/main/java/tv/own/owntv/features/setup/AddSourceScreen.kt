@@ -128,6 +128,9 @@ fun AddSourceScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     initial: SourceEntity? = null,
+    // Multi-MAC (Stalker, group feedback: Blizznow): pre-fill the ADD form from an existing portal —
+    // same URL/EPG/UA, name suffixed, MAC cleared — while submission stays ADD, never an edit.
+    duplicateOf: SourceEntity? = null,
     initialAutoRefresh: PlaylistRefresh = PlaylistRefresh.OFF,
     initialIsDefault: Boolean = false,
     showDefaultToggle: Boolean = true,
@@ -150,42 +153,46 @@ fun AddSourceScreen(
 ) {
     val colors = OwnTVTheme.colors
     val editing = initial != null
+    // What the fields pre-fill from: the edited row, or the duplicated portal (name suffixed,
+    // MAC cleared so the second MAC must be entered).
+    val duplicateSuffix = stringResource(R.string.settings_sources_duplicate_suffix)
+    val prefill = initial ?: duplicateOf?.let { it.copy(name = it.name + duplicateSuffix, mac = null) }
     var kind by remember {
         mutableStateOf(
-            when (initial?.type) {
+            when (prefill?.type) {
                 SourceType.M3U -> SourceKind.M3U
                 SourceType.STALKER -> SourceKind.STALKER
                 else -> SourceKind.XTREAM
             },
         )
     }
-    var name by remember(initial) { mutableStateOf(initial?.name ?: "") }
-    var server by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.XTREAM) initial.url else "") }
-    var username by remember(initial) { mutableStateOf(initial?.username ?: "") }
-    var password by remember(initial) { mutableStateOf(initial?.password ?: "") }
-    var m3uUrl by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.M3U) initial.url else "") }
-    var portalUrl by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.STALKER) initial.url else "") }
-    var mac by remember(initial) { mutableStateOf(initial?.mac ?: "") }
-    var stalkerSerialNumber by remember(initial) { mutableStateOf(initial?.stalkerSerialNumber ?: "") }
-    var stalkerDeviceId by remember(initial) { mutableStateOf(initial?.stalkerDeviceId ?: "") }
-    var stalkerDeviceId2 by remember(initial) { mutableStateOf(initial?.stalkerDeviceId2 ?: "") }
-    var stalkerSignature by remember(initial) { mutableStateOf(initial?.stalkerSignature ?: "") }
+    var name by remember(prefill) { mutableStateOf(prefill?.name ?: "") }
+    var server by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.XTREAM) prefill.url else "") }
+    var username by remember(prefill) { mutableStateOf(prefill?.username ?: "") }
+    var password by remember(prefill) { mutableStateOf(prefill?.password ?: "") }
+    var m3uUrl by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.M3U) prefill.url else "") }
+    var portalUrl by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.STALKER) prefill.url else "") }
+    var mac by remember(prefill) { mutableStateOf(prefill?.mac ?: "") }
+    var stalkerSerialNumber by remember(prefill) { mutableStateOf(prefill?.stalkerSerialNumber ?: "") }
+    var stalkerDeviceId by remember(prefill) { mutableStateOf(prefill?.stalkerDeviceId ?: "") }
+    var stalkerDeviceId2 by remember(prefill) { mutableStateOf(prefill?.stalkerDeviceId2 ?: "") }
+    var stalkerSignature by remember(prefill) { mutableStateOf(prefill?.stalkerSignature ?: "") }
     var showUaPresetPicker by remember { mutableStateOf(false) }
-    var epgUrl by remember(initial) { mutableStateOf(initial?.epgUrl ?: "") }
-    var userAgent by remember(initial) { mutableStateOf(initial?.userAgent ?: "") }
+    var epgUrl by remember(prefill) { mutableStateOf(prefill?.epgUrl ?: "") }
+    var userAgent by remember(prefill) { mutableStateOf(prefill?.userAgent ?: "") }
     var autoRefresh by remember(initialAutoRefresh) { mutableStateOf(initialAutoRefresh) }
     var isDefault by remember(initialIsDefault) { mutableStateOf(initialIsDefault) }
-    var preferHls by remember(initial) { mutableStateOf(initial?.preferHls == true) }
+    var preferHls by remember(prefill) { mutableStateOf(prefill?.preferHls == true) }
     // Edit: On(=Now)/Off from persisted flags. Add: default all Now for Xtream; Stalker defaults
     // Live Now + Movies/Series Later when the kind switches (see LaunchedEffect below).
-    var syncLive by remember(initial) {
-        mutableStateOf(if (initial?.syncLive == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncLive by remember(prefill) {
+        mutableStateOf(if (prefill?.syncLive == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
-    var syncMovies by remember(initial) {
-        mutableStateOf(if (initial?.syncMovies == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncMovies by remember(prefill) {
+        mutableStateOf(if (prefill?.syncMovies == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
-    var syncSeries by remember(initial) {
-        mutableStateOf(if (initial?.syncSeries == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncSeries by remember(prefill) {
+        mutableStateOf(if (prefill?.syncSeries == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
     var hasRemoteStalkerScopes by remember { mutableStateOf(false) }
     var showFileBrowser by remember { mutableStateOf(false) }
