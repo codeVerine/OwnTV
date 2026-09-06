@@ -226,6 +226,7 @@ class MainActivity : ComponentActivity() {
             val bgImagePath by viewModel.bgImagePath.collectAsStateWithLifecycle()
             val glassConfig by viewModel.glassConfig.collectAsStateWithLifecycle()
             val avatarId by viewModel.avatarId.collectAsStateWithLifecycle()
+            val showProfileAvatars by viewModel.showProfileAvatars.collectAsStateWithLifecycle()
             val profileName by viewModel.profileName.collectAsStateWithLifecycle()
             val sourceSummary by viewModel.sourceSummary.collectAsStateWithLifecycle()
             val playlists by viewModel.playlists.collectAsStateWithLifecycle()
@@ -427,6 +428,7 @@ class MainActivity : ComponentActivity() {
                                 fontCustomization = fontCustomization,
                                 onSetFontCustomization = viewModel::setFontCustomization,
                                 avatarId = avatarId,
+                                showProfileAvatars = showProfileAvatars,
                                 onSetAvatar = viewModel::setAvatar,
                                 profileName = profileName,
                                 sourceSummary = sourceSummary,

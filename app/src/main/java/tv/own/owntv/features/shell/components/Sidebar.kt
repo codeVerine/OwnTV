@@ -79,6 +79,8 @@ fun Sidebar(
     onSelect: (MainSection) -> Unit,
     visibleSections: Set<MainSection>,
     avatarId: Int,
+    /** Appearance toggle — false swaps the themed tile for a neutral silhouette (same size/spot). */
+    showAvatar: Boolean = true,
     onPickAvatar: () -> Unit,
     profileName: String,
     sourceSummary: String?,
@@ -205,6 +207,7 @@ fun Sidebar(
         ProfileCard(
             expanded = expanded,
             avatarId = avatarId,
+            showAvatar = showAvatar,
             profileName = profileName,
             sourceSummary = sourceSummary,
             onPickAvatar = onPickAvatar,
@@ -327,6 +330,7 @@ private fun AppLogo(modifier: Modifier = Modifier) {
 private fun ProfileCard(
     expanded: Boolean,
     avatarId: Int,
+    showAvatar: Boolean,
     profileName: String,
     sourceSummary: String?,
     onPickAvatar: () -> Unit,
@@ -338,7 +342,13 @@ private fun ProfileCard(
     if (!expanded) {
         // Fixed nav: just the avatar — click opens the profile switcher ("who's watching"), long-press
         // changes the avatar picture. Pinned top-left, always in the same spot.
-        AvatarButton(avatarId = avatarId, sizeDp = 56, onClick = onSwitchProfile, onLongClick = onPickAvatar)
+        // Avatars off → -1 draws the neutral ProfileIcon silhouette (OwnTVAvatar), same spot and size.
+        AvatarButton(
+            avatarId = if (showAvatar) avatarId else -1,
+            sizeDp = 56,
+            onClick = onSwitchProfile,
+            onLongClick = onPickAvatar,
+        )
         return
     }
 
@@ -358,7 +368,11 @@ private fun ProfileCard(
             modifier = Modifier.fillMaxWidth().padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            AvatarButton(avatarId = avatarId, sizeDp = 64, onClick = onPickAvatar)
+            AvatarButton(
+                avatarId = if (showAvatar) avatarId else -1,
+                sizeDp = 64,
+                onClick = onPickAvatar,
+            )
             Spacer(Modifier.height(10.dp))
             Text(
                 profileName.ifBlank { stringResource(R.string.common_own_tv_user) },

@@ -231,6 +231,8 @@ fun SettingsScreen(
     var showBgPicker by remember { mutableStateOf(false) }
     var showBgRemote by remember { mutableStateOf(false) }
     var showAmbientGlow by remember { mutableStateOf(false) }
+    var showAvatarsToggle by remember { mutableStateOf(false) }
+    val avatarsRowFocus = remember { FocusRequester() }
     var showBrowsing by remember { mutableStateOf(false) }
     val browsingRowFocus = remember { FocusRequester() }
     // U2 — background-image ingest copies a multi-megabyte file; it runs here, off the main thread.
@@ -327,6 +329,7 @@ fun SettingsScreen(
     val animationLevel by settingsVm.animationLevel.collectAsStateWithLifecycle()
     val ambientGlowEnabled by settingsVm.ambientGlowEnabled.collectAsStateWithLifecycle()
     val ambientGlowPulse by settingsVm.ambientGlowPulse.collectAsStateWithLifecycle()
+    val showProfileAvatars by settingsVm.showProfileAvatars.collectAsStateWithLifecycle()
     LaunchedEffect(glassOn, themeMode) {
         if (glassOn || themeMode != ThemeMode.DARK) showAmbientGlow = false
     }
@@ -617,6 +620,14 @@ fun SettingsScreen(
             chip = stringResource(R.string.common_percent, uiZoomPercent), chipTone = TileTone.SECONDARY,
             focus = zoomRowFocus,
             onClick = { saveScroll(); dialogReturn = zoomRowFocus; showZoom = true },
+        ),
+        RootRow(
+            "profile_avatars", TileTone.SECONDARY, OwnTVIcon.PERSON,
+            title = stringResource(R.string.settings_show_avatars), desc = stringResource(R.string.settings_show_avatars_description),
+            chip = stringResource(if (showProfileAvatars) R.string.common_on else R.string.common_off),
+            chipTone = if (showProfileAvatars) TileTone.PRIMARY else TileTone.SECONDARY,
+            focus = avatarsRowFocus,
+            onClick = { saveScroll(); dialogReturn = avatarsRowFocus; showAvatarsToggle = true },
         ),
         RootRow(
             "animations", TileTone.SECONDARY, OwnTVIcon.MOTION,
@@ -1023,6 +1034,8 @@ fun SettingsScreen(
         ) { saveScroll(); dialogReturn = searchFieldFocus; showPopupSize = true },
         SettingsSearchEntry(stringResource(R.string.settings_group_appearance), stringResource(R.string.settings_ui_zoom), stringResource(R.string.settings_search_keywords_zoom), OwnTVIcon.ZOOM, TileTone.SECONDARY,
                 chip = stringResource(R.string.common_percent, uiZoomPercent), chipTone = TileTone.SECONDARY) { saveScroll(); dialogReturn = searchFieldFocus; showZoom = true },
+            SettingsSearchEntry(stringResource(R.string.settings_group_appearance), stringResource(R.string.settings_show_avatars), stringResource(R.string.settings_search_keywords_avatars), OwnTVIcon.PERSON, TileTone.SECONDARY,
+                chip = stringResource(if (showProfileAvatars) R.string.common_on else R.string.common_off), chipTone = if (showProfileAvatars) TileTone.PRIMARY else TileTone.SECONDARY) { saveScroll(); dialogReturn = searchFieldFocus; showAvatarsToggle = true },
             SettingsSearchEntry(stringResource(R.string.settings_group_appearance), stringResource(R.string.settings_animations), stringResource(R.string.settings_search_keywords_animation), OwnTVIcon.MOTION, TileTone.SECONDARY,
                 chip = stringResource(animationLevel.labelRes), chipTone = TileTone.SECONDARY) { saveScroll(); dialogReturn = searchFieldFocus; showAnimations = true },
             SettingsSearchEntry(stringResource(R.string.settings_group_appearance), stringResource(R.string.settings_weather), stringResource(R.string.settings_search_keywords_weather), OwnTVIcon.WEATHER, TileTone.SECONDARY,
@@ -1477,6 +1490,13 @@ fun SettingsScreen(
             onToggleGlow = { settingsVm.setAmbientGlowEnabled(!ambientGlowEnabled) },
             onTogglePulse = { settingsVm.setAmbientGlowPulse(!ambientGlowPulse) },
             onDismiss = { showAmbientGlow = false },
+        ) }
+    }
+    if (showAvatarsToggle) {
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { showAvatarsToggle = false }) { AvatarsToggleDialog(
+            enabled = showProfileAvatars,
+            onToggle = { settingsVm.setShowProfileAvatars(!showProfileAvatars) },
+            onDismiss = { showAvatarsToggle = false },
         ) }
     }
     if (showErrorLog) {
@@ -2857,6 +2877,56 @@ private fun AmbientGlowDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                Spacer(Modifier.height(18.dp))
+                OwnTVButton(stringResource(R.string.settings_done), onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/**
+ * On/off dialog for the profile-avatars appearance toggle. Turning it off swaps the themed avatar
+ * tile in the sidebar for a neutral silhouette (same spot, same switch/pick affordances).
+ */
+@Composable
+private fun AvatarsToggleDialog(
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = OwnTVTheme.colors
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    BackHandler { onDismiss() }
+    Box(
+        modifier = Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(),
+        contentAlignment = Alignment.Center,
+    ) {
+        tv.own.owntv.ui.theme.PopupFontTheme {
+            Column(
+                modifier = Modifier.dialogPanel(width = 480.dp, padding = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(stringResource(R.string.settings_show_avatars), style = MaterialTheme.typography.titleLarge, color = colors.onSurface)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.settings_show_avatars_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                Spacer(Modifier.height(20.dp))
+                OwnTVButton(
+                    stringResource(
+                        R.string.settings_section_toggle,
+                        stringResource(R.string.settings_show_avatars),
+                        stringResource(if (enabled) R.string.common_on else R.string.common_off),
+                    ),
+                    onClick = onToggle,
+                    style = if (enabled) OwnTVButtonStyle.PRIMARY else OwnTVButtonStyle.SECONDARY,
+                    icon = OwnTVIcon.PERSON,
+                    modifier = Modifier.fillMaxWidth().focusRequester(firstFocus),
+                )
                 Spacer(Modifier.height(18.dp))
                 OwnTVButton(stringResource(R.string.settings_done), onClick = onDismiss, modifier = Modifier.fillMaxWidth())
             }

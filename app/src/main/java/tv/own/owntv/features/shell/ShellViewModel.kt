@@ -272,6 +272,11 @@ class ShellViewModel(
         .flatMapLatest { pid -> if (pid < 0) flowOf(0) else profileDao.observeById(pid).map { it?.avatarId ?: 0 } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    /** Appearance toggle: when off the sidebar shows a neutral silhouette instead of the themed
+     *  avatar tile (group feedback — "add an option to turn off avatars"). */
+    val showProfileAvatars: StateFlow<Boolean> = settings.showProfileAvatars
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     /** The active profile's name, shown in the sidebar profile card. */
     val profileName: StateFlow<String> = settings.activeProfileId
         .flatMapLatest { pid -> if (pid < 0) flowOf("") else profileDao.observeById(pid).map { it?.name ?: "" } }

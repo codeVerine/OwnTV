@@ -802,6 +802,11 @@ class SettingsViewModel(
         settings.ambientGlowEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     fun setAmbientGlowEnabled(enabled: Boolean) { viewModelScope.launch { settings.setAmbientGlowEnabled(enabled) } }
 
+    /** Appearance: themed profile-avatar tile on/off (off renders a neutral silhouette). */
+    val showProfileAvatars: StateFlow<Boolean> =
+        settings.showProfileAvatars.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    fun setShowProfileAvatars(enabled: Boolean) { viewModelScope.launch { settings.setShowProfileAvatars(enabled) } }
+
     val ambientGlowPulse: StateFlow<Boolean> =
         settings.ambientGlowPulse.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
     fun setAmbientGlowPulse(enabled: Boolean) { viewModelScope.launch { settings.setAmbientGlowPulse(enabled) } }

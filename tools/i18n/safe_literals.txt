@@ -536,6 +536,7 @@
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	tab_${tab.name}
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	theme
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	ui_zoom
+1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	profile_avatars
 1	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	update_startup
 2	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	v${tv.own.owntv.BuildConfig.VERSION_NAME}
 2	technical	app/src/main/java/tv/own/owntv/features/shell/components/SettingsScreen.kt	webp
