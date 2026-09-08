@@ -899,13 +899,16 @@ private fun EpisodeDetailPane(
     val plot = if (tmdbWins) meta?.overview ?: episode.plot?.takeIf { it.isNotBlank() }
         else episode.plot?.takeIf { it.isNotBlank() } ?: meta?.overview
     // Provider "added" stamp (Xtream only; null elsewhere) — the date a show's episode landed on
-    // the portal (group feedback: Tuntematon). Formatted in the device locale.
-    val addedDate = rememberBestDateFormatter("d MMM yyyy")(episode.addedAt ?: 0L)
+    // the portal (group feedback: Tuntematon). Formatted in the device locale. The formatter is
+    // created unconditionally (a conditional remember would shift its slot when the stamp appears);
+    // only the formatting itself is gated on the stamp existing.
+    val addedAt = episode.addedAt?.takeIf { it > 0 }
+    val addedDateFormat = rememberBestDateFormatter("d MMM yyyy")
     val bits = listOfNotNull(
         stringResource(R.string.content_season_episode, episode.seasonNumber, episode.episodeNumber),
         meta?.year?.let { localizedInteger(it, grouping = false) },
         meta?.rating?.takeIf { it > 0 }?.let { stringResource(R.string.content_rating, it) },
-        episode.addedAt?.takeIf { it > 0 }?.let { stringResource(R.string.content_added_date, addedDate) },
+        addedAt?.let { stringResource(R.string.content_added_date, addedDateFormat(it)) },
     )
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Dimens.GapLarge)) {
         // Non-focusable status strip — the focused episode's own download, else the series' aggregate.

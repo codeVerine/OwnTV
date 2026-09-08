@@ -43,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
@@ -102,7 +101,17 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     var showSortPicker by remember { mutableStateOf(false) }
     var showFilterPicker by remember { mutableStateOf(false) }
     val invertToast = rememberInAppToast()
-    val context = LocalContext.current
+    // Invert-count toast: the store callback lands off-composition, so park the count in state and
+    // resolve the message here, in composition — stringResource keeps it locale-aware (unlike
+    // LocalContext.getString captured in a callback, which lint rightly rejects).
+    var invertedCount by remember { mutableStateOf<Int?>(null) }
+    if (invertedCount != null) {
+        val invertedMessage = stringResource(R.string.settings_customize_invert_done, invertedCount ?: 0)
+        LaunchedEffect(invertedCount, invertedMessage) {
+            invertToast.show(invertedMessage)
+            invertedCount = null
+        }
+    }
     // The category whose Hide button was clicked to close a range — opens the Show/Hide/Cancel prompt.
     var rangeEnd by remember { mutableStateOf<CustomizeCatRow?>(null) }
     // ＋ New category (issue #87): name prompt, then the empty combined category appears in the list.
@@ -286,9 +295,7 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             OwnTVButton(
                 label = stringResource(R.string.settings_customize_invert),
                 onClick = {
-                    vm.invertHidden { count ->
-                        invertToast.show(context.getString(R.string.settings_customize_invert_done, count))
-                    }
+                    vm.invertHidden { count -> invertedCount = count }
                 },
                 style = OwnTVButtonStyle.SECONDARY,
             )

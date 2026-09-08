@@ -35,7 +35,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tv.own.owntv.ui.components.InAppToast
@@ -76,10 +75,20 @@ fun DownloadsScreen(
     val externalPlayerOn by vm.externalPlayerOn.collectAsStateWithLifecycle()
     val storage by vm.storage.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
-    val context = LocalContext.current
     val bulkActionsToast = rememberInAppToast()
     val bulkActionsFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     var showClearCompleted by remember { mutableStateOf(false) }
+    // Cleared-count toast: the DB callback lands off-composition, so park the count in state and
+    // resolve the message here, in composition — stringResource keeps it locale-aware (unlike
+    // LocalContext.getString captured in a callback, which lint rightly rejects).
+    var clearedCount by remember { mutableStateOf<Int?>(null) }
+    if (clearedCount != null) {
+        val clearedMessage = stringResource(R.string.content_downloads_cleared, clearedCount ?: 0)
+        LaunchedEffect(clearedCount, clearedMessage) {
+            bulkActionsToast.show(clearedMessage)
+            clearedCount = null
+        }
+    }
 
     // Grouped rows (Active / Waiting / Completed / Failed) with section headers interleaved.
     val rows = remember(downloads) { buildDownloadRows(downloads) }
@@ -160,7 +169,6 @@ fun DownloadsScreen(
         val hasPaused = downloads.any { it.status == DownloadStatus.PAUSED }
         val hasCompleted = downloads.any { it.status == DownloadStatus.COMPLETED }
         if (hasActive || hasPaused || hasCompleted) {
-            val clearCompletedMessage = context.getString(R.string.content_downloads_cleared, 0)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 14.dp)) {
                 if (hasActive) {
                     OwnTVButton(stringResource(R.string.content_downloads_pause_all), onClick = { vm.pauseAll() }, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.focusRequester(bulkActionsFocus))
@@ -190,9 +198,7 @@ fun DownloadsScreen(
                 confirmLabel = stringResource(R.string.content_downloads_clear_completed),
                 onConfirm = {
                     showClearCompleted = false
-                    vm.deleteCompleted { count ->
-                        bulkActionsToast.show(context.getString(R.string.content_downloads_cleared, count))
-                    }
+                    vm.deleteCompleted { count -> clearedCount = count }
                 },
                 onDismiss = { showClearCompleted = false },
             )
