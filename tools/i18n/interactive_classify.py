@@ -1,0 +1,918 @@
+#!/usr/bin/env python3
+"""Interactive classifier for new Kotlin string literals.
+
+Walks every UNCLASSIFIED literal (neither in the shrinking baseline nor in safe_literals.txt),
+shows each occurrence with file/line/context, and lets you classify it:
+
+  [r]egex  [s]ql  [j]son  [p]rotocol  [t]echnical  [u]ser-facing  [i]gnore  [q]uit
+
+User-facing strings are added to strings.xml and replaced with stringResource() in source.
+Technical strings are written to safe_literals.txt.  "Ignore" writes to safe_literals.txt as
+"technical" so it survives baseline regeneration.
+
+After every classification the baseline is regenerated so you can stop and resume at any time.
+
+Usage:
+    python3 tools/i18n/interactive_classify.py
+    python3 tools/i18n/interactive_classify.py --dry-run
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import NamedTuple
+
+# ---------------------------------------------------------------------------
+# Import the existing tool's internals without running its main()
+# ---------------------------------------------------------------------------
+TOOLS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(TOOLS_DIR))
+
+import check_hardcoded_strings as _lib  # noqa: E402
+
+try:
+    from tools.i18n.format_specs import _tokens as _format_tokens
+except ModuleNotFoundError:
+    from format_specs import _tokens as _format_tokens
+
+ROOT = _lib.ROOT
+SRC = _lib.SRC
+BASELINE = _lib.BASELINE
+SAFE_MANIFEST = _lib.SAFE_MANIFEST
+STRINGS_XML = ROOT / "app" / "src" / "main" / "res" / "values" / "strings.xml"
+SAFE_CATEGORIES = _lib.SAFE_CATEGORIES
+
+# User-facing aliases in the prompt (single keypress → full category name)
+_SHORT_CATEGORIES: dict[str, str] = {
+    "r": "regex",
+    "s": "sql",
+    "j": "json",
+    "p": "protocol",
+    "t": "technical",
+    "u": "user-facing",
+    "i": "technical",  # "ignore" → stored as technical in safe_literals.txt
+}
+
+
+# ---------------------------------------------------------------------------
+# Find unclassified literals
+# ---------------------------------------------------------------------------
+
+def _unclassified() -> dict[tuple[str, str], int]:
+    """Return (path, text) → count for every literal NOT in the baseline and NOT safe."""
+    current = _lib._inventory()
+    safe, _, _ = _lib._safe_entries()
+    classified = _lib._add_counts(
+        safe,
+        {} if not BASELINE.is_file() else _lib._parse(BASELINE.read_text("utf-8")),
+    )
+    return _lib._subtract_counts(current, classified)
+
+
+# ---------------------------------------------------------------------------
+# Source context helpers
+# ---------------------------------------------------------------------------
+
+class Occurrence(NamedTuple):
+    path: str
+    line_no: int
+    col_start: int
+    col_end: int
+    raw: str          # the raw Kotlin literal including quotes
+    context: str      # the surrounding source line
+
+
+def _find_all_occurrences(path: str, normalized_text: str) -> list[Occurrence]:
+    """Return every position where *normalized_text* appears in *path*."""
+    full_path = ROOT / path
+    src = full_path.read_text("utf-8")
+    occurrences: list[Occurrence] = []
+    for start, end, raw in _lib._iter_literals(src):
+        if _lib._normalize(_lib._decode(raw)) == normalized_text:
+            line_no = src[:start].count("\n") + 1
+            line_start = src.rfind("\n", 0, start) + 1
+            line_end = src.find("\n", start)
+            if line_end == -1:
+                line_end = len(src)
+            context_line = src[line_start:line_end].rstrip()
+            col_start = start - line_start
+            occurrences.append(Occurrence(path, line_no, col_start, col_start + len(raw), raw, context_line))
+    return occurrences
+
+
+def _source_without_literals_or_comments(src: str) -> str:
+    masked = list(src)
+    for start, end, _ in _lib._iter_literals(src):
+        for index in range(start, end):
+            if masked[index] != "\n":
+                masked[index] = " "
+    masked_src = "".join(masked)
+
+    def blank(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    return re.sub(r"//[^\n]*|/\*.*?\*/", blank, masked_src, flags=re.DOTALL)
+
+
+_COMPOSABLE_TRAILING_LAMBDA_CALLS = frozenset({
+    "AlertDialog",
+    "AnimatedContent",
+    "AnimatedVisibility",
+    "BasicAlertDialog",
+    "Box",
+    "BoxWithConstraints",
+    "Button",
+    "Card",
+    "Column",
+    "CompositionLocalProvider",
+    "Crossfade",
+    "Dialog",
+    "DropdownMenu",
+    "ElevatedButton",
+    "FilledTonalButton",
+    "LazyColumn",
+    "LazyHorizontalGrid",
+    "LazyRow",
+    "LazyVerticalGrid",
+    "NavHost",
+    "OutlinedButton",
+    "Popup",
+    "ProvideTextStyle",
+    "Row",
+    "Scaffold",
+    "Surface",
+    "TextButton",
+    "composable",
+    "composed",
+    "item",
+    "items",
+    "itemsIndexed",
+    "key",
+})
+
+_COMPOSABLE_NAMED_LAMBDA_PARAMS: dict[str, frozenset[str]] = {
+    "AlertDialog": frozenset({"confirmButton", "dismissButton", "icon", "title", "text"}),
+    "AnimatedContent": frozenset({"content"}),
+    "AnimatedVisibility": frozenset({"content"}),
+    "BasicAlertDialog": frozenset({"content"}),
+    "Box": frozenset({"content"}),
+    "BoxWithConstraints": frozenset({"content"}),
+    "Button": frozenset({"content"}),
+    "Card": frozenset({"content"}),
+    "Column": frozenset({"content"}),
+    "CompositionLocalProvider": frozenset({"content"}),
+    "Crossfade": frozenset({"content"}),
+    "Dialog": frozenset({"content"}),
+    "DropdownMenu": frozenset({"content"}),
+    "ElevatedButton": frozenset({"content"}),
+    "FilledTonalButton": frozenset({"content"}),
+    "LazyColumn": frozenset({"content"}),
+    "LazyHorizontalGrid": frozenset({"content"}),
+    "LazyRow": frozenset({"content"}),
+    "LazyVerticalGrid": frozenset({"content"}),
+    "NavHost": frozenset({"content"}),
+    "OutlinedButton": frozenset({"content"}),
+    "Popup": frozenset({"content"}),
+    "ProvideTextStyle": frozenset({"content"}),
+    "Row": frozenset({"content"}),
+    "Scaffold": frozenset({"topBar", "bottomBar", "snackbarHost", "floatingActionButton", "content"}),
+    "Surface": frozenset({"content"}),
+    "TextButton": frozenset({"content"}),
+    "composable": frozenset({"content"}),
+    "composed": frozenset({"factory"}),
+    "item": frozenset({"content"}),
+    "items": frozenset({"itemContent"}),
+    "itemsIndexed": frozenset({"itemContent"}),
+    "key": frozenset({"block"}),
+}
+
+
+def _brace_pairs(masked: str) -> dict[int, int]:
+    stack: list[int] = []
+    matching: dict[int, int] = {}
+    for index, char in enumerate(masked):
+        if char == "{":
+            stack.append(index)
+        elif char == "}" and stack:
+            matching[stack.pop()] = index
+    return matching
+
+
+def _composable_ranges(src: str) -> list[tuple[int, int, bool]]:
+    masked = _source_without_literals_or_comments(src)
+    matching = _brace_pairs(masked)
+    ranges: list[tuple[int, int, bool]] = []
+    function_pattern = re.compile(r"\bfun\s+[A-Za-z_][\w`]*(?:\s*<[^{}]*>)?[^{}]*\{")
+    for match in function_pattern.finditer(masked):
+        opening = match.end() - 1
+        closing = matching.get(opening)
+        if closing is None:
+            continue
+        boundary = max(
+            masked.rfind("}", 0, match.start()),
+            masked.rfind("{", 0, match.start()),
+            masked.rfind(";", 0, match.start()),
+            masked.rfind("\n\n", 0, match.start()),
+        )
+        annotation = masked[boundary + 1:match.start()]
+        is_composable = bool(re.search(r"@\s*(?:[\w.]+\.)?Composable\b", annotation))
+        ranges.append((opening + 1, closing, is_composable))
+    return ranges
+
+
+def _lambda_call_name(prefix: str) -> str | None:
+    prefix = prefix.rstrip()
+    if prefix.endswith(")"):
+        depth = 0
+        opening = None
+        for index in range(len(prefix) - 1, -1, -1):
+            if prefix[index] == ")":
+                depth += 1
+            elif prefix[index] == "(":
+                depth -= 1
+                if depth == 0:
+                    opening = index
+                    break
+        if opening is None:
+            return None
+        prefix = prefix[:opening].rstrip()
+    match = re.search(r"([A-Za-z_][\w.]*)\s*$", prefix)
+    return match.group(1).rsplit(".", 1)[-1] if match else None
+
+
+def _lambda_argument_prefix(masked: str, opening: int) -> tuple[str, str | None, bool] | None:
+    prefix = masked[:opening].rstrip()
+    if prefix.endswith(")"):
+        call_name = _lambda_call_name(prefix)
+        return (call_name, None, True) if call_name else None
+    if re.search(r"[A-Za-z_][\w.]*$", prefix):
+        call_name = prefix.rsplit(".", 1)[-1].split()[-1]
+        return call_name, None, True
+
+    depth = 0
+    call_opening = None
+    for index in range(len(prefix) - 1, -1, -1):
+        if prefix[index] == ")":
+            depth += 1
+        elif prefix[index] == "(":
+            if depth == 0:
+                call_opening = index
+                break
+            depth -= 1
+    if call_opening is None:
+        return None
+    call_match = re.search(r"([A-Za-z_][\w.]*)\s*$", prefix[:call_opening].rstrip())
+    if call_match is None:
+        return None
+
+    arguments = prefix[call_opening + 1:]
+    nesting = {"(": 0, "[": 0, "{": 0}
+    last_argument = 0
+    for index, char in enumerate(arguments):
+        if char in nesting:
+            nesting[char] += 1
+        elif char == ")":
+            nesting["("] = max(0, nesting["("] - 1)
+        elif char == "]":
+            nesting["["] = max(0, nesting["["] - 1)
+        elif char == "}":
+            nesting["{"] = max(0, nesting["{"] - 1)
+        elif char == "," and not any(nesting.values()):
+            last_argument = index + 1
+    argument = arguments[last_argument:].strip()
+    named = re.match(r"([A-Za-z_][\w`]*)\s*=", argument)
+    return call_match.group(1).rsplit(".", 1)[-1], named.group(1) if named else None, False
+
+
+def _is_known_composable_lambda(masked: str, opening: int) -> bool:
+    context = _lambda_argument_prefix(masked, opening)
+    if context is None:
+        return False
+    call_name, parameter, trailing = context
+    if trailing:
+        return call_name in _COMPOSABLE_TRAILING_LAMBDA_CALLS
+    return parameter in _COMPOSABLE_NAMED_LAMBDA_PARAMS.get(call_name, frozenset())
+
+
+def _non_composable_lambda_ranges(src: str) -> list[tuple[int, int]]:
+    masked = _source_without_literals_or_comments(src)
+    matching = _brace_pairs(masked)
+    function_openings = {
+        match.end() - 1
+        for match in re.finditer(r"\bfun\s+[A-Za-z_][\w`]*(?:\s*<[^{}]*>)?[^{}]*\{", masked)
+    }
+    ranges: list[tuple[int, int]] = []
+    for opening, closing in matching.items():
+        if opening in function_openings:
+            continue
+        prefix = masked[max(0, opening - 512):opening].rstrip()
+        local_prefix = re.split(r"[\n;{}]", prefix)[-1].strip()
+        if re.search(r"@\s*(?:[\w.]+\.)?Composable\s*$", local_prefix):
+            continue
+        if re.search(r"(?:^|[\s;])(?:if|for|while|when|catch|synchronized)\s*(?:\([^{}]*\))?\s*$", prefix):
+            continue
+        if re.search(r"(?:^|[\s;])(?:else|try|finally|do)\s*$", prefix):
+            continue
+        if re.search(r"\b(?:class|interface|object|enum)\b[^{}]*$", prefix):
+            continue
+        if re.search(r"(?:[A-Za-z_][\w.]*)\s*=\s*$", prefix):
+            assignment = prefix.rsplit("=", 1)[0]
+            is_composable_assignment = bool(
+                re.search(
+                    r"(?:^|[\n;{])\s*(?:val|var)\s+[A-Za-z_][\w`]*\s*:\s*@\s*(?:[\w.]+\.)?Composable\b[^=]*$",
+                    assignment,
+                )
+            )
+            if not is_composable_assignment and not _is_known_composable_lambda(masked, opening):
+                ranges.append((opening + 1, closing))
+            continue
+        if not _is_known_composable_lambda(masked, opening):
+            ranges.append((opening + 1, closing))
+    return ranges
+
+
+def _is_composable_occurrence(src: str, occurrence: Occurrence) -> bool:
+    lines = src.splitlines(keepends=True)
+    if not 1 <= occurrence.line_no <= len(lines):
+        return False
+    offset = sum(len(line) for line in lines[:occurrence.line_no - 1]) + occurrence.col_start
+    containing = [item for item in _composable_ranges(src) if item[0] <= offset < item[1]]
+    if not containing:
+        return False
+    if not min(containing, key=lambda item: item[1] - item[0])[2]:
+        return False
+    return not any(start <= offset < end for start, end in _non_composable_lambda_ranges(src))
+
+
+# ---------------------------------------------------------------------------
+# Key suggestion
+# ---------------------------------------------------------------------------
+
+_KEY_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_RESOURCE_KEY_RE = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def _is_valid_resource_key(key: str) -> bool:
+    return _RESOURCE_KEY_RE.fullmatch(key) is not None
+
+
+def _suggest_key(path: str, text: str) -> str:
+    """Suggest an R.string.* key based on existing patterns in the same file."""
+    full_path = ROOT / path
+    src = full_path.read_text("utf-8")
+    existing = set(re.findall(r"R\.string\.(\w+)", src))
+    slug = _KEY_SLUG_RE.sub("_", text.lower().strip(" _")).strip("_")
+    if not slug:
+        slug = "label"
+    elif not slug[0].isalpha():
+        slug = f"label_{slug}"
+
+    # Try matching an existing prefix from the file
+    prefixes: Counter = Counter()
+    for key in existing:
+        if "_" in key:
+            prefixes[key.rsplit("_", 1)[0]] += 1
+    if prefixes:
+        best_prefix = prefixes.most_common(1)[0][0]
+        candidate = f"{best_prefix}_{slug}"
+        if _is_valid_resource_key(candidate) and candidate not in existing:
+            return candidate
+
+    # Try single-word prefix from any existing key
+    for key in existing:
+        prefix = key.split("_", 1)[0]
+        candidate = f"{prefix}_{slug}"
+        if _is_valid_resource_key(candidate) and candidate not in existing:
+            return candidate
+
+    # Fallback
+    return slug if slug not in existing else f"{slug}_2"
+
+
+def _string_resource_matches(xml_content: str, key: str) -> list[re.Match[str]]:
+    pattern = re.compile(
+        rf"<string(?=\s|>)(?=[^>]*\bname\s*=\s*[\"']{re.escape(key)}[\"'])[^>]*(?:/>|>.*?</string\s*>)",
+        re.DOTALL,
+    )
+    return list(pattern.finditer(xml_content))
+
+
+def _base_resource_files() -> list[Path]:
+    return sorted(STRINGS_XML.parent.glob("*.xml"))
+
+
+def _existing_resource_entries(key: str) -> list[tuple[Path, re.Match[str]]]:
+    entries: list[tuple[Path, re.Match[str]]] = []
+    for resource_file in _base_resource_files():
+        content = resource_file.read_text("utf-8")
+        entries.extend((resource_file, match) for match in _string_resource_matches(content, key))
+    return entries
+
+
+def _key_exists(key: str) -> bool:
+    return bool(_existing_resource_entries(key))
+
+
+# ---------------------------------------------------------------------------
+# strings.xml editing
+# ---------------------------------------------------------------------------
+
+def _xml_comment_is_valid(text: str) -> bool:
+    return "--" not in text and not text.endswith("-")
+
+
+def _has_kotlin_interpolation(raw: str) -> bool:
+    is_raw = raw.startswith('"""')
+    body = raw[3:-3] if is_raw else raw[1:-1]
+    index = 0
+    while index < len(body):
+        if not is_raw and body[index] == "\\":
+            index += 2
+            continue
+        if body[index] == "$" and index + 1 < len(body):
+            next_char = body[index + 1]
+            if next_char == "{" or next_char == "_" or next_char.isalpha():
+                return True
+        index += 1
+    return False
+
+
+def _add_to_strings_xml(key: str, text: str, source_path: str, translator_note: str | None = None) -> bool:
+    """Add or update one <string> entry in strings.xml."""
+    if translator_note is not None and not _xml_comment_is_valid(translator_note):
+        print("  ✗ Translator note cannot contain '--' or end with '-'")
+        return False
+    if not _is_valid_resource_key(key):
+        print(f"  ✗ Invalid Android resource name: {key!r}")
+        return False
+
+    existing = _existing_resource_entries(key)
+    if existing:
+        if any(resource_file.name == "donottranslate.xml" for resource_file, _ in existing):
+            print(f"  ✗ Cannot overwrite protected resource R.string.{key}")
+            return False
+        if len(existing) != 1:
+            print(f"  ✗ Cannot overwrite R.string.{key}: found {len(existing)} entries")
+            return False
+        resource_file, match = existing[0]
+        xml_content = resource_file.read_text("utf-8")
+        element = match.group(0)
+        opening_end = element.find(">")
+        opening = element[:opening_end].rstrip()
+        if opening.endswith("/"):
+            opening = opening[:-1].rstrip()
+        replacement = f'{opening}>{_xml_escape(text)}</string>'
+        resource_file.write_text(xml_content[:match.start()] + replacement + xml_content[match.end():], "utf-8")
+        print(f"  ✓ Updated R.string.{key} in {resource_file.name}")
+        return True
+
+    xml_content = STRINGS_XML.read_text("utf-8")
+    closing = xml_content.rfind("</resources>")
+    if closing == -1:
+        print(f"  ✗ Could not find </resources> in {STRINGS_XML}")
+        return False
+
+    indent = "    "
+    if translator_note:
+        comment = f"{indent}<!-- Translators: {translator_note} -->\n"
+    else:
+        section = source_path.replace("app/src/main/java/tv/own/owntv/", "").split("/")[0]
+        comment = f"{indent}<!-- Translators: used in {section} ({source_path}) -->\n"
+    entry = f'{comment}{indent}<string name="{key}">{_xml_escape(text)}</string>\n'
+    line_start = xml_content.rfind("\n", 0, closing) + 1
+    if xml_content[line_start:closing].strip():
+        entry = "\n" + entry
+        insertion = closing
+    else:
+        insertion = line_start
+    STRINGS_XML.write_text(xml_content[:insertion] + entry + xml_content[insertion:], "utf-8")
+    print(f"  ✓ Added R.string.{key} to strings.xml")
+    return True
+
+
+def _xml_escape(text: str) -> str:
+    tokens, _ = _format_tokens(text)
+    escaped: list[str] = []
+    position = 0
+    for start, end, _, conversion in tokens:
+        escaped.append(text[position:start].replace("%", "%%"))
+        escaped.append(text[start:end])
+        position = end
+    escaped.append(text[position:].replace("%", "%%"))
+    android_text = "".join(escaped).replace("\\", "\\\\").replace("'", "\\'")
+    if text.startswith(("@", "?")):
+        android_text = "\\" + android_text
+    return (
+        android_text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Source replacement
+# ---------------------------------------------------------------------------
+
+def _replace_all_in_source(path: str, occurrences: list[Occurrence], key: str):
+    """Replace only the supplied occurrences in a source file."""
+    if not occurrences:
+        return
+    full_path = ROOT / path
+    src = full_path.read_text("utf-8")
+    lines = src.splitlines(keepends=True)
+    positions: list[tuple[int, int]] = []
+    for occurrence in occurrences:
+        if not 1 <= occurrence.line_no <= len(lines):
+            continue
+        start = sum(len(line) for line in lines[:occurrence.line_no - 1]) + occurrence.col_start
+        end = start + len(occurrence.raw)
+        if src[start:end] == occurrence.raw:
+            positions.append((start, end))
+    positions.sort(reverse=True)
+
+    if not positions:
+        return
+
+    has_string_resource_import = re.search(
+        r"^import[ \t]+androidx\.compose\.ui\.res\.stringResource[ \t]*$",
+        src,
+        flags=re.MULTILINE,
+    )
+    has_aliased_string_resource_import = re.search(
+        r"^import[ \t]+androidx\.compose\.ui\.res\.stringResource[ \t]+as[ \t]+[A-Za-z_]\w*[ \t]*$",
+        src,
+        flags=re.MULTILINE,
+    )
+    call = "androidx.compose.ui.res.stringResource" if has_aliased_string_resource_import else "stringResource"
+    for start, end in positions:
+        src = src[:start] + f'{call}(R.string.{key})' + src[end:]
+
+    if call == "stringResource" and not has_string_resource_import:
+        first_import = src.find("\nimport ")
+        if first_import != -1:
+            src = src[:first_import] + "\nimport androidx.compose.ui.res.stringResource" + src[first_import:]
+        else:
+            pkg_end = src.find("\n", src.find("package "))
+            if pkg_end == -1:
+                pkg_end = 0
+            src = src[:pkg_end + 1] + "import androidx.compose.ui.res.stringResource\n" + src[pkg_end + 1:]
+    if "import tv.own.owntv.R" not in src:
+        first_import = src.find("\nimport ")
+        if first_import != -1:
+            src = src[:first_import] + "\nimport tv.own.owntv.R" + src[first_import:]
+        else:
+            pkg_end = src.find("\n", src.find("package "))
+            if pkg_end == -1:
+                pkg_end = 0
+            src = src[:pkg_end + 1] + "import tv.own.owntv.R\n" + src[pkg_end + 1:]
+
+    full_path.write_text(src, "utf-8")
+    print(f"  ✓ Replaced {len(positions)} occurrence(s) in {path}")
+
+
+# ---------------------------------------------------------------------------
+# Add to safe_literals.txt
+# ---------------------------------------------------------------------------
+
+def _add_to_safe(path: str, text: str, count: int, category: str) -> bool:
+    safe, categories, errors = _lib._safe_entries()
+    if errors:
+        for error in errors:
+            print(f"  ✗ {error}")
+        return False
+    key = (path, _lib._normalize(text))
+    safe[key] = safe.get(key, 0) + count
+    categories[key] = category
+    entries = {item: (cnt, categories[item]) for item, cnt in safe.items()}
+    try:
+        SAFE_MANIFEST.write_text(_lib._serialize_safe(entries), "utf-8")
+    except OSError as error:
+        print(f"  ✗ Could not update {SAFE_MANIFEST}: {error}")
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Baseline regeneration
+# ---------------------------------------------------------------------------
+
+def _validate_safe_manifest(current: dict[tuple[str, str], int] | None = None) -> bool:
+    safe, _, errors = _lib._safe_entries()
+    if errors:
+        for error in errors:
+            print(f"  ✗ {error}")
+        return False
+    stale = _lib._subset(safe, _lib._inventory() if current is None else current)
+    if stale:
+        print("  ✗ safe_literals.txt is stale:")
+        for reason in stale:
+            print(f"    {reason}")
+        print("  → Review removed literals before continuing")
+        return False
+    return True
+
+
+def _regenerate_baseline() -> bool:
+    current = _lib._inventory()
+    safe, _, errors = _lib._safe_entries()
+    if errors:
+        for error in errors:
+            print(f"  ✗ {error}")
+        return False
+    stale = _lib._subset(safe, current)
+    if stale:
+        print("  ✗ safe_literals.txt is stale:")
+        for reason in stale:
+            print(f"    {reason}")
+        return False
+    baseline = _lib._subtract_counts(current, safe)
+    try:
+        BASELINE.write_text(_lib._serialize(baseline), "utf-8")
+    except OSError as error:
+        print(f"  ✗ Could not update {BASELINE}: {error}")
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Interactive loop
+# ---------------------------------------------------------------------------
+
+def _prompt_category(text: str, count: int) -> str | None:
+    prompt = (
+        f'\n─── Classify: "{text[:80]}{"…" if len(text) > 80 else ""}" ({count} occurrence(s)) ───\n'
+        "  [r]egex  [s]ql  [j]son  [p]rotocol  [t]echnical  [u]ser-facing  [i]gnore  [q]uit\n"
+        "  > "
+    )
+    try:
+        choice = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return "q"
+    valid = {"r", "s", "j", "p", "t", "u", "i", "q"}
+    while choice not in valid:
+        print(f"  Unknown: {choice!r}. Choose r/s/j/p/t/u/i/q")
+        try:
+            choice = input("  > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "q"
+    return choice
+
+
+def _show_occurrences(
+    path: str,
+    normalized_text: str,
+    candidate_occurrences: list[Occurrence] | None = None,
+) -> list[Occurrence]:
+    """Print all occurrences and return them."""
+    occurrences = _find_all_occurrences(path, normalized_text)
+    candidates = candidate_occurrences if candidate_occurrences is not None else occurrences
+    candidate_keys = {(item.line_no, item.col_start) for item in candidates}
+    unclassified = _lib._inventory()
+    all_files = [p for (p, t), c in unclassified.items() if t == normalized_text]
+
+    seen = set()
+    first_candidate = True
+    for i, occ in enumerate(occurrences):
+        indent = "    "
+        is_candidate = (occ.line_no, occ.col_start) in candidate_keys
+        marker = "→" if is_candidate and first_candidate else " "
+        if is_candidate:
+            first_candidate = False
+        status = "" if is_candidate else " (already classified)"
+        print(f"\n  [{i+1}] {marker} {occ.path}:{occ.line_no}{status}")
+        print(f"{indent}{occ.context.strip()[:120]}")
+        seen.add(occ.path)
+
+    other_files = [f for f in all_files if f != path and f not in seen]
+    if other_files:
+        shown = other_files[:5]
+        for f in shown:
+            print(f"  [·] also in {f}")
+        if len(other_files) > 5:
+            print(f"  … and {len(other_files) - 5} more files")
+
+    return occurrences
+
+
+def _select_occurrences(occurrences: list[Occurrence], count: int) -> list[Occurrence] | None:
+    if count <= 0:
+        return []
+    if count > len(occurrences):
+        print("  → The inventory count exceeds the occurrences still present; leaving it unchanged")
+        return []
+    if count == len(occurrences):
+        return occurrences
+
+    print(
+        f"  The manifest records {count} unclassified occurrence(s), but not their positions."
+        " Select their exact occurrence number(s)."
+    )
+    while True:
+        try:
+            selection = input(f"  Select exactly {count} occurrence number(s) > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        try:
+            selected_numbers = {int(value) for value in re.split(r"[ ,]+", selection) if value}
+        except ValueError:
+            selected_numbers = set()
+        if len(selected_numbers) == count and selected_numbers <= set(range(1, len(occurrences) + 1)):
+            return [occurrences[number - 1] for number in sorted(selected_numbers)]
+        print(f"  Choose exactly {count} distinct numbers from 1-{len(occurrences)}")
+
+
+def _classify_one(path: str, text: str, count: int) -> str | None:
+    """Classify one unique string. Returns success, skipped, quit, or failure."""
+    occurrences = _find_all_occurrences(path, text)
+    _show_occurrences(path, text)
+    candidate_occurrences = _select_occurrences(occurrences, count)
+    if candidate_occurrences is None:
+        return "q"
+    if not candidate_occurrences:
+        print("  → No unclassified occurrence remains in this file; leaving it unchanged")
+        return "skipped"
+    choice = _prompt_category(text, len(candidate_occurrences))
+    if choice in ("q", None):
+        return "q"
+
+    category = _SHORT_CATEGORIES[choice]
+    label = "ignored (technical)" if choice == "i" else category
+
+    if choice != "u":
+        if not _add_to_safe(path, text, len(candidate_occurrences), category):
+            return None
+        if not _regenerate_baseline():
+            return None
+        print(f"  → Classified as {label}")
+        return "success"
+
+    # --- user-facing ---
+    key = _suggest_key(path, text)
+    while True:
+        print(f"\n  Suggested key: R.string.{key}")
+        confirm = input("  [y]es  [e]dit  [s]kip > ").strip().lower()
+        if confirm in ("y", "yes", ""):
+            break
+        elif confirm in ("e", "edit"):
+            key = input("  Enter key name (without prefix): ").strip()
+            while not _is_valid_resource_key(key):
+                print("  Key must match [a-z][a-z0-9_]*")
+                key = input("  Enter key name: ").strip()
+        elif confirm in ("s", "skip"):
+            print("  → Skipped, literal left unchanged")
+            return "skipped"
+        else:
+            print(f"  Unknown: {confirm!r}")
+
+    existing_entries = _existing_resource_entries(key)
+    if existing_entries:
+        if any(resource_file.name == "donottranslate.xml" for resource_file, _ in existing_entries):
+            print(f"  → R.string.{key} is protected in donottranslate.xml; skipped")
+            return "skipped"
+        print(f"  ⚠ R.string.{key} already exists in base resources")
+        confirm = input("  Overwrite? [y]es [n]o > ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("  → Skipped")
+            return "skipped"
+
+    composable_occurrences = [
+        occurrence for occurrence in candidate_occurrences
+        if _is_composable_occurrence((ROOT / path).read_text("utf-8"), occurrence)
+    ]
+    if not composable_occurrences:
+        print("  → No @Composable occurrence selected; literal left unchanged")
+        return "skipped"
+
+    approved_occurrences = composable_occurrences
+    if len(composable_occurrences) > 1:
+        valid_numbers = {occurrences.index(occurrence) + 1 for occurrence in composable_occurrences}
+        while True:
+            selection = input("  Replace occurrences [a]ll [numbers] [s]kip > ").strip().lower()
+            if selection in ("", "a", "all"):
+                break
+            if selection in ("s", "skip"):
+                print("  → Skipped, literal left unchanged")
+                return "skipped"
+            try:
+                selected_numbers = {int(value) for value in re.split(r"[ ,]+", selection) if value}
+            except ValueError:
+                selected_numbers = set()
+            if selected_numbers and selected_numbers <= valid_numbers:
+                approved_occurrences = [
+                    occurrence for occurrence in composable_occurrences
+                    if occurrences.index(occurrence) + 1 in selected_numbers
+                ]
+                break
+            print(f"  Choose occurrence numbers from: {', '.join(map(str, sorted(valid_numbers)))}")
+
+    safe_occurrences: list[Occurrence] = []
+    for occurrence in approved_occurrences:
+        decoded = _lib._decode(occurrence.raw)
+        if _has_kotlin_interpolation(occurrence.raw):
+            print(f"  → Skipping interpolated occurrence at line {occurrence.line_no}")
+        elif "%" in decoded:
+            print(f"  → Skipping percent-formatted occurrence at line {occurrence.line_no}")
+        else:
+            safe_occurrences.append(occurrence)
+    if not safe_occurrences:
+        print("  → No safely replaceable occurrence selected; literal left unchanged")
+        return "skipped"
+
+    resource_text = _lib._decode(safe_occurrences[0].raw)
+    replacement_occurrences = [
+        occurrence for occurrence in safe_occurrences
+        if _lib._decode(occurrence.raw) == resource_text
+    ]
+
+    # Optional translator context
+    print(f'\n  Translator context (optional — explain where/how this string is used):')
+    note = input("  > ").strip()
+    if not _add_to_strings_xml(key, resource_text, path, translator_note=note if note else None):
+        return None
+
+    _replace_all_in_source(path, replacement_occurrences, key)
+    if not _regenerate_baseline():
+        return None
+    if len(replacement_occurrences) < len(candidate_occurrences):
+        print("  → Partially classified; unchanged occurrences remain in the baseline")
+        return "partial"
+    return "success"
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="list unclassified but don't modify files")
+    args = parser.parse_args()
+
+    if not _validate_safe_manifest():
+        print("Cannot classify while safe_literals.txt is invalid or stale.")
+        return 1
+
+    unclassified = _unclassified()
+    if not unclassified:
+        print("✓ No unclassified literals found.")
+        return 0
+
+    total_unique = len(unclassified)
+    total_occ = sum(unclassified.values())
+    print(f"Unclassified literals: {total_unique} unique strings ({total_occ} total occurrences)\n")
+
+    if args.dry_run:
+        for (path, text), count in sorted(unclassified.items(), key=lambda x: (-x[1], x[0][0], x[0][1])):
+            print(f"  [{count:3d}] {path}: {text[:100]}")
+        print(f"\n{total_unique} unclassified, {total_occ} occurrences")
+        return 0
+
+    items = sorted(unclassified.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
+    classified_count = 0
+    partial_count = 0
+    skipped_count = 0
+    for i, ((path, text), count) in enumerate(items):
+        # Skip if already classified by a previous iteration (same text in another file)
+        if i > 0:
+            if (path, text) not in _unclassified():
+                continue
+
+        print(f"\n{'─' * 60}")
+        print(f"[{i+1}/{total_unique}]")
+        choice = _classify_one(path, text, count)
+        if choice == "q":
+            print(f"\nQuit after {classified_count} classified. Run again to continue.")
+            return 0
+        if choice is None:
+            print("\nClassification failed; stopping.")
+            return 1
+        if choice == "skipped":
+            skipped_count += 1
+        elif choice == "partial":
+            partial_count += 1
+        else:
+            classified_count += 1
+
+    if not _regenerate_baseline():
+        return 1
+    if skipped_count or partial_count:
+        details = [f"{classified_count} fully classified"]
+        if partial_count:
+            details.append(f"{partial_count} partially classified")
+        if skipped_count:
+            details.append(f"{skipped_count} left unchanged")
+        print(f"\n✓ {'; '.join(details)}.")
+    else:
+        print(f"\n✓ All {classified_count} literals classified.")
+    print("  Remember to commit the changed files:")
+    print("    strings.xml, safe_literals.txt, hardcoded_baseline.txt, *.kt sources")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

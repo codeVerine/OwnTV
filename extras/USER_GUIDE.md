@@ -204,7 +204,7 @@ or **narrow the whole app to just one**.
 
 ## 📺 Live TV
 
-- **Categories** are in the second column. Long category names **wrap to two lines** so they're never cut off.
+- **Categories** are in the second column. Long category names **wrap to two lines** so they're never cut off. In **Live TV, Movies and Series**, the shared category **search bar stays pinned above the scrolling rows and always remains visible**. Returning from the content pane focuses the search bar; press **Down** to focus the current category when it matches the filter, otherwise the first matching category. Type to filter categories by name; the filter clears when you leave the rail.
 - ⏪ **Catch-up category**: between **History** and **All** sits **Catch-up**, holding every channel your
   provider keeps a recording for. It only appears if you have such channels. Sorting, the search box and
   the in-player channel list all work inside it, like any other category.
