@@ -3,41 +3,33 @@ package tv.own.owntv.ui.components
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import tv.own.owntv.core.settings.RemoteShortcutAction
+import tv.own.owntv.core.settings.RemoteShortcutPress
 
 /**
- * CH+- key paging for a browse panel (category rail OR item list/grid).
- *
- * Behaviour:
- *  - **CH− short press**: jump [downSkip] items toward the last item (clamped at the end).
- *  - **CH+ short press**: jump [upSkip] items toward the first item (clamped at the end).
- *  - **CH− long-press**: jump straight to the LAST item.
- *  - **CH+ long-press**: jump straight to the FIRST item.
- *
- * Long-press is detected via Android's key-repeat mechanism: while a key is held, the platform re-fires
- * KeyDown events whose `nativeEvent.repeatCount > 0`. The FIRST repeat is treated as the long-press
- * trigger, and subsequent repeats are swallowed until the key is released. No timer coroutine is
- * needed, so there's no race on fast taps.
+ * Configurable remote paging for a browse panel (category rail OR item list/grid).
+ * Factory bindings preserve the original CH+/CH− and rewind/fast-forward short/long-press behavior;
+ * the Remote shortcuts screen can replace those buttons or assign paging to another delivered key.
  *
  * Everything only fires when [enabled] AND [isFocused] (the pane this modifier is attached to must
  * currently hold focus). All jumps use the caller-supplied [onJumpToIndex] which is expected to call
  * `scrollToItem` (instant — never `animateScrollToItem`, which janks on low-end TVs over big skips)
  * and then request focus on the target row.
  *
- * Returns `true` (consume) for CH+/- KeyDown/KeyUp **when the pane has focus**, so the key never
- * leaks to the player shell; `false` for all other keys and when unfocused.
+ * A non-paging shortcut pressed while this pane has focus is forwarded to the shell dispatcher. This
+ * lets a custom Guide/Search/etc. binding override a former paging key without two actions firing.
  */
 fun Modifier.chNavPaging(
     enabled: Boolean,
@@ -52,68 +44,61 @@ fun Modifier.chNavPaging(
     // pointless and just janks), while keeping it on real categories/folders.
     longPressEnabled: () -> Boolean = { true },
 ): Modifier = composed {
-    if (!enabled) return@composed this
+    val remote = LocalRemoteShortcuts.current
+    if (!enabled || !remote.enabled) return@composed this
 
-    // Per-key cycle state. A CH key cycle is KeyDown → (repeat KeyDown × N) → KeyUp. A held key on
-    // Android TV re-fires KeyDown events roughly every ~50ms after the initial press; we detect the
-    // long-press as "a second KeyDown arrives within LONG_PRESS_MS of the previous one without an
-    // intervening KeyUp" — no dependency on nativeEvent.repeatCount, which isn't uniformly accessible.
-    var longPressFired by remember { mutableStateOf(false) }
-    var lastKeyDownAt by remember { mutableStateOf(0L) }
+    // Handle the key directly here instead of nesting remoteShortcutHandler (another composed
+    // modifier) around the category/content focus groups. The nested modifier invalidated focus on
+    // the two-pane Live TV, Movies and Series screens.
+    var activeKeyCode by remember { mutableIntStateOf(android.view.KeyEvent.KEYCODE_UNKNOWN) }
+    var pressedAt by remember { mutableStateOf(0L) }
 
-    onPreviewKeyEvent { e ->
-        val isChKey = e.key == Key.ChannelUp || e.key == Key.ChannelDown
-        if (!isChKey) return@onPreviewKeyEvent false
+    onPreviewKeyEvent { event ->
+        val keyCode = event.nativeKeyEvent.keyCode
+        val keyBindings = remote.bindings.filter { it.keyCode == keyCode }
+        if (!isFocused() || keyBindings.isEmpty()) return@onPreviewKeyEvent false
 
-        // When this pane doesn't have focus, never consume — let the key reach whichever pane does
-        // (the focused pane's own chNavPaging modifier will handle it).
-        if (!isFocused()) return@onPreviewKeyEvent false
-
-        val dir = if (e.key == Key.ChannelDown) -1 else 1 // -1 = CH− (toward last), +1 = CH+ (toward first)
-
-        when (e.type) {
+        when (event.type) {
             KeyEventType.KeyDown -> {
-                val now = System.currentTimeMillis()
-                // A repeat = another KeyDown within LONG_PRESS_MS of the previous one (no KeyUp between).
-                val isRepeat = lastKeyDownAt > 0 && now - lastKeyDownAt < LONG_PRESS_MS
-                lastKeyDownAt = now
-                if (isRepeat && longPressEnabled()) {
-                    // First repeat = the long-press threshold was reached. Fire the end-jump once;
-                    // swallow further repeats so a held key doesn't keep re-jumping.
-                    if (!longPressFired) {
-                        longPressFired = true
-                        val last = lastIndex()
-                        val target = if (dir < 0) last else 0
-                        if (last >= 0 && target != currentTargetIndex()) onJumpToIndex(target)
-                    }
-                } else {
-                    // First press of a fresh cycle: arm for a possible long-press. (The short-press
-                    // action itself runs on KeyUp, so we don't fire anything here.)
-                    longPressFired = false
+                if (activeKeyCode != keyCode) {
+                    activeKeyCode = keyCode
+                    pressedAt = event.nativeKeyEvent.eventTime
                 }
-                true // consume so the shell doesn't also react
-            }
-            KeyEventType.KeyUp -> {
-                if (!longPressFired) {
-                    // Short press: skip N in the key's direction, clamped to [0, lastIndex].
-                    val cur = currentTargetIndex()
-                    val last = lastIndex()
-                    val delta = if (dir < 0) downSkip else upSkip
-                    val target = if (dir < 0) cur + delta else cur - delta
-                    val clamped = target.coerceIn(0, last.coerceAtLeast(0))
-                    if (last >= 0 && clamped != cur) onJumpToIndex(clamped)
-                }
-                longPressFired = false
-                lastKeyDownAt = 0L
                 true
             }
-            else -> true
+            KeyEventType.KeyUp -> {
+                if (activeKeyCode != keyCode) return@onPreviewKeyEvent false
+                val heldLong = event.nativeKeyEvent.eventTime - pressedAt >= PAGING_LONG_PRESS_MS
+                val binding = if (heldLong) {
+                    keyBindings.firstOrNull { it.press == RemoteShortcutPress.LONG }
+                        ?: keyBindings.firstOrNull { it.press == RemoteShortcutPress.SHORT }
+                } else {
+                    keyBindings.firstOrNull { it.press == RemoteShortcutPress.SHORT }
+                }
+                activeKeyCode = android.view.KeyEvent.KEYCODE_UNKNOWN
+                binding?.let { selected ->
+                    val current = currentTargetIndex()
+                    val last = lastIndex()
+                    val target = when (selected.action) {
+                        RemoteShortcutAction.PAGE_TOWARD_FIRST -> current - upSkip
+                        RemoteShortcutAction.PAGE_TOWARD_LAST -> current + downSkip
+                        RemoteShortcutAction.JUMP_TO_FIRST -> if (longPressEnabled()) 0 else current
+                        RemoteShortcutAction.JUMP_TO_LAST -> if (longPressEnabled()) last else current
+                        else -> {
+                            remote.dispatch(selected.action)
+                            return@let
+                        }
+                    }.coerceIn(0, last.coerceAtLeast(0))
+                    if (last >= 0 && target != current) onJumpToIndex(target)
+                }
+                true
+            }
+            else -> activeKeyCode == keyCode
         }
     }
 }
 
-/** Two KeyDown events closer together than this (ms) are treated as a held key → long-press. */
-private const val LONG_PRESS_MS = 350L
+private const val PAGING_LONG_PRESS_MS = 600L
 
 /**
  * Helper for screens that hold a [LazyListState]: scroll instantly to [index] and (optionally) request

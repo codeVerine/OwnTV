@@ -34,6 +34,15 @@ import org.junit.runner.RunWith
  * The journey is deliberately input-driven (D-pad only, no text/resource matching) so it records
  * the same code paths on any box regardless of which playlist, catalog or language is installed,
  * and cannot fail on a device whose catalog is empty.
+ *
+ * **The emulator must already be set up and carry a catalog before recording.** A fresh install
+ * opens the setup wizard, and a blind D-pad walk never escapes it — the profile then records the
+ * wizard instead of the app, which is exactly what happened to the first recorded profile (555
+ * entries for settings, 79 for setup, *one* each for home/movies/series/live/search). So: install
+ * `:app:assembleX86_64BenchmarkRelease` by hand, complete the wizard, import a playlist, and only
+ * then run the Gradle task — it reinstalls the same APK with `install -r`, which keeps that data.
+ * A synthetic M3U served over `http://10.0.2.2:<port>/` from the host is enough and needs no real
+ * credentials.
  */
 @RunWith(AndroidJUnit4::class)
 class BaselineProfileGenerator {
@@ -52,18 +61,36 @@ class BaselineProfileGenerator {
         device.waitForIdle()
         settle()
 
-        // Walk down the nav rail and back up: every browse section composes at least once, which is
-        // where the bulk of the interpreted-on-first-run Compose code lives.
+        // Home first, with its rows actually scrolled: the carousel, the row headers and the poster
+        // items are the first real composition the user ever waits for.
+        browseContentArea()
+
+        // Then every other section in turn. Entering the content area is what matters — a section
+        // whose grid never composes contributes nothing but its empty scaffold, which is how the
+        // previous profile ended up with a single entry per browse screen.
         repeat(NAV_ITEMS) {
             device.pressDPadDown()
             settle()
-        }
-        repeat(NAV_ITEMS) {
-            device.pressDPadUp()
-            settle()
+            browseContentArea()
         }
 
-        // Into the content area, then scroll: LazyList/paging code paths are a large share of the win.
+        // Open whatever is focused (channel or detail page) and come back — playback setup, the
+        // detail screen and the back path all get compiled.
+        device.pressDPadRight()
+        settle()
+        device.pressDPadCenter()
+        settle()
+        Thread.sleep(OPEN_SETTLE_MS)
+        device.pressBack()
+        settle()
+    }
+
+    /**
+     * From the nav rail: step into the section's content, scroll it in both axes, and step back out.
+     * Returning is done with repeated LEFT rather than BACK, because BACK on the first section
+     * leaves the app and ends the journey early.
+     */
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.browseContentArea() {
         device.pressDPadRight()
         settle()
         repeat(SCROLL_STEPS) {
@@ -75,13 +102,10 @@ class BaselineProfileGenerator {
             device.waitForIdle()
         }
         settle()
-
-        // Open whatever is focused (channel or detail page) and come back — playback setup, the
-        // detail screen and the back path all get compiled.
-        device.pressDPadCenter()
-        settle()
-        Thread.sleep(OPEN_SETTLE_MS)
-        device.pressBack()
+        repeat(SCROLL_STEPS + 2) {
+            device.pressDPadLeft()
+            device.waitForIdle()
+        }
         settle()
     }
 

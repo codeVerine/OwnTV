@@ -16,6 +16,14 @@ on:
 permissions:
   contents: write   # required so tag builds can create a Release
 
+# Resolving tv.own.owntv:core and :player-core from GitHub Packages. The registry belongs to a
+# DIFFERENT, private repository (ahXN00/OwnTV_Core), and the built-in GITHUB_TOKEN is scoped to this
+# one — so a personal access token with read:packages is required, stored as the GPR_TOKEN secret.
+# Every Gradle step needs it, hence workflow level rather than per job.
+env:
+  GITHUB_ACTOR: ${{ github.actor }}
+  GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

@@ -16,6 +16,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.own.owntv.core.customize.BulkRenameSession
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.SpanSelector
+import tv.own.owntv.core.customize.moveBlock
 import tv.own.owntv.core.customize.CustomizationStore
 import tv.own.owntv.core.customize.CustomizeKeys
 import tv.own.owntv.core.database.dao.CategoryDao
@@ -25,7 +29,7 @@ import tv.own.owntv.core.database.dao.SourceDao
 import tv.own.owntv.core.model.MediaType
 import tv.own.owntv.core.repository.ActiveProfileSources
 import tv.own.owntv.core.repository.activeProfileSources
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 
 /** One category row in the Customize screen (hidden rows stay visible here, marked, for unhiding).
  *  [categoryId] is null for a user's custom combined category (issue #87) — there is no provider
@@ -39,6 +43,18 @@ data class CustomizeCatRow(
     val renamed: Boolean,
     val providerName: String? = null,
 )
+
+enum class CustomizeVisibilityFilter {
+    ALL,
+    VISIBLE,
+    HIDDEN;
+
+    fun accepts(hidden: Boolean): Boolean = when (this) {
+        ALL -> true
+        VISIBLE -> !hidden
+        HIDDEN -> hidden
+    }
+}
 
 /**
  * Drives Settings → Customize: per-profile hide / rename / reorder of categories (Live/Movies/Series)
@@ -90,6 +106,14 @@ class CustomizeViewModel(
     private val _section = MutableStateFlow(MediaType.LIVE)
     val section: StateFlow<MediaType> = _section.asStateFlow()
 
+    private val _visibilityFilter = MutableStateFlow(CustomizeVisibilityFilter.ALL)
+    val visibilityFilter: StateFlow<CustomizeVisibilityFilter> = _visibilityFilter.asStateFlow()
+
+    fun setVisibilityFilter(filter: CustomizeVisibilityFilter) {
+        _visibilityFilter.value = filter
+        span.cancel()
+    }
+
     // --- Span selection (shared machinery, see SpanSelector.kt) ---
 
     private val span = SpanSelector(
@@ -108,8 +132,9 @@ class CustomizeViewModel(
     }
 
     /** Categories of the selected section, in their customized order, including hidden ones. */
-    val rows: StateFlow<List<CustomizeCatRow>> = combine(_section, ctx) { s, c -> s to c }
-        .flatMapLatest { (type, c) ->
+    val rows: StateFlow<List<CustomizeCatRow>> = combine(_section, ctx, _visibilityFilter) { s, c, filter ->
+        Triple(s, c, filter)
+    }.flatMapLatest { (type, c, filter) ->
             if (c.profileId < 0) flowOf(emptyList())
             else {
                 val sourceIds = c.sourceIdsFor(type)
@@ -153,7 +178,8 @@ class CustomizeViewModel(
                         )
                     }
                     val (pinned, rest) = entries.partition { it.key in orderIndex }
-                    pinned.sortedBy { orderIndex.getValue(it.key) } + rest
+                    (pinned.sortedBy { orderIndex.getValue(it.key) } + rest)
+                        .filter { filter.accepts(it.hidden) }
                 }
             }
         }
@@ -263,6 +289,22 @@ class CustomizeViewModel(
     fun setCategoryHidden(row: CustomizeCatRow, hidden: Boolean) {
         viewModelScope.launch {
             customize.setCategoryHidden(ctx.value.profileId, _section.value, row.key, hidden)
+        }
+    }
+
+    /**
+     * Flips the hidden state of every category currently listed (the visibility filter decides what
+     * is listed) in ONE atomic edit — hidden rows become visible and the other way round. Applying
+     * it again restores the original state. [onDone] reports how many rows were flipped.
+     */
+    fun invertHidden(onDone: (Int) -> Unit) {
+        val pid = ctx.value.profileId
+        if (pid < 0) return
+        val current = rows.value
+        if (current.isEmpty()) return
+        viewModelScope.launch {
+            customize.invertCategoriesHidden(pid, _section.value, current.map { it.key })
+            onDone(current.size)
         }
     }
 

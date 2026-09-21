@@ -25,7 +25,7 @@ import tv.own.owntv.core.database.dao.SeriesDao
 import tv.own.owntv.core.database.entity.DownloadEntity
 import tv.own.owntv.core.download.DownloadManager
 import tv.own.owntv.core.model.MediaType
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.player.OwnTVPlayer
 
 /** Phase 12 — lists the active profile's downloads and plays completed ones from local storage. */
@@ -174,4 +174,22 @@ class DownloadsViewModel(
     fun pause(download: DownloadEntity) = downloadManager.pause(download)
     fun resume(download: DownloadEntity) = downloadManager.resume(download)
     fun delete(download: DownloadEntity) = downloadManager.delete(download)
+
+    // --- Bulk queue controls (group feedback: d0itlater's "manage downloads" request) ---
+
+    /** Parks every queued/running download of the active profile as PAUSED (partial file kept). */
+    fun pauseAll() = viewModelScope.launch {
+        settings.activeProfileId.first().takeIf { it >= 0 }?.let { downloadManager.pauseAll(it) }
+    }
+
+    /** Re-queues every PAUSED download of the active profile. */
+    fun resumeAll() = viewModelScope.launch {
+        settings.activeProfileId.first().takeIf { it >= 0 }?.let { downloadManager.resumeAll(it) }
+    }
+
+    /** Deletes every COMPLETED download of the active profile (file + row). Returns how many. */
+    fun deleteCompleted(onDone: (Int) -> Unit) = viewModelScope.launch {
+        val pid = settings.activeProfileId.first().takeIf { it >= 0 } ?: return@launch
+        onDone(downloadManager.deleteCompleted(pid))
+    }
 }

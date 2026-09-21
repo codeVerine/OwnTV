@@ -1,7 +1,9 @@
 package tv.own.owntv.features.setup
 
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -20,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -30,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -38,6 +43,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,36 +63,34 @@ import tv.own.owntv.core.database.dao.resolveExistingProfileId
 import tv.own.owntv.core.database.entity.SourceEntity
 import tv.own.owntv.core.model.HlsSupport
 import tv.own.owntv.core.model.SourceType
-import tv.own.owntv.core.parser.HlsInconclusiveReason
-import tv.own.owntv.core.parser.HlsNotServedReason
 import tv.own.owntv.core.parser.HlsProbe
 import tv.own.owntv.core.parser.HlsTest
 import tv.own.owntv.core.parser.XtreamClient
 import tv.own.owntv.core.sync.SyncScopeChoice
-import tv.own.owntv.core.util.FriendlySyncFailure
 import tv.own.owntv.features.settings.PickerDialog
-import tv.own.owntv.features.settings.data.PlaylistAutoRefresh
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.features.settings.SourceTestDialog
+import tv.own.owntv.features.settings.SourceTestUi
+import tv.own.owntv.core.repository.SourceTester
+import tv.own.owntv.core.setup.MAG_USER_AGENTS
+import tv.own.owntv.core.setup.displayText
+import tv.own.owntv.core.settings.PlaylistAutoRefresh
+import tv.own.owntv.core.settings.PlaylistRefresh
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.ui.components.BrowseMode
 import tv.own.owntv.ui.components.FocusableSurface
-import tv.own.owntv.ui.components.displayText
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
+import tv.own.owntv.ui.components.OwnTVPopup
 import tv.own.owntv.ui.components.OwnTVTextField
+import tv.own.owntv.ui.components.dialogPanel
+import tv.own.owntv.ui.components.modalScrim
+import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.StorageBrowser
 import tv.own.owntv.ui.components.roundedPanel
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 private enum class SourceKind { XTREAM, M3U, STALKER }
-
-/** UI state of the Stalker "Test connection" probe (mapped from the owning ViewModel's state). */
-sealed interface StalkerTestUi {
-    data object Idle : StalkerTestUi
-    data object Testing : StalkerTestUi
-    data class Ok(val endpoint: String, val profileFields: Int, val expiry: String?) : StalkerTestUi
-    data class Failed(val failure: FriendlySyncFailure) : StalkerTestUi
-}
 
 /** UI state of the Xtream "Test HLS support" probe. Local to this screen — the probe is one short
  *  request and saves nothing unless the source already exists. */
@@ -97,16 +101,6 @@ private sealed interface HlsTestUi {
     data class Failed(val rawMessage: String) : HlsTestUi
 }
 
-/** MAG User-Agent presets (plan §7 "Header/UA pickiness") — value goes into the User-Agent field. */
-private data class MagPreset(@param:StringRes val labelRes: Int, val userAgent: String)
-
-private val MAG_UA_PRESETS = listOf(
-    MagPreset(R.string.setup_default_mag, ""),
-    MagPreset(R.string.setup_mag250, "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG250 stbapp ver: 2 rev: 250 Safari/533.3"),
-    MagPreset(R.string.setup_mag254, "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG254 stbapp ver: 2 rev: 250 Safari/533.3"),
-    MagPreset(R.string.setup_mag270, "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG270 stbapp ver: 2 rev: 250 Safari/533.3"),
-    MagPreset(R.string.setup_mag420, "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/601.1 (KHTML, like Gecko) MAG420 stbapp ver: 4 rev: 2721 Safari/601.1"),
-)
 
 @Composable
 fun AddSourceScreen(
@@ -117,14 +111,14 @@ fun AddSourceScreen(
         pass: String,
         userAgent: String,
         epgUrl: String,
-        autoRefresh: PlaylistAutoRefresh,
+        autoRefresh: PlaylistRefresh,
         live: SyncScopeChoice,
         movies: SyncScopeChoice,
         series: SyncScopeChoice,
         isDefault: Boolean,
         preferHls: Boolean,
     ) -> Unit,
-    onStartM3u: (name: String, url: String, userAgent: String, epgUrl: String, autoRefresh: PlaylistAutoRefresh, isDefault: Boolean) -> Unit,
+    onStartM3u: (name: String, url: String, userAgent: String, epgUrl: String, autoRefresh: PlaylistRefresh, isDefault: Boolean) -> Unit,
     // The last submission from the Remote companion screen, retained as a StateFlow so it survives the
     // Remote → Manual hand-off (this screen mounts after the remote browser posted). When present, the matching
     // type is selected and the fields pre-filled; the user then presses Start Import. Consumed once via
@@ -134,7 +128,10 @@ fun AddSourceScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     initial: SourceEntity? = null,
-    initialAutoRefresh: PlaylistAutoRefresh = PlaylistAutoRefresh.OFF,
+    // Multi-MAC (Stalker, group feedback: Blizznow): pre-fill the ADD form from an existing portal —
+    // same URL/EPG/UA, name suffixed, MAC cleared — while submission stays ADD, never an edit.
+    duplicateOf: SourceEntity? = null,
+    initialAutoRefresh: PlaylistRefresh = PlaylistRefresh.OFF,
     initialIsDefault: Boolean = false,
     showDefaultToggle: Boolean = true,
     // Stalker portal (plan Phase B). Null = the Stalker option is hidden (e.g. the setup wizard).
@@ -147,57 +144,60 @@ fun AddSourceScreen(
         deviceId2: String,
         signature: String,
         userAgent: String,
-        autoRefresh: PlaylistAutoRefresh,
+        autoRefresh: PlaylistRefresh,
         isDefault: Boolean,
         live: SyncScopeChoice,
         movies: SyncScopeChoice,
         series: SyncScopeChoice,
     ) -> Unit)? = null,
-    onTestStalker: ((portalUrl: String, mac: String, serialNumber: String, deviceId: String, deviceId2: String, signature: String, userAgent: String) -> Unit)? = null,
-    stalkerTest: StalkerTestUi = StalkerTestUi.Idle,
 ) {
     val colors = OwnTVTheme.colors
     val editing = initial != null
+    // What the fields pre-fill from: the edited row, or the duplicated portal (name suffixed,
+    // MAC cleared so the second MAC must be entered).
+    val duplicateSuffix = stringResource(R.string.settings_sources_duplicate_suffix)
+    val prefill = initial ?: duplicateOf?.let { it.copy(name = it.name + duplicateSuffix, mac = null) }
     var kind by remember {
         mutableStateOf(
-            when (initial?.type) {
+            when (prefill?.type) {
                 SourceType.M3U -> SourceKind.M3U
                 SourceType.STALKER -> SourceKind.STALKER
                 else -> SourceKind.XTREAM
             },
         )
     }
-    var name by remember(initial) { mutableStateOf(initial?.name ?: "") }
-    var server by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.XTREAM) initial.url else "") }
-    var username by remember(initial) { mutableStateOf(initial?.username ?: "") }
-    var password by remember(initial) { mutableStateOf(initial?.password ?: "") }
-    var m3uUrl by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.M3U) initial.url else "") }
-    var portalUrl by remember(initial) { mutableStateOf(if (initial != null && initial.type == SourceType.STALKER) initial.url else "") }
-    var mac by remember(initial) { mutableStateOf(initial?.mac ?: "") }
-    var stalkerSerialNumber by remember(initial) { mutableStateOf(initial?.stalkerSerialNumber ?: "") }
-    var stalkerDeviceId by remember(initial) { mutableStateOf(initial?.stalkerDeviceId ?: "") }
-    var stalkerDeviceId2 by remember(initial) { mutableStateOf(initial?.stalkerDeviceId2 ?: "") }
-    var stalkerSignature by remember(initial) { mutableStateOf(initial?.stalkerSignature ?: "") }
+    var name by remember(prefill) { mutableStateOf(prefill?.name ?: "") }
+    var server by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.XTREAM) prefill.url else "") }
+    var username by remember(prefill) { mutableStateOf(prefill?.username ?: "") }
+    var password by remember(prefill) { mutableStateOf(prefill?.password ?: "") }
+    var m3uUrl by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.M3U) prefill.url else "") }
+    var portalUrl by remember(prefill) { mutableStateOf(if (prefill != null && prefill.type == SourceType.STALKER) prefill.url else "") }
+    var mac by remember(prefill) { mutableStateOf(prefill?.mac ?: "") }
+    var stalkerSerialNumber by remember(prefill) { mutableStateOf(prefill?.stalkerSerialNumber ?: "") }
+    var stalkerDeviceId by remember(prefill) { mutableStateOf(prefill?.stalkerDeviceId ?: "") }
+    var stalkerDeviceId2 by remember(prefill) { mutableStateOf(prefill?.stalkerDeviceId2 ?: "") }
+    var stalkerSignature by remember(prefill) { mutableStateOf(prefill?.stalkerSignature ?: "") }
     var showUaPresetPicker by remember { mutableStateOf(false) }
-    var epgUrl by remember(initial) { mutableStateOf(initial?.epgUrl ?: "") }
-    var userAgent by remember(initial) { mutableStateOf(initial?.userAgent ?: "") }
+    var epgUrl by remember(prefill) { mutableStateOf(prefill?.epgUrl ?: "") }
+    var userAgent by remember(prefill) { mutableStateOf(prefill?.userAgent ?: "") }
     var autoRefresh by remember(initialAutoRefresh) { mutableStateOf(initialAutoRefresh) }
     var isDefault by remember(initialIsDefault) { mutableStateOf(initialIsDefault) }
-    var preferHls by remember(initial) { mutableStateOf(initial?.preferHls == true) }
+    var preferHls by remember(prefill) { mutableStateOf(prefill?.preferHls == true) }
     // Edit: On(=Now)/Off from persisted flags. Add: default all Now for Xtream; Stalker defaults
     // Live Now + Movies/Series Later when the kind switches (see LaunchedEffect below).
-    var syncLive by remember(initial) {
-        mutableStateOf(if (initial?.syncLive == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncLive by remember(prefill) {
+        mutableStateOf(if (prefill?.syncLive == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
-    var syncMovies by remember(initial) {
-        mutableStateOf(if (initial?.syncMovies == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncMovies by remember(prefill) {
+        mutableStateOf(if (prefill?.syncMovies == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
-    var syncSeries by remember(initial) {
-        mutableStateOf(if (initial?.syncSeries == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
+    var syncSeries by remember(prefill) {
+        mutableStateOf(if (prefill?.syncSeries == false) SyncScopeChoice.Off else SyncScopeChoice.Now)
     }
     var hasRemoteStalkerScopes by remember { mutableStateOf(false) }
     var showFileBrowser by remember { mutableStateOf(false) }
     var showAutoRefreshPicker by remember { mutableStateOf(false) }
+    var showManualDaysPicker by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
     val startImportFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
@@ -234,6 +234,47 @@ fun AddSourceScreen(
     LaunchedEffect(server, username, password) {
         hlsTest = HlsTestUi.Idle
         testedSupport = null
+    }
+
+    // ---- "Test connection" (all three source types) ----
+    // Runs against what is TYPED, not what is saved, so an account can be checked while adding it.
+    // Read-only: it asks the provider for its account status and stores nothing.
+    val sourceTester: SourceTester = koinInject()
+    var sourceTest by remember { mutableStateOf<SourceTestUi?>(null) }
+
+    fun formSource(): SourceEntity {
+        fun opt(value: String) = value.trim().takeIf { it.isNotBlank() }
+        val ua = opt(userAgent)
+        return when (kind) {
+            SourceKind.XTREAM -> SourceEntity(
+                id = initial?.id ?: 0L, name = name, type = SourceType.XTREAM,
+                url = server.trim(), username = username.trim(), password = password, userAgent = ua,
+            )
+            SourceKind.M3U -> SourceEntity(
+                id = initial?.id ?: 0L, name = name, type = SourceType.M3U,
+                url = m3uUrl.trim(), userAgent = ua,
+            )
+            SourceKind.STALKER -> SourceEntity(
+                id = initial?.id ?: 0L, name = name, type = SourceType.STALKER,
+                url = portalUrl.trim(), mac = mac.trim(),
+                stalkerSerialNumber = opt(stalkerSerialNumber),
+                stalkerDeviceId = opt(stalkerDeviceId),
+                stalkerDeviceId2 = opt(stalkerDeviceId2),
+                stalkerSignature = opt(stalkerSignature),
+                userAgent = ua,
+            )
+        }
+    }
+
+    fun runSourceTest() {
+        val probe = formSource()
+        val label = name.ifBlank { probe.url }
+        sourceTest = SourceTestUi.Running(label)
+        scope.launch {
+            val result = sourceTester.test(probe)
+            // Dismissed while the request was in flight — don't reopen the dialog behind the user.
+            if (sourceTest != null) sourceTest = SourceTestUi.Done(label, result)
+        }
     }
 
     fun runHlsTest() {
@@ -287,7 +328,7 @@ fun AddSourceScreen(
             userAgent = payload.userAgent
             epgUrl = payload.epgUrl
             isDefault = payload.isDefault
-            autoRefresh = runCatching { PlaylistAutoRefresh.valueOf(payload.autoRefresh) }.getOrDefault(PlaylistAutoRefresh.OFF)
+            autoRefresh = PlaylistRefresh.parse(payload.autoRefresh)
             when (payload.type) {
                 SourceType.M3U -> {
                     hasRemoteStalkerScopes = false
@@ -340,6 +381,12 @@ fun AddSourceScreen(
         SourceKind.XTREAM -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank() && hasAnySectionOn
         SourceKind.M3U -> m3uUrl.isNotBlank()
         SourceKind.STALKER -> tv.own.owntv.core.stalker.StalkerClient.isValidPortalUrl(portalUrl) && macValid && hasAnySectionOn
+    }
+
+    val canTest = when (kind) {
+        SourceKind.XTREAM -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+        SourceKind.M3U -> m3uUrl.isNotBlank() && !m3uUrl.startsWith("/")
+        SourceKind.STALKER -> tv.own.owntv.core.stalker.StalkerClient.isValidPortalUrl(portalUrl) && macValid
     }
 
     Box(modifier.fillMaxSize().roundedPanel()) {
@@ -425,34 +472,6 @@ fun AddSourceScreen(
                         style = OwnTVButtonStyle.SECONDARY,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (onTestStalker != null) {
-                        Spacer(Modifier.height(10.dp))
-                        OwnTVButton(
-                            label = if (stalkerTest is StalkerTestUi.Testing) stringResource(R.string.setup_testing) else stringResource(R.string.setup_test_connection),
-                            onClick = { onTestStalker(portalUrl, mac, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2, stalkerSignature, userAgent) },
-                            style = OwnTVButtonStyle.SECONDARY,
-                            enabled = canStart && stalkerTest !is StalkerTestUi.Testing,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        when (stalkerTest) {
-                            is StalkerTestUi.Ok -> {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    pluralStringResource(R.plurals.setup_stalker_test_connected, stalkerTest.profileFields, stalkerTest.endpoint, stalkerTest.profileFields),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.primary,
-                                )
-                                stalkerTest.expiry?.let { expiry ->
-                                    Text(stringResource(R.string.setup_stalker_test_expires, expiry), style = MaterialTheme.typography.bodySmall, color = colors.primary)
-                                }
-                            }
-                            is StalkerTestUi.Failed -> {
-                                Spacer(Modifier.height(6.dp))
-                                Text(stalkerTest.failure.displayText(), style = MaterialTheme.typography.bodySmall, color = Color(0xFFEF4444))
-                            }
-                            else -> Unit
-                        }
-                    }
                 }
             }
 
@@ -460,6 +479,15 @@ fun AddSourceScreen(
             // Xtream server the guide URL is still derived automatically; M3U EPG can be added there.
             Spacer(Modifier.height(14.dp))
             OwnTVTextField(userAgent, { userAgent = it }, label = stringResource(R.string.setup_user_agent_optional), placeholder = stringResource(R.string.setup_user_agent_example), modifier = Modifier.fillMaxWidth())
+
+            Spacer(Modifier.height(10.dp))
+            OwnTVButton(
+                label = stringResource(if (sourceTest is SourceTestUi.Running) R.string.setup_testing else R.string.setup_test_connection),
+                onClick = { if (sourceTest == null) runSourceTest() },
+                style = OwnTVButtonStyle.SECONDARY,
+                enabled = canTest,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(16.dp))
             // Auto-refresh dropdown (replaces the old binary "Refresh on startup" toggle). Off/Startup or a
@@ -500,7 +528,7 @@ fun AddSourceScreen(
                     is HlsTestUi.Complete -> {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            t.displayText(),
+                            t.test.displayText(LocalContext.current.resources),
                             style = MaterialTheme.typography.bodySmall,
                             color = if (t.test.probe is HlsProbe.Served) colors.primary else Color(0xFFEF4444),
                         )
@@ -598,17 +626,11 @@ fun AddSourceScreen(
       if (showUaPresetPicker) {
           PickerDialog(
               title = stringResource(R.string.setup_device_model_preset_title),
-              options = listOf(
-                  R.string.setup_default_mag.toString() to stringResource(R.string.setup_default_mag),
-                  R.string.setup_mag250.toString() to stringResource(R.string.setup_mag250),
-                  R.string.setup_mag254.toString() to stringResource(R.string.setup_mag254),
-                  R.string.setup_mag270.toString() to stringResource(R.string.setup_mag270),
-                  R.string.setup_mag420.toString() to stringResource(R.string.setup_mag420),
-              ),
-              selected = MAG_UA_PRESETS.firstOrNull { it.userAgent == userAgent }?.labelRes?.toString()
-                  ?: MAG_UA_PRESETS.first().labelRes.toString(),
+              options = MAG_USER_AGENTS.map { it.labelRes.toString() to stringResource(it.labelRes) },
+              selected = MAG_USER_AGENTS.firstOrNull { it.userAgent == userAgent }?.labelRes?.toString()
+                  ?: MAG_USER_AGENTS.first().labelRes.toString(),
               onSelect = { labelRes ->
-                  userAgent = MAG_UA_PRESETS.firstOrNull { it.labelRes.toString() == labelRes }?.userAgent.orEmpty()
+                  userAgent = MAG_USER_AGENTS.firstOrNull { it.labelRes.toString() == labelRes }?.userAgent.orEmpty()
                   showUaPresetPicker = false
               },
               onDismiss = { showUaPresetPicker = false },
@@ -617,73 +639,145 @@ fun AddSourceScreen(
       if (showAutoRefreshPicker) {
           PickerDialog(
               title = stringResource(R.string.setup_auto_refresh_title),
-              options = PlaylistAutoRefresh.entries.map { it.name to playlistAutoRefreshLabel(it) },
-              selected = autoRefresh.name,
+              options = PlaylistAutoRefresh.entries.map { it.name to refreshModeLabel(it) },
+              selected = autoRefresh.mode.name,
               onSelect = { value ->
-                  autoRefresh = runCatching { PlaylistAutoRefresh.valueOf(value) }.getOrDefault(PlaylistAutoRefresh.OFF)
+                  val mode = runCatching { PlaylistAutoRefresh.valueOf(value) }.getOrDefault(PlaylistAutoRefresh.OFF)
                   showAutoRefreshPicker = false
+                  // Manual needs a day count, so it hands straight over to the stepper; cancelling
+                  // there leaves the previous selection untouched.
+                  if (mode == PlaylistAutoRefresh.MANUAL) showManualDaysPicker = true
+                  else autoRefresh = PlaylistRefresh(mode, autoRefresh.manualDays)
               },
               onDismiss = { showAutoRefreshPicker = false },
           )
       }
+      if (showManualDaysPicker) {
+          ManualDaysDialog(
+              initialDays = autoRefresh.manualDays,
+              onConfirm = { days ->
+                  autoRefresh = PlaylistRefresh(PlaylistAutoRefresh.MANUAL, days)
+                  showManualDaysPicker = false
+              },
+              onDismiss = { showManualDaysPicker = false },
+          )
+      }
+      sourceTest?.let { state ->
+          SourceTestDialog(state = state, onDismiss = { sourceTest = null })
+      }
     }
 }
 
-/** Resolve a semantic HLS probe result only at the Compose presentation boundary. */
+/** Picker entry for a mode. Manual reads as an ellipsis label — it opens the day stepper. */
 @Composable
-private fun HlsTestUi.Complete.displayText(): String {
-    val declared = test.declared
-        ?: return stringResource(R.string.setup_hls_test_provider_unreachable)
-
-    return when (val probe = test.probe) {
-        HlsProbe.Served -> stringResource(
-            if (declared) R.string.setup_hls_test_works else R.string.setup_hls_test_works_unadvertised,
-        )
-        is HlsProbe.Busy -> stringResource(R.string.setup_hls_test_busy, probe.code)
-        is HlsProbe.NotServed -> {
-            val reason = when (val reason = probe.reason) {
-                HlsNotServedReason.NotPlaylist -> stringResource(R.string.setup_hls_test_reason_not_playlist)
-                is HlsNotServedReason.NoEndpoint -> stringResource(
-                    R.string.setup_hls_test_reason_no_endpoint,
-                    reason.httpCode,
-                )
-            }
-            stringResource(R.string.setup_hls_test_not_served, reason)
-        }
-        is HlsProbe.Inconclusive -> {
-            val reason = when (val reason = probe.reason) {
-                is HlsInconclusiveReason.HttpError -> stringResource(
-                    R.string.setup_hls_test_reason_http,
-                    reason.httpCode,
-                )
-                is HlsInconclusiveReason.Unexpected -> reason.rawMessage
-                HlsInconclusiveReason.NoAnswer -> stringResource(R.string.setup_hls_test_reason_no_answer)
-                HlsInconclusiveReason.NoLiveChannels -> stringResource(R.string.setup_hls_test_reason_no_live_channels)
-                HlsInconclusiveReason.DeadTestChannel -> stringResource(R.string.setup_hls_test_reason_dead_channel)
-            }
-            val providerClaim = stringResource(
-                if (declared) R.string.setup_hls_provider_advertises else R.string.setup_hls_provider_does_not_advertise,
-            )
-            stringResource(R.string.setup_hls_test_inconclusive, reason, providerClaim)
-        }
-    }
-}
-
-/** A focusable settings row showing the current auto-refresh selection; opens a picker on click. */
-@Composable
-private fun playlistAutoRefreshLabel(mode: PlaylistAutoRefresh): String = stringResource(
+private fun refreshModeLabel(mode: PlaylistAutoRefresh): String = stringResource(
     when (mode) {
         PlaylistAutoRefresh.OFF -> R.string.settings_sources_refresh_off
         PlaylistAutoRefresh.STARTUP -> R.string.settings_sources_refresh_startup
         PlaylistAutoRefresh.HOURS_6 -> R.string.settings_sources_refresh_6h
         PlaylistAutoRefresh.HOURS_12 -> R.string.settings_sources_refresh_12h
-        PlaylistAutoRefresh.HOURS_24 -> R.string.settings_sources_refresh_24h
-        PlaylistAutoRefresh.HOURS_48 -> R.string.settings_sources_refresh_48h
+        PlaylistAutoRefresh.MANUAL -> R.string.settings_sources_refresh_manual
     },
 )
 
+/** The chosen selection as shown on a row: Manual spells out the day count it resolved to. */
 @Composable
-private fun AutoRefreshRow(selected: PlaylistAutoRefresh, onClick: () -> Unit) {
+internal fun playlistAutoRefreshLabel(refresh: PlaylistRefresh): String =
+    if (refresh.mode == PlaylistAutoRefresh.MANUAL) {
+        pluralStringResource(R.plurals.settings_sources_refresh_days, refresh.manualDays, refresh.manualDays)
+    } else {
+        refreshModeLabel(refresh.mode)
+    }
+
+/**
+ * Day stepper for the Manual auto-refresh interval. One focusable value that left/right steps by a
+ * day; the remote's own key repeat handles holding. The range clamps rather than wraps, so a held
+ * key settles on an end instead of jumping from 99 back to 1.
+ */
+@Composable
+private fun ManualDaysDialog(initialDays: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    OwnTVPopup(onDismissRequest = onDismiss) {
+        val colors = OwnTVTheme.colors
+        val layoutDirection = LocalLayoutDirection.current
+        var days by remember { mutableIntStateOf(initialDays) }
+        val focus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+        BackHandler { onDismiss() }
+        Box(Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(), contentAlignment = Alignment.Center) {
+            Column(Modifier.dialogPanel(width = 460.dp, padding = 28.dp)) {
+                Text(
+                    stringResource(R.string.settings_sources_refresh_days_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = colors.onSurface,
+                )
+                Spacer(Modifier.height(18.dp))
+                FocusableSurface(
+                    onClick = {},
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus)
+                        .onKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                            val step = when (event.key.horizontalDirection(layoutDirection)) {
+                                HorizontalDirection.START -> -1
+                                HorizontalDirection.END -> +1
+                                null -> return@onKeyEvent false
+                            }
+                            days = (days + step).coerceIn(PlaylistRefresh.MIN_MANUAL_DAYS, PlaylistRefresh.MAX_MANUAL_DAYS)
+                            true
+                        },
+                    shape = RoundedCornerShape(14.dp),
+                    contentAlignment = Alignment.Center,
+                    surface = GlassSurface.CARDS,
+                ) { _ ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StepperGlyph("\u2212", days > PlaylistRefresh.MIN_MANUAL_DAYS)
+                        Text(
+                            pluralStringResource(R.plurals.settings_sources_refresh_days, days, days),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = colors.primary,
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                        )
+                        StepperGlyph("+", days < PlaylistRefresh.MAX_MANUAL_DAYS)
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(R.string.settings_sources_refresh_days_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(22.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OwnTVButton(stringResource(R.string.common_cancel), onClick = onDismiss, style = OwnTVButtonStyle.SECONDARY)
+                    Spacer(Modifier.weight(1f))
+                    OwnTVButton(stringResource(R.string.common_ok), onClick = { onConfirm(days) })
+                }
+            }
+        }
+    }
+}
+
+/** The minus / plus markers either side of the value; dimmed at the ends of the range. */
+@Composable
+private fun StepperGlyph(glyph: String, enabled: Boolean) {
+    val colors = OwnTVTheme.colors
+    Text(
+        glyph,
+        style = MaterialTheme.typography.titleLarge,
+        color = if (enabled) colors.onSurface else colors.onSurfaceVariant,
+        modifier = Modifier.width(32.dp),
+        textAlign = TextAlign.Center,
+    )
+}
+
+/** A focusable settings row showing the current auto-refresh selection; opens a picker on click. */
+@Composable
+private fun AutoRefreshRow(selected: PlaylistRefresh, onClick: () -> Unit) {
     val colors = OwnTVTheme.colors
     FocusableSurface(
         onClick = onClick,

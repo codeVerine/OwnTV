@@ -45,8 +45,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.epg.EpgSource
-import tv.own.owntv.features.settings.data.EpgAutoRefresh
+import tv.own.owntv.core.settings.EpgAutoRefresh
 import tv.own.owntv.ui.components.FocusableSurface
+import tv.own.owntv.ui.components.rememberDialogFocusRestore
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.dialogPanel
@@ -56,7 +57,7 @@ import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.OwnTVTextField
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.core.sync.work.EpgSyncState
 import tv.own.owntv.core.util.classifySyncFailure
@@ -375,9 +376,15 @@ internal fun EpgSourceForm(
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(60); runCatching { firstFocus.requestFocus() } }
     BackHandler { onCancel() }
 
+    // Both pickers here open from controls further down the form, so closing one used to drop focus
+    // back on the Name field at the top and scroll the form with it.
+    val scrollState = rememberScrollState()
+    val dialogFocus = rememberDialogFocusRestore(showPlaylistPicker || showAutoRefreshPicker, scrollState)
+    val autoRefreshRowFocus = remember { FocusRequester() }
+
     Column(
         modifier = modifier.fillMaxSize().roundedPanel()
-            .verticalScroll(rememberScrollState()) // scroll so lower fields/buttons stay reachable on small screens / large zoom
+            .verticalScroll(scrollState) // scroll so lower fields/buttons stay reachable on small screens / large zoom
             .padding(horizontal = 40.dp, vertical = 28.dp),
     ) {
         Text(stringResource(if (initial == null) R.string.settings_epg_sources_add else R.string.settings_epg_sources_edit), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
@@ -387,13 +394,16 @@ internal fun EpgSourceForm(
         val fillButtonFocus = remember { FocusRequester() }
         OwnTVTextField(url, { url = it }, label = stringResource(R.string.settings_epg_sources_url), placeholder = stringResource(R.string.settings_epg_sources_url_hint), modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp).focusProperties { down = fillButtonFocus })
         Spacer(Modifier.height(8.dp))
-        OwnTVButton(stringResource(R.string.settings_epg_sources_fill_playlist), onClick = { showPlaylistPicker = true }, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAYLIST, modifier = Modifier.focusRequester(fillButtonFocus))
+        OwnTVButton(stringResource(R.string.settings_epg_sources_fill_playlist), onClick = { dialogFocus.value = fillButtonFocus; showPlaylistPicker = true }, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAYLIST, modifier = Modifier.focusRequester(fillButtonFocus))
         Spacer(Modifier.height(14.dp))
         OwnTVTextField(ua, { ua = it }, label = stringResource(R.string.settings_epg_sources_user_agent), placeholder = stringResource(R.string.settings_epg_sources_user_agent_hint), modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp))
 
         Spacer(Modifier.height(14.dp))
         // Auto-refresh dropdown — same Off/Startup/staleness-threshold semantics as playlist sources.
-        EpgAutoRefreshRow(selected = autoRefresh) { showAutoRefreshPicker = true }
+        EpgAutoRefreshRow(selected = autoRefresh, modifier = Modifier.focusRequester(autoRefreshRowFocus)) {
+            dialogFocus.value = autoRefreshRowFocus
+            showAutoRefreshPicker = true
+        }
 
         Spacer(Modifier.height(10.dp))
         // Per-feed logo override: this guide's <icon src> replaces the playlist's channel logos.
@@ -454,11 +464,11 @@ private fun EpgUseLogosRow(enabled: Boolean, onClick: () -> Unit) {
 
 /** A focusable settings row showing the current EPG auto-refresh selection; opens a picker on click. */
 @Composable
-private fun EpgAutoRefreshRow(selected: EpgAutoRefresh, onClick: () -> Unit) {
+private fun EpgAutoRefreshRow(selected: EpgAutoRefresh, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = OwnTVTheme.colors
     FocusableSurface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+        modifier = modifier.fillMaxWidth().widthIn(max = 680.dp),
         shape = RoundedCornerShape(14.dp),
         surface = GlassSurface.CARDS,
         contentAlignment = Alignment.CenterStart,
@@ -487,6 +497,7 @@ private fun PlaylistEpgPicker(
     onPick: (EpgSourcesViewModel.PlaylistEpg) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     val options by produceState<List<EpgSourcesViewModel.PlaylistEpg>?>(initialValue = null) { value = runCatching { load() }.getOrDefault(emptyList()) }
     val firstFocus = remember { FocusRequester() }
@@ -523,5 +534,6 @@ private fun PlaylistEpgPicker(
                 OwnTVButton(stringResource(R.string.settings_close), onClick = onDismiss, style = OwnTVButtonStyle.SECONDARY)
             }
         }
+    }
     }
 }

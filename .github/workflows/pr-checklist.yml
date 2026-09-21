@@ -12,6 +12,11 @@ permissions:
 
 jobs:
   verify-acknowledgement:
+    # The pin-bump PRs the core repository opens after a publish are not contributions: they have no
+    # template, and "searched existing issues" means nothing for a one-line version bump. Exempt
+    # them. Both conditions matter — the branch name alone is trivially spoofable by anyone opening
+    # a PR, so the author must be the maintainer too.
+    if: "!(startsWith(github.event.pull_request.head.ref, 'bump/core-') && github.event.pull_request.user.login == 'ahXN00')"
     runs-on: ubuntu-latest
     steps:
       - name: Ensure required boxes are checked

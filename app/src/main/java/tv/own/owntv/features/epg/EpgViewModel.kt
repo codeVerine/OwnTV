@@ -43,9 +43,11 @@ import tv.own.owntv.core.model.MediaType
 import tv.own.owntv.core.network.ConnectivityObserver
 import tv.own.owntv.core.repository.EpgRepository
 import tv.own.owntv.core.repository.SourceRepository
+import tv.own.owntv.core.repository.ActiveProfileSources
 import tv.own.owntv.core.repository.activeProfileSources
 import tv.own.owntv.core.repository.activeSourceIds
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
+import tv.own.owntv.core.settings.GuideWidthShares
 
 sealed interface EpgMessage {
     data object CreateProfile : EpgMessage
@@ -96,6 +98,7 @@ data class GuideCategory(
     val name: String,
     val categoryId: Long? = null,
     val customId: String? = null,
+    val providerName: String? = null,
 )
 
 /**
@@ -121,6 +124,10 @@ class EpgViewModel(
     private val customCategoryDao: tv.own.owntv.core.database.dao.CustomCategoryDao,
 ) : ViewModel() {
 
+    /** Every windowed guide read this screen makes. The caches around it stay here — what to keep
+     *  depends on how the grid scrolls, which is the screen's business, not core's. */
+    private val guideReader = tv.own.owntv.core.live.GuideReader(epgDao, epgSourceStore, sourceDao)
+
     // This profile's customizations — shared by the Guide picker, guide rows, and manual EPG match.
     // It must be initialized before guideCategories (Kotlin property initializers run top-to-bottom).
     private val custom: StateFlow<SectionCustomizations> = settings.activeProfileId
@@ -135,11 +142,32 @@ class EpgViewModel(
     private val _categoryFilter = MutableStateFlow<String?>(null)
     val categoryFilter: StateFlow<String?> = _categoryFilter.asStateFlow()
 
+    private val activeSources: StateFlow<ActiveProfileSources> = activeProfileSources(settings, sourceDao)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ActiveProfileSources(-1L, emptyList()))
+
+    /** Empty for zero/one active Live source so the Guide stays unchanged for single-playlist users. */
+    val providerNames: StateFlow<Map<Long, String>> = activeSources
+        .map { aps ->
+            val liveIds = aps.liveSourceIds
+            aps.sources
+                .filter { it.id in liveIds }
+                .associate { it.id to it.name }
+                .takeIf { it.size > 1 }
+                ?: emptyMap()
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val guideWidthShares: StateFlow<GuideWidthShares?> = combine(
+        settings.guideWidthEnabled,
+        settings.guideWidthShares,
+    ) { enabled, shares -> shares.takeIf { enabled } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     /** Live categories for the active profile — drives the guide's "Category" picker. Applies the
      *  profile's Live customizations like the Live TV rail does: hidden categories stay out of the
      *  picker, renames show, manually reordered categories stay pinned first. */
     val guideCategories: StateFlow<List<GuideCategory>> =
-        activeProfileSources(settings, sourceDao)
+        activeSources
             .flatMapLatest { aps ->
                 if (aps.sources.isEmpty()) flowOf(emptyList())
             else combine(categoryDao.observe(aps.liveSourceIds, MediaType.LIVE), settings.sortLive, custom, profileDao.observeById(aps.profileId)) { cats, sort, cust, profile ->
@@ -154,13 +182,25 @@ class EpgViewModel(
                     cust,
                     visibleCustoms,
                     alphaRest = sort == SettingsRepository.SortMode.ALPHA,
-                    ).map { entry ->
+                    ).let { entries ->
+                        val multiSourceNames = aps.sources
+                            .filter { it.id in aps.liveSourceIds }
+                            .associate { it.id to it.name }
+                            .takeIf { it.size > 1 }
+                            .orEmpty()
+                        val categoriesById = visibleCats.associateBy { it.id }
+                        entries.map { entry ->
                         GuideCategory(
                             key = entry.key,
                             name = entry.displayName,
                             categoryId = entry.categoryId,
                             customId = entry.customId,
+                            providerName = entry.categoryId
+                                ?.let(categoriesById::get)
+                                ?.sourceId
+                                ?.let(multiSourceNames::get),
                         )
+                        }
                     }
                 }
             }
@@ -207,19 +247,12 @@ class EpgViewModel(
         val key = channel.epgChannelId?.trim()?.lowercase() ?: return emptyList()
         val s = _state.value
         val shift = shiftFor(channel)
-        if (shift != 0) {
-            val cacheKey = "$key|$shift"
-            shiftedRowCache[cacheKey]?.let { return it }
-            val from = tv.own.owntv.core.epg.EpgShift.toStored(s.windowStart, shift)
-            val to = tv.own.owntv.core.epg.EpgShift.toStored(s.windowEnd, shift)
-            val shifted = epgDao.programmeSummariesForChannel(loadedSourceIds, key, from, to)
-                .map { tv.own.owntv.core.epg.EpgShift.apply(it, shift) }
-            shiftedRowCache[cacheKey] = shifted
-            return shifted
-        }
-        rowCache[key]?.let { return it }
-        val list = epgDao.programmeSummariesForChannel(loadedSourceIds, key, s.windowStart, s.windowEnd)
-        rowCache[key] = list
+        val cacheKey = if (shift == 0) key else "$key|$shift"
+        val cache = if (shift == 0) rowCache else shiftedRowCache
+        cache[cacheKey]?.let { return it }
+        // The read itself — window, shift and all — is core's; only what to keep is this screen's.
+        val list = guideReader.row(channel, custom.value, epgOffset.value, loadedSourceIds, s.windowStart, s.windowEnd)
+        cache[cacheKey] = list
         return list
     }
 
@@ -227,24 +260,9 @@ class EpgViewModel(
     suspend fun programmeDescription(programmeId: Long): String? =
         runCatching { epgDao.programmeDescription(programmeId) }.getOrNull()
 
-    /**
-     * Load the whole guide window in id-keyset pages (each bounded so it fits a single CursorWindow),
-     * grouped by EPG channel id with every row list ordered by start time for the grid. A big lineup
-     * returns far more rows than one ~2 MB window holds, so it MUST be paged. Runs off the main thread.
-     */
+    /** The whole guide window, grouped by EPG channel id — paged, off the main thread, in core. */
     private suspend fun loadWindowGrouped(ids: List<Long>, from: Long, to: Long): Map<String, List<EpgProgrammeEntity>> =
-        withContext(Dispatchers.Default) {
-            val all = ArrayList<EpgProgrammeEntity>()
-            var afterId = 0L
-            while (true) {
-                val page = epgDao.programmesInWindowPage(ids, from, to, afterId, EPG_WINDOW_PAGE)
-                if (page.isEmpty()) break
-                all += page
-                afterId = page.last().id
-                if (page.size < EPG_WINDOW_PAGE) break
-            }
-            all.groupBy { it.epgChannelId }.mapValues { (_, v) -> v.sortedBy { it.startMs } }
-        }
+        guideReader.window(ids, from, to)
 
     init {
         // Re-filter the grid as the user types (DB-level, so it searches ALL guide channels, not
@@ -496,21 +514,26 @@ class EpgViewModel(
                     val prepared = tv.own.owntv.core.epg.EpgMatcher.prepare(
                         candidates.map { tv.own.owntv.core.epg.EpgMatcher.Candidate(it.epgChannelId, it.displayName) },
                     )
-                    val channels = channelDao.allForSources(playlistIds, MAX_CHANNELS)
+                    // Narrow to the channels that actually need a match first, then score them in one
+                    // bulk pass: the scan is channels × candidates, which is millions of comparisons on
+                    // a full catalogue and minutes of spinner on TV silicon if it runs on one thread.
+                    val unmatched = channelDao.allForSources(playlistIds, MAX_CHANNELS).filter { ch ->
+                        val key = CustomizeKeys.channel(ch)
+                        if (key in cust.epgMatches || key in cust.hiddenItems) return@filter false // already matched/hidden
+                        val tvg = ch.epgChannelId?.trim()?.lowercase()
+                        tvg.isNullOrEmpty() || tvg !in knownIds // anything else already has a working guide
+                    }
+                    val best = tv.own.owntv.core.epg.EpgMatcher.bestEpgMatchBulk(unmatched.map { it.name }, prepared)
                     var applied = 0
                     val toApply = mutableListOf<Pair<String, String>>() // key -> epgId
                     val review = mutableListOf<EpgMatchSuggestion>()
-                    for (ch in channels) {
-                        val key = CustomizeKeys.channel(ch)
-                        if (key in cust.epgMatches || key in cust.hiddenItems) continue // already matched/hidden
-                        val tvg = ch.epgChannelId?.trim()?.lowercase()
-                        if (!tvg.isNullOrEmpty() && tvg in knownIds) continue // already has a working guide
-                        val best = tv.own.owntv.core.epg.EpgMatcher.bestEpgMatchPrepared(ch.name, prepared) ?: continue
-                        if (best.score >= tv.own.owntv.core.epg.EpgMatcher.AUTO_THRESHOLD) {
-                            toApply.add(key to best.epgChannelId)
+                    for ((ch, match) in unmatched.zip(best)) {
+                        if (match == null) continue
+                        if (match.score >= tv.own.owntv.core.epg.EpgMatcher.AUTO_THRESHOLD) {
+                            toApply.add(CustomizeKeys.channel(ch) to match.epgChannelId)
                             applied++
                         } else {
-                            review.add(EpgMatchSuggestion(ch, best.epgChannelId, best.displayName, best.score))
+                            review.add(EpgMatchSuggestion(ch, match.epgChannelId, match.displayName, match.score))
                         }
                     }
                     // Persist the confident matches (DataStore writes are cheap but do them off the scan).
@@ -631,11 +654,13 @@ class EpgViewModel(
 
             val now = System.currentTimeMillis()
             val nowAligned = now - (now % HALF_HOUR_MS) // align to the half hour
-            // When the profile has catch-up channels, extend the guide BACKWARD so archived programmes
-            // are visible (and playable), bounded by both the archive depth and what EPG we retain.
+            // Always retain two recent hours so the centered "now" marker has programmes on its left.
+            // Catch-up channels can extend the same window farther back to their archive limit.
             val maxCatchupDays = channelDao.maxCatchupDays(playlistIds)
-            val lookbackMs = if (maxCatchupDays > 0)
+            val catchupLookbackMs = if (maxCatchupDays > 0)
                 minOf(maxCatchupDays * DAY_MS, CATCHUP_LOOKBACK_CAP_MS) else 0L
+            val visiblePastStart = nowAligned - GUIDE_VISIBLE_PAST_MS
+            val lookbackMs = maxOf(GUIDE_VISIBLE_PAST_MS, catchupLookbackMs)
             val windowStart = nowAligned - lookbackMs
             val windowEnd = nowAligned + GRID_HOURS * 60L * 60 * 1000
 
@@ -721,8 +746,8 @@ class EpgViewModel(
                 cachedWindow = windowStart to windowEnd
                 rowCache.clear()
                 shiftedRowCache.clear()
-                // Pass 1 (blocking): the forward window only, so the Guide opens instantly and fully from cache.
-                val forward = loadWindowGrouped(ids, nowAligned, windowEnd)
+                // Pass 1 (blocking): current view plus two recent hours, so the centered grid is complete.
+                val forward = loadWindowGrouped(ids, visiblePastStart, windowEnd)
                 forward.forEach { (k, list) -> rowCache[k] = list }
                 // Signal GuideChannelRow's produceState to re-read rowCache now that the batch load
                 // is complete — without this, the initial composition renders channels with empty
@@ -750,13 +775,12 @@ class EpgViewModel(
                 favoriteCount = favoriteIds.size,
             )
 
-            // Pass 2 (background): merge the catch-up lookback into rowCache gradually, so a multi-day × many-
-            // channel window never blocks the open or spikes memory on low-RAM (1.8 GB) boxes. Only runs when
-            // there's a real lookback (catch-up channels). distinctBy(id): a programme straddling `now` is in
-            // both window queries. The revision bump makes already-visible rows re-read the completed cache.
-            if (windowChanged && windowStart < nowAligned) {
+            // Pass 2 (background): merge older catch-up history gradually, so a multi-day × many-channel
+            // window never blocks opening or spikes memory on low-RAM (1.8 GB) boxes. It runs only when
+            // history exists beyond the normal two-hour view; visible rows then re-read the completed cache.
+            if (windowChanged && windowStart < visiblePastStart) {
                 viewModelScope.launch {
-                    val back = loadWindowGrouped(ids, windowStart, nowAligned)
+                    val back = loadWindowGrouped(ids, windowStart, visiblePastStart)
                     if (back.isNotEmpty()) {
                         back.forEach { (k, extra) ->
                             rowCache[k] = (extra + (rowCache[k] ?: emptyList())).distinctBy { it.id }.sortedBy { it.startMs }
@@ -823,6 +847,7 @@ class EpgViewModel(
     companion object {
         const val GRID_HOURS = 24
         private const val HALF_HOUR_MS = 30L * 60 * 1000
+        private const val GUIDE_VISIBLE_PAST_MS = 2L * 60 * 60 * 1000
         private const val DAY_MS = 24L * 60 * 60 * 1000
         // How far back the Guide may extend for catch-up (must stay within EpgRepository's retention).
         private const val CATCHUP_LOOKBACK_CAP_MS = 7L * 24 * 60 * 60 * 1000
@@ -831,7 +856,5 @@ class EpgViewModel(
         // Cap the candidate set the bulk matcher scans against (keeps the O(channels×candidates) scan bounded).
         private const val MAX_EPG_CANDIDATES = 20_000
         private const val EPG_PICKER_RESULT_LIMIT = 300
-        // Rows per guide-window page — bounded so a page always fits a single ~2 MB CursorWindow.
-        private const val EPG_WINDOW_PAGE = 1_000
     }
 }

@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
-import tv.own.owntv.features.shell.MainSection
+import tv.own.owntv.core.nav.MainSection
 
 /**
  * Rank 1 — Neo Signal Duotone (Phase 7). SVG shapes from

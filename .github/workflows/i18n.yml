@@ -4,10 +4,10 @@ name: i18n
 # Three jobs, all gating:
 #   baseline  — the hardcoded-literal ratchet against the pull-request merge base (not HEAD^, which
 #               is bypassable in a multi-commit PR).
-#   validate  — locales.json schema + placeholder/plural parity for every present translation, plus
-#               an informational coverage report. English in values/ is the only guaranteed-complete
-#               language; a missing community key never fails this job, but a present, malformed
-#               one still does.
+#   validate  — the Kotlin-side checks: locale-stable number formatting and bounded text overflow.
+#               The strings themselves live in the core repository now, so locales.json schema,
+#               placeholder/plural parity, translation coverage and the toolkit's own regression
+#               tests run there — see ahXN00/OwnTV_Core's i18n workflow.
 #   pseudo    — inspects the BUILT debug and release APKs and proves pseudolocales survived
 #               localeFilters in debug and are absent in release. The flag being set is not proof.
 #
@@ -30,6 +30,12 @@ on:
 
 permissions:
   contents: read
+
+# The pseudo job assembles APKs, so it resolves core from the private package registry of
+# ahXN00/OwnTV_Core — see the note in android.yml.
+env:
+  GITHUB_ACTOR: ${{ github.actor }}
+  GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -74,16 +80,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Validate strings and locales.json, print coverage report
-        run: python3 tools/i18n/validate_strings.py --report text
-      - name: SupportedLocales.kt freshness
-        run: python3 tools/i18n/gen_supported_locales.py check
       - name: Locale-stable Kotlin number formatting
         run: python3 tools/i18n/check_number_locale.py
       - name: Bounded Compose text overflow
         run: python3 tools/i18n/check_text_overflow.py
-      - name: Python i18n tool regression tests
-        run: python3 tools/i18n/test_i18n_tools.py
 
   pseudo:
     # Builds the debug + release standard APKs and inspects their resource tables. Heavier than the

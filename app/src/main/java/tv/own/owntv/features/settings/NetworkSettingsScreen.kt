@@ -92,7 +92,7 @@ fun NetworkSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
         GroupLabel(stringResource(R.string.settings_http_proxy))
         Row2(
-            icon = OwnTVIcon.SHARE,
+            icon = OwnTVIcon.NETWORK,
             title = stringResource(R.string.settings_use_proxy),
             desc = stringResource(R.string.settings_proxy_description),
             chip = if (enabled) stringResource(R.string.common_on) else stringResource(R.string.common_off), primaryChip = enabled,

@@ -32,6 +32,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
@@ -52,11 +53,15 @@ import tv.own.owntv.ui.components.detailText
 import tv.own.owntv.ui.components.primaryText
 import tv.own.owntv.ui.components.remainderText
 import tv.own.owntv.ui.components.warningText
-import tv.own.owntv.features.settings.data.PlaylistAutoRefresh
+import tv.own.owntv.core.repository.SourceTestResult
+import tv.own.owntv.core.setup.detailLines
+import tv.own.owntv.core.setup.headline
+import tv.own.owntv.core.settings.PlaylistAutoRefresh
+import tv.own.owntv.core.settings.PlaylistRefresh
+import tv.own.owntv.features.setup.playlistAutoRefreshLabel
 import tv.own.owntv.features.setup.AddSourceChooserScreen
 import tv.own.owntv.features.setup.AddSourceScreen
 import tv.own.owntv.features.setup.RemoteSetupScreen
-import tv.own.owntv.features.setup.StalkerTestUi
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.dialogPanel
 import tv.own.owntv.ui.components.modalScrim
@@ -76,6 +81,7 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val playlistAutoRefresh by vm.playlistAutoRefresh.collectAsStateWithLifecycle()
     val defaultId by vm.defaultSourceId.collectAsStateWithLifecycle()
     val sourceExpiry by vm.sourceExpiry.collectAsStateWithLifecycle()
+    val sourceTest by vm.sourceTest.collectAsStateWithLifecycle()
     val deletingIds by vm.deletingSourceIds.collectAsStateWithLifecycle()
     val epgSync by vm.epgSync.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
@@ -87,6 +93,9 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // Within "Add source": null = the Remote|Manual chooser, else the chosen path.
     var addMode by remember { mutableStateOf<AddMode?>(null) }
     var editingSource by remember { mutableStateOf<SourceEntity?>(null) }
+    // Set when "Duplicate" opened the add form: fields pre-fill from this source but the entry is a
+    // NEW one (Stalker multi-MAC: same portal URL, next MAC).
+    var duplicateSource by remember { mutableStateOf<SourceEntity?>(null) }
     var confirmDelete by remember { mutableStateOf<SourceEntity?>(null) }
     var resyncChoice by remember { mutableStateOf<SourceEntity?>(null) }
     val addFocus = remember { FocusRequester() }
@@ -136,7 +145,7 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
     // Leaving "Add source" always returns to the Remote|Manual chooser next time (and drops any
     // running Remote listener), so a prior choice never skips the chooser.
-    LaunchedEffect(showAdd) { if (!showAdd) { addMode = null; vm.stopRemoteListener() } }
+    LaunchedEffect(showAdd) { if (!showAdd) { addMode = null; duplicateSource = null; vm.stopRemoteListener() } }
     // A failed import/re-sync swaps the form for an error screen — move focus onto its action button.
     LaunchedEffect(importState) {
         if (importState is SettingsViewModel.ImportState.Failed) {
@@ -152,20 +161,12 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 
-    val stalkerTest by vm.stalkerTest.collectAsStateWithLifecycle()
-    val stalkerTestUi = when (val t = stalkerTest) {
-        SettingsViewModel.StalkerTestState.Idle -> StalkerTestUi.Idle
-        SettingsViewModel.StalkerTestState.Testing -> StalkerTestUi.Testing
-        is SettingsViewModel.StalkerTestState.Ok -> StalkerTestUi.Ok(t.endpoint, t.profileFields, t.expiry)
-        is SettingsViewModel.StalkerTestState.Failed -> StalkerTestUi.Failed(t.failure)
-    }
-
     Box(modifier = modifier.fillMaxSize()) {
         if (editingSource != null) {
             val src = editingSource!!
             AddSourceScreen(
                 initial = src,
-                initialAutoRefresh = playlistAutoRefresh[src.id] ?: PlaylistAutoRefresh.OFF,
+                initialAutoRefresh = playlistAutoRefresh[src.id] ?: PlaylistRefresh.OFF,
                 initialIsDefault = src.id == defaultId,
                 onStartXtream = { n, server, u, p, ua, epg, autoRefresh, live, movies, series, isDefault, preferHls ->
                     vm.updateSource(
@@ -187,14 +188,9 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         syncMovies = movies != tv.own.owntv.core.sync.SyncScopeChoice.Off,
                         syncSeries = series != tv.own.owntv.core.sync.SyncScopeChoice.Off,
                     )
-                    vm.resetStalkerTest()
                     editingSource = null
                 },
-                onTestStalker = { url, mac, serialNumber, deviceId, deviceId2, signature, ua ->
-                    vm.testStalker(url, mac, serialNumber, deviceId, deviceId2, signature, ua)
-                },
-                stalkerTest = stalkerTestUi,
-                onBack = { vm.resetStalkerTest(); editingSource = null },
+                onBack = { editingSource = null },
                 modifier = Modifier,
             )
         } else if (showAdd) {
@@ -217,27 +213,24 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         modifier = Modifier,
                     )
                     AddMode.MANUAL -> AddSourceScreen(
+                        // "Duplicate" lands here pre-filled (Stalker multi-MAC: same portal, next MAC).
+                        duplicateOf = duplicateSource,
                         onStartXtream = { n, server, u, p, ua, epg, autoRefresh, live, movies, series, isDefault, preferHls ->
                             vm.addXtream(n.ifBlank { defaultIptvName }, server, u, p, ua, epg, autoRefresh, live, movies, series, isDefault, preferHls)
                         },
                         onStartM3u = { n, url, ua, epg, autoRefresh, isDefault -> vm.addM3u(n.ifBlank { defaultPlaylistName }, url, ua, epg, autoRefresh, isDefault) },
                         onStartStalker = { n, url, mac, serialNumber, deviceId, deviceId2, signature, ua, autoRefresh, isDefault, live, movies, series ->
-                            vm.resetStalkerTest()
                             vm.addStalker(
                                 n.ifBlank { defaultPortalName }, url, mac, serialNumber, deviceId,
                                 deviceId2, signature, ua, autoRefresh, isDefault, live, movies, series,
                             )
                         },
-                        onTestStalker = { url, mac, serialNumber, deviceId, deviceId2, signature, ua ->
-                            vm.testStalker(url, mac, serialNumber, deviceId, deviceId2, signature, ua)
-                        },
-                        stalkerTest = stalkerTestUi,
                         // Submissions from the Remote screen land here pre-filled (type + fields).
                         remotePayload = vm.remotePayload,
                         onRemotePayloadConsumed = { vm.consumeRemotePayload() },
                         // A newly-added playlist can be made default only when others already exist.
                         showDefaultToggle = sources.isNotEmpty(),
-                        onBack = { vm.resetStalkerTest(); addMode = null },
+                        onBack = { addMode = null },
                         modifier = Modifier,
                         initial = vm.lastFailedSource, // pre-fill on retry — no re-typing after a typo
                     )
@@ -339,7 +332,7 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
                             SourceRow(
                                 source = source,
-                                autoRefresh = playlistAutoRefresh[source.id] ?: PlaylistAutoRefresh.OFF,
+                                autoRefresh = playlistAutoRefresh[source.id] ?: PlaylistRefresh.OFF,
                                 isDefault = isDefault,
                                 expiry = sourceExpiry[source.id],
                                 counts = counts,
@@ -353,6 +346,10 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                     else -> Modifier
                                 },
                                 onEdit = { contextId = source.id; contextIndex = index; editingSource = source },
+                                onDuplicate = source.type.takeIf { it == SourceType.STALKER }?.let {
+                                    { contextId = source.id; contextIndex = index; duplicateSource = source; showAdd = true; addMode = AddMode.MANUAL }
+                                },
+                                onTest = { contextId = source.id; contextIndex = index; vm.testSource(source) },
                                 onResync = { contextId = source.id; contextIndex = index; resyncChoice = source },
                                 onCancelSync = { contextId = source.id; contextIndex = index; vm.cancelResync(source) },
                                 onDelete = { contextId = source.id; contextIndex = index; confirmDelete = source },
@@ -372,6 +369,10 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
 
+        sourceTest?.let { state ->
+            SourceTestDialog(state = state, onDismiss = { vm.dismissSourceTest() })
+        }
+
         confirmDelete?.let { src ->
             ConfirmDialog(
                 title = stringResource(R.string.settings_sources_delete_title, src.name),
@@ -384,21 +385,9 @@ fun ManageSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun playlistAutoRefreshLabel(mode: PlaylistAutoRefresh): String = stringResource(
-    when (mode) {
-        PlaylistAutoRefresh.OFF -> R.string.settings_sources_refresh_off
-        PlaylistAutoRefresh.STARTUP -> R.string.settings_sources_refresh_startup
-        PlaylistAutoRefresh.HOURS_6 -> R.string.settings_sources_refresh_6h
-        PlaylistAutoRefresh.HOURS_12 -> R.string.settings_sources_refresh_12h
-        PlaylistAutoRefresh.HOURS_24 -> R.string.settings_sources_refresh_24h
-        PlaylistAutoRefresh.HOURS_48 -> R.string.settings_sources_refresh_48h
-    },
-)
-
-@Composable
 private fun SourceRow(
     source: SourceEntity,
-    autoRefresh: PlaylistAutoRefresh,
+    autoRefresh: PlaylistRefresh,
     isDefault: Boolean,
     expiry: String?,
     counts: SyncCounts?,
@@ -406,6 +395,8 @@ private fun SourceRow(
     isDeleting: Boolean,
     rowModifier: Modifier,
     onEdit: () -> Unit,
+    onDuplicate: (() -> Unit)?,
+    onTest: () -> Unit,
     onResync: () -> Unit,
     onCancelSync: () -> Unit,
     onDelete: () -> Unit,
@@ -461,7 +452,7 @@ private fun SourceRow(
             val visibleCounts = if (activeSync == null) counts?.breakdownText() else activeCounts?.displayText()
             val details = buildList {
                 add(sourceTypeText)
-                if (autoRefresh != PlaylistAutoRefresh.OFF) add(stringResource(R.string.settings_sources_auto_refresh, playlistAutoRefreshLabel(autoRefresh)))
+                if (autoRefresh.mode != PlaylistAutoRefresh.OFF) add(stringResource(R.string.settings_sources_auto_refresh, playlistAutoRefreshLabel(autoRefresh)))
                 if (!expiry.isNullOrBlank()) add(stringResource(R.string.settings_sources_expiry, expiry))
                 if (!visibleCounts.isNullOrBlank()) add(visibleCounts)
                 else if (activeSync != null) add(stringResource(R.string.settings_sources_preparing_detail))
@@ -481,6 +472,15 @@ private fun SourceRow(
             Text(stringResource(R.string.settings_sources_removing_detail), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
         } else {
             OwnTVButton(stringResource(R.string.settings_sources_edit), onClick = onEdit, style = OwnTVButtonStyle.SECONDARY)
+            // One portal per MAC is the Stalker model; "Duplicate" pre-fills a second entry from this
+            // one (URL/user/EPG kept, MAC cleared) so the sanctioned multi-MAC workaround is one tap
+            // instead of re-typing the whole portal (group feedback: Blizznow).
+            onDuplicate?.let { dup ->
+                Spacer(Modifier.width(10.dp))
+                OwnTVButton(stringResource(R.string.settings_sources_duplicate), onClick = dup, style = OwnTVButtonStyle.SECONDARY)
+            }
+            Spacer(Modifier.width(10.dp))
+            OwnTVButton(stringResource(R.string.settings_test), onClick = onTest, style = OwnTVButtonStyle.SECONDARY)
             Spacer(Modifier.width(10.dp))
             // One stable button whose label/action flips with syncState. Keeping the SAME composable
             // in the tree (instead of an if/else that disposes "Re-sync" and composes "Cancel") means
@@ -551,6 +551,7 @@ private fun CenterStatus(content: @Composable androidx.compose.foundation.layout
 
 @Composable
 internal fun ConfirmDialog(title: String, message: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -567,6 +568,7 @@ internal fun ConfirmDialog(title: String, message: String, onConfirm: () -> Unit
                 OwnTVButton(stringResource(R.string.common_delete), onClick = onConfirm)
             }
         }
+    }
     }
 }
 
@@ -589,6 +591,7 @@ private fun ResyncChoiceDialog(
     onClean: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -615,7 +618,59 @@ private fun ResyncChoiceDialog(
             }
         }
     }
+    }
 }
 
 /** How the user chose to add a source: fill it from another device (Remote) or type it here (Manual). */
 private enum class AddMode { REMOTE, MANUAL }
+
+/**
+ * Result of the row's "Test" button: is the server reachable, is the subscription still good, and how
+ * many of the account's connections are in use right now.
+ *
+ * The provider's own status word is shown verbatim rather than translated — panels invent their own
+ * vocabulary there, and a wrong translation of "Banned" would be worse than the English original.
+ */
+@Composable
+internal fun SourceTestDialog(state: SourceTestUi, onDismiss: () -> Unit) {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
+    val colors = OwnTVTheme.colors
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    BackHandler { onDismiss() }
+    Box(Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(), contentAlignment = Alignment.Center) {
+        Column(Modifier.dialogPanel(width = 520.dp, padding = 28.dp)) {
+            Text(stringResource(R.string.settings_sources_test_title), style = MaterialTheme.typography.titleLarge, color = colors.onSurface)
+            Spacer(Modifier.height(4.dp))
+            Text(state.sourceName, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(18.dp))
+            when (state) {
+                is SourceTestUi.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    OwnTVSpinner(sizeDp = 22)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(R.string.setup_testing), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                }
+                is SourceTestUi.Done -> SourceTestReport(state.result)
+            }
+            Spacer(Modifier.height(22.dp))
+            OwnTVButton(stringResource(R.string.common_ok), onClick = onDismiss, modifier = Modifier.focusRequester(focus))
+        }
+    }
+    }
+}
+
+@Composable
+private fun SourceTestReport(result: SourceTestResult) {
+    val colors = OwnTVTheme.colors
+    val res = LocalContext.current.resources
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            result.headline(res),
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (result is SourceTestResult.Ok) colors.onSurface else colors.favorite,
+        )
+        result.detailLines(res).forEach {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+        }
+    }
+}

@@ -37,7 +37,7 @@ import androidx.compose.ui.res.stringResource
 import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.compactCount
 import tv.own.owntv.ui.components.displayText
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
 

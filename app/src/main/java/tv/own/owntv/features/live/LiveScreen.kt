@@ -67,7 +67,7 @@ import tv.own.owntv.features.settings.SettingsViewModel
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
 import tv.own.owntv.features.settings.data.BrowseContainerPadding
-import tv.own.owntv.features.settings.data.PanelSection
+import tv.own.owntv.core.settings.PanelSection
 import tv.own.owntv.features.settings.data.browsePanelGapTotal
 import tv.own.owntv.features.settings.data.computePanelWidths
 import tv.own.owntv.features.settings.rememberPanelShares
@@ -84,7 +84,11 @@ import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.ChannelGenre
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
+import tv.own.owntv.core.model.ContentMenu
+import tv.own.owntv.ui.components.MenuAction
+import tv.own.owntv.ui.components.arranged
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.ui.components.ProviderChip
 import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.SearchBar
 import tv.own.owntv.ui.components.SortChip
@@ -99,9 +103,11 @@ import tv.own.owntv.ui.components.gridFocusTarget
 import tv.own.owntv.ui.format.rememberBestDateFormatter
 import tv.own.owntv.ui.format.rememberSystemTimeFormatter
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.LocalPopupFontFamily
+import tv.own.owntv.core.live.LiveKey
+import tv.own.owntv.core.live.EpgNowNext
 
 /** Layer 2–4 for Live TV: real category rail, Paging channel list, and a live preview pane. */
 @Composable
@@ -116,6 +122,7 @@ fun LiveScreen(
 ) {
     val vm: LiveViewModel = koinViewModel()
     val railItems by vm.railItems.collectAsStateWithLifecycle()
+    val providerNames by vm.providerNames.collectAsStateWithLifecycle()
     val selectedKey by vm.selectedKey.collectAsStateWithLifecycle()
     val count by vm.count.collectAsStateWithLifecycle()
     val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
@@ -342,7 +349,14 @@ fun LiveScreen(
     ) {
         CategoryRail(
             width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    providerName = it.providerName,
+                )
+            },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
             // Focusing a folder stops the in-pane preview — but only when a preview is actually running.
@@ -489,8 +503,9 @@ fun LiveScreen(
                             ChannelRow(
                                 channel = channel,
                                 isFavorite = favoriteIds.contains(channel.id),
-                                nowTitle = nowPlaying[channel.id],
-                                showNumber = showChannelNumbers,
+                            nowTitle = nowPlaying[channel.id],
+                            showNumber = showChannelNumbers,
+                            providerName = providerNames[channel.sourceId],
                                 modifier = Modifier.gridFocusTarget(
                                     itemId = channel.id, index = index,
                                     contextId = contextChannelId, contextFocus = contextFocus,
@@ -686,6 +701,7 @@ private fun ChannelRow(
     onLongClick: (() -> Unit)? = null,
     nowTitle: String? = null,
     showNumber: Boolean = true,
+    providerName: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = OwnTVTheme.colors
@@ -745,6 +761,7 @@ private fun ChannelRow(
             if (isFavorite) {
                 OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.favorite, filled = true, modifier = Modifier.size(20.dp))
             }
+            providerName?.let { ProviderChip(name = it) }
         }
     }
 }
@@ -786,31 +803,36 @@ private fun ChannelContextMenu(
         ) {
             Text(channelName, style = MaterialTheme.typography.titleMedium, color = colors.onSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Spacer(Modifier.height(8.dp))
-            ChannelMenuAction(
-                label = if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite),
-                onClick = onToggleFavorite,
-                icon = OwnTVIcon.FAVORITE,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-            ChannelMenuAction(stringResource(R.string.content_rename), onRename, modifier = Modifier.fillMaxWidth())
-
-            ChannelMenuDivider()
-            ChannelMenuAction(stringResource(R.string.content_match_epg), onMatchEpg, OwnTVIcon.EPG, Modifier.fillMaxWidth())
-            ChannelMenuAction(stringResource(R.string.content_epg_time_offset), onEpgOffset, OwnTVIcon.EPG, Modifier.fillMaxWidth())
-            if (hasCatchup) ChannelMenuAction(stringResource(R.string.content_catchup), onCatchup, modifier = Modifier.fillMaxWidth())
-            // Always offered, regardless of the Live TV external-player default — this is the per-channel
-            // escape hatch for a stream neither in-app engine can open (same as Movies/Series/Downloads).
-            ChannelMenuAction(stringResource(R.string.content_play_external_short), onPlayExternal, OwnTVIcon.PLAY, Modifier.fillMaxWidth())
-
-            if (canMove) {
-                ChannelMenuDivider()
-                ChannelMenuAction(stringResource(R.string.content_move), onMove, modifier = Modifier.fillMaxWidth())
-                ChannelMenuAction(stringResource(R.string.content_move_to_category), onMoveToCategory, modifier = Modifier.fillMaxWidth())
+            // The menu as data: same actions, same gating, same order as the buttons that used to be
+            // written out here one by one. Close is not in the list — it stays pinned last.
+            val actions = buildList {
+                add(MenuAction("favourite", if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite), OwnTVIcon.FAVORITE, group = 0, onClick = onToggleFavorite))
+                add(MenuAction("rename", stringResource(R.string.content_rename), group = 0, onClick = onRename))
+                add(MenuAction("match_epg", stringResource(R.string.content_match_epg), OwnTVIcon.EPG, group = 1, onClick = onMatchEpg))
+                add(MenuAction("epg_offset", stringResource(R.string.content_epg_time_offset), OwnTVIcon.EPG, group = 1, onClick = onEpgOffset))
+                if (hasCatchup) add(MenuAction("catchup", stringResource(R.string.content_catchup), group = 1, onClick = onCatchup))
+                // Always offered, regardless of the Live TV external-player default — this is the per-channel
+                // escape hatch for a stream neither in-app engine can open (same as Movies/Series/Downloads).
+                add(MenuAction("play_external", stringResource(R.string.content_play_external_short), OwnTVIcon.PLAY, group = 1, onClick = onPlayExternal))
+                if (canMove) {
+                    add(MenuAction("move", stringResource(R.string.content_move), group = 2, onClick = onMove))
+                    add(MenuAction("move_to_category", stringResource(R.string.content_move_to_category), group = 2, onClick = onMoveToCategory))
+                }
+                add(MenuAction("hide", stringResource(R.string.content_hide_channel), destructive = true, group = 3, onClick = onHide))
+                if (isHistory) add(MenuAction("remove_history", stringResource(R.string.content_remove_history), destructive = true, group = 3, onClick = onRemoveFromHistory))
             }
-
-            ChannelMenuDivider()
-            ChannelMenuAction(stringResource(R.string.content_hide_channel), onHide, modifier = Modifier.fillMaxWidth(), destructive = true)
-            if (isHistory) ChannelMenuAction(stringResource(R.string.content_remove_history), onRemoveFromHistory, modifier = Modifier.fillMaxWidth(), destructive = true)
+            var previousGroup: Int? = null
+            arranged(ContentMenu.LIVE, actions).forEachIndexed { index, action ->
+                if (previousGroup != null && action.group != previousGroup) ChannelMenuDivider()
+                previousGroup = action.group
+                ChannelMenuAction(
+                    label = action.label,
+                    onClick = action.onClick,
+                    icon = action.icon,
+                    modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(focus) else Modifier),
+                    destructive = action.destructive,
+                )
+            }
 
             ChannelMenuDivider()
             ChannelMenuAction(stringResource(R.string.content_close), onDismiss, OwnTVIcon.CLOSE, Modifier.fillMaxWidth())
@@ -998,9 +1020,12 @@ private fun ChannelMetaRow(
 
     // EPG status — "EPG · Nd" when we know the stored coverage span (bulk-guide channels), plain "EPG"
     // when only now/next is available (short-EPG API channels), "No EPG" when nothing was resolved.
+    // coverageDays is read into a local: it is core's property now, and Kotlin will not smart-cast a
+    // public property declared in another module.
+    val coverageDays = nowNext?.coverageDays
     val epgStatus = when {
         nowNext == null || (nowNext.now == null && nowNext.next == null) -> stringResource(R.string.content_no_epg)
-        nowNext.coverageDays != null && nowNext.coverageDays > 0 -> stringResource(R.string.content_epg_days, nowNext.coverageDays)
+        coverageDays != null && coverageDays > 0 -> stringResource(R.string.content_epg_days, coverageDays)
         else -> stringResource(R.string.content_epg)
     }
 

@@ -10,11 +10,21 @@ import tv.own.owntv.player.OwnTVPlayer
 val playerModule = module {
     // Tails own-process logcat for MediaCodec/AudioTrack errors the engines can't expose.
     single { tv.own.owntv.player.PlayerDiagnostics() }
-    // Per-item VOD engine pins made with the player's gear toggle (VOD counterpart of ForceMpvStore).
-    single { tv.own.owntv.core.player.VodEngineStore(androidContext()) }
-    // context, settings, connectivity, streamingHttp (ExoPlayer image-sub handoff), diagnostics,
-    // proxyHolder, vodEngineStore, localeStore, playbackPrefs (per-item zoom/volume)
-    single { OwnTVPlayer(androidContext(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    // Named, because nine consecutive get() calls silently depend on parameter ORDER: reorder the
+    // constructor and Koin still resolves by type, so two same-typed dependencies would swap unnoticed.
+    single {
+        OwnTVPlayer(
+            context = androidContext(),
+            settings = get(),
+            connectivity = get(),
+            streamingHttp = get(), // ExoPlayer image-sub handoff
+            diagnostics = get(),
+            proxyHolder = get(),
+            vodEngineStore = get(),
+            localeStore = get(),
+            playbackPrefs = get(), // per-item zoom/volume
+        )
+    }
     // ExoPlayer engine for the fast Live preview pane (mpv stays the full/fullscreen player).
     // context, streamingHttp, diagnostics, settings, connectivity (auto-resume when the network
     // returns), playbackPrefs (per-channel zoom/volume)
@@ -25,4 +35,7 @@ val playerModule = module {
     single { HeroPreviewEngine(androidContext(), get(), get(), streamInUse = { get<OwnTVPlayer>().hasActiveStream }) }
     // Audio focus (duck-don't-pause) + the system MediaSession, driven by whichever engine is playing.
     single { tv.own.owntv.player.PlaybackSession(androidContext()) }
+    // Bridges the playing item to the OpenSubtitles search. Bound here rather than with the rest of
+    // the subtitle stack because it takes the player; it follows the engine to :player-core.
+    single { tv.own.owntv.core.subtitles.SubtitleController(get(), get(), get(), get()) }
 }

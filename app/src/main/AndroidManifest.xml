@@ -2,22 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- INTERNET, ACCESS_NETWORK_STATE, FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC and
+         POST_NOTIFICATIONS are declared by :core, together with WorkManager's foreground-service
+         host: core is what does the networking and runs the sync/download worker. They merge in
+         from there — see core/src/main/AndroidManifest.xml. -->
 
     <!-- In-app updates: hand the downloaded release APK to the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Downloads keep transferring after the user leaves the app, as a foreground service with an
-         ongoing progress notification. POST_NOTIFICATIONS is only asked for by the system on API 33+;
-         if it is denied the service still runs, the notification is just not shown. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Volume boost above 100% on Live TV: LoudnessEnhancer attaches an audio effect to the player's
-         own audio session. Normal permission, granted at install; no runtime prompt. -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- MODIFY_AUDIO_SETTINGS is declared by :player-core, which owns VolumeBoost. -->
 
     <!-- Android TV provider writes for Watch Next cards. -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
@@ -79,12 +72,6 @@
                 android:value="androidx.startup"
                 tools:node="remove" />
         </provider>
-
-        <!-- WorkManager's foreground-service host, typed for the download worker's data sync. -->
-        <service
-            android:name="androidx.work.impl.foreground.SystemForegroundService"
-            android:foregroundServiceType="dataSync"
-            tools:node="merge" />
 
         <activity
             android:name=".MainActivity"

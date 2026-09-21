@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,7 @@ import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
@@ -67,15 +69,14 @@ import tv.own.owntv.core.database.entity.MovieEntity
 import tv.own.owntv.features.customize.MoveToCategoryDialog
 import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.core.model.DownloadStatus
-import tv.own.owntv.features.live.LiveKey
 import tv.own.owntv.features.live.displayLabel
-import tv.own.owntv.features.settings.data.PanelSection
+import tv.own.owntv.core.settings.PanelSection
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
 import tv.own.owntv.features.settings.data.BrowseContainerPadding
 import tv.own.owntv.features.settings.data.browsePanelGapTotal
 import tv.own.owntv.features.settings.data.computePanelWidths
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.features.settings.rememberPanelShares
 import tv.own.owntv.features.shell.components.CategoryRail
 import tv.own.owntv.features.shell.components.MediaDetailsScreen
@@ -87,8 +88,12 @@ import tv.own.owntv.ui.components.rememberInAppToast
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.FocusableSurface
+import tv.own.owntv.core.model.ContentMenu
+import tv.own.owntv.ui.components.MenuAction
+import tv.own.owntv.ui.components.arranged
 import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.PosterCard
+import tv.own.owntv.ui.components.ProviderChip
 import tv.own.owntv.ui.components.ResumeDialog
 import tv.own.owntv.ui.components.SetTmdbNameDialog
 import tv.own.owntv.ui.components.TrailerPlayerScreen
@@ -107,9 +112,10 @@ import tv.own.owntv.ui.components.ContentPanelFill
 import tv.own.owntv.ui.components.PreviewPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
+import tv.own.owntv.core.live.LiveKey
 
 @Composable
 fun MoviesScreen(
@@ -125,6 +131,7 @@ fun MoviesScreen(
     val refetchingTmdbMessage = stringResource(R.string.content_refetching_tmdb)
     val researchingTmdbMessage = stringResource(R.string.content_researching_tmdb)
     val railItems by vm.railItems.collectAsStateWithLifecycle()
+    val providerNames by vm.providerNames.collectAsStateWithLifecycle()
     val selectedKey by vm.selectedKey.collectAsStateWithLifecycle()
     val count by vm.count.collectAsStateWithLifecycle()
     val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
@@ -238,6 +245,20 @@ fun MoviesScreen(
     LaunchedEffect(contentScrolled) { onContentScrolled(contentScrolled) }
     var gridPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
+    // Tiles the provider gave no artwork for: ask for the TMDB poster already cached from an earlier
+    // focus, so the placeholder is only shown when nothing at all is known. peek() reads the loaded
+    // page without triggering a fetch.
+    val cachedPosters by vm.cachedPosters.collectAsStateWithLifecycle()
+    LaunchedEffect(effectiveGridState, effectiveListState, viewMode, movies) {
+        val grid = viewMode != SettingsRepository.VodViewMode.LIST
+        snapshotFlow {
+            val info = if (grid) effectiveGridState.layoutInfo.visibleItemsInfo.map { it.index }
+            else effectiveListState.layoutInfo.visibleItemsInfo.map { it.index }
+            info.filter { it < movies.itemCount }
+                .mapNotNull { movies.peek(it) }
+                .filter { it.posterUrl.isNullOrBlank() }
+        }.distinctUntilChanged().collect { vm.onPosterlessVisible(it) }
+    }
     // Returning from the player: scroll to and focus the movie you just played (waits for the grid to load).
     LaunchedEffect(restoreFocus, movies.itemCount) {
         if (!restoreFocus || movies.itemCount == 0) return@LaunchedEffect
@@ -328,7 +349,14 @@ fun MoviesScreen(
     ) {
         CategoryRail(
             width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(R.string.content_category_all_movies), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(R.string.content_category_all_movies),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    providerName = it.providerName,
+                )
+            },
             selectedIndex = selectedIndex,
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
             listState = catListState,
@@ -472,8 +500,10 @@ fun MoviesScreen(
                             val prog = movieProgress[movie.id]
                             MovieListRow(
                                 movie = movie,
+                                posterUrl = movie.posterUrl?.takeIf { it.isNotBlank() } ?: cachedPosters[movie.id],
                                 isFavorite = favoriteIds.contains(movie.id),
                                 completed = prog?.let { vm.isMovieCompleted(it) } == true,
+                                providerName = providerNames[movie.sourceId],
                                 modifier = Modifier.gridFocusTarget(
                                     itemId = movie.id, index = index,
                                     contextId = contextMovieId, contextFocus = contextFocus,
@@ -504,13 +534,14 @@ fun MoviesScreen(
                             val prog = movieProgress[movie.id]
                             val done = prog?.let { vm.isMovieCompleted(it) } == true
                             PosterCard(
-                                posterUrl = movie.posterUrl,
+                                posterUrl = movie.posterUrl?.takeIf { it.isNotBlank() } ?: cachedPosters[movie.id],
                                 title = movie.name,
                                 rating = movie.rating,
                                 completed = done,
                                 progressFraction = if (done || prog == null || prog.durationMs <= 0) null
                                     else (prog.positionMs.toFloat() / prog.durationMs).takeIf { it > 0f },
                                 isFavorite = favoriteIds.contains(movie.id),
+                                providerName = providerNames[movie.sourceId],
                                 modifier = Modifier.gridFocusTarget(
                                     itemId = movie.id, index = index,
                                     contextId = contextMovieId, contextFocus = contextFocus,
@@ -568,7 +599,7 @@ fun MoviesScreen(
         // TMDB Details is shown only when enrichment is on AND a confident match resolved for THIS movie.
         val cacheForM = selectedMovieMeta?.takeIf { it.movieId == m.id }?.cache
         val watched = selectedProgress?.takeIf { selectedMovie?.id == m.id }?.let { vm.isMovieCompleted(it) } ?: false
-        MovieContextMenu(
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { contextMovie = null }) { MovieContextMenu(
             title = m.name,
             isFavorite = favoriteIds.contains(m.id),
             watched = watched,
@@ -614,7 +645,7 @@ fun MoviesScreen(
             onPlayTrailer = { key -> contextMovie = null; trailerVideoKey = key },
             onDeleteSubtitles = if (contextMovieSubs.isNotEmpty()) ({ showDeleteSubs = true }) else null,
             onDismiss = { contextMovie = null },
-        )
+        ) }
     }
 
     // Move to… a combined category (issue #87), incl. the "＋ New category…" name prompt.
@@ -785,42 +816,43 @@ private fun MovieContextMenu(
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            OwnTVButton(
-                if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite),
-                onClick = onToggleFavorite, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.FAVORITE,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-            OwnTVButton(
-                if (watched) stringResource(R.string.content_mark_unwatched) else stringResource(R.string.content_mark_watched),
-                onClick = onToggleWatched, style = OwnTVButtonStyle.SECONDARY,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (canMove) OwnTVButton(stringResource(R.string.content_move), onClick = onMove, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            if (canMove) OwnTVButton(stringResource(R.string.content_move_to_category), onClick = onMoveToCategory, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            if (isHistory) OwnTVButton(stringResource(R.string.content_remove_history), onClick = onRemoveFromHistory, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            OwnTVButton(stringResource(R.string.common_hide), onClick = onHide, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            OwnTVButton(stringResource(R.string.content_download), onClick = onDownload, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.DOWNLOADS, modifier = Modifier.fillMaxWidth())
-            // Delete subtitles — only when this movie has downloaded OpenSubtitles subs (§11).
-            onDeleteSubtitles?.let {
-                OwnTVButton(stringResource(R.string.content_delete_subtitles), onClick = it, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.SUBTITLE, modifier = Modifier.fillMaxWidth())
+            // The menu as data: same actions, same gating, same order as the buttons that used to be
+            // written out here one by one. Close is not in the list — it stays pinned last.
+            val actions = buildList {
+                add(MenuAction("favourite", if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite), OwnTVIcon.FAVORITE, onClick = onToggleFavorite))
+                add(MenuAction("mark_watched", if (watched) stringResource(R.string.content_mark_unwatched) else stringResource(R.string.content_mark_watched), onClick = onToggleWatched))
+                if (canMove) add(MenuAction("move", stringResource(R.string.content_move), onClick = onMove))
+                if (canMove) add(MenuAction("move_to_category", stringResource(R.string.content_move_to_category), onClick = onMoveToCategory))
+                if (isHistory) add(MenuAction("remove_history", stringResource(R.string.content_remove_history), onClick = onRemoveFromHistory))
+                add(MenuAction("hide", stringResource(R.string.common_hide), onClick = onHide))
+                add(MenuAction("download", stringResource(R.string.content_download), OwnTVIcon.DOWNLOADS, onClick = onDownload))
+                // Delete subtitles — only when this movie has downloaded OpenSubtitles subs (§11).
+                onDeleteSubtitles?.let { add(MenuAction("delete_subtitles", stringResource(R.string.content_delete_subtitles), OwnTVIcon.SUBTITLE, onClick = it)) }
+                // Phase B: one-off external playback, independent of the global "External player" toggle.
+                add(MenuAction("play_external", stringResource(R.string.content_play_external), OwnTVIcon.PLAY, onClick = onPlayExternal))
+                // TMDB Details — only when a confident match resolved (§11.1).
+                if (hasTmdbDetails) add(MenuAction("tmdb_details", stringResource(R.string.content_tmdb_details), OwnTVIcon.MENU, group = 1, onClick = onShowDetails))
+                // Play Trailer (§7.3 U4) — only when TMDB actually has a trailer for this title (§11.1 gating).
+                trailerKey?.let { key -> add(MenuAction("play_trailer", stringResource(R.string.content_play_trailer), group = 1) { onPlayTrailer(key) }) }
+                // Refetch TMDB details (§11.2 U5a) — always available when enrichment is on, so a "no match"
+                // (7-day negative cache) or a stale match can be cleared and re-searched immediately.
+                if (canRefetchTmdb) {
+                    add(MenuAction("refetch_tmdb", stringResource(R.string.content_refetch_tmdb), group = 1, onClick = onRefetch))
+                    // Set TMDB name (§11.2 U5b) — hand-type the exact title to override the auto-match.
+                    add(MenuAction("set_tmdb_name", stringResource(R.string.content_set_tmdb_name), group = 1, onClick = onSetTmdbName))
+                }
             }
-            // Phase B: one-off external playback, independent of the global "External player" toggle.
-            OwnTVButton(stringResource(R.string.content_play_external), onClick = onPlayExternal, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAY, modifier = Modifier.fillMaxWidth())
-            // TMDB Details — only when a confident match resolved (§11.1).
-            if (hasTmdbDetails) {
-                Spacer(Modifier.height(4.dp))
-                OwnTVButton(stringResource(R.string.content_tmdb_details), onClick = onShowDetails, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.MENU, modifier = Modifier.fillMaxWidth())
-            }
-            // Play Trailer (§7.3 U4) — only when TMDB actually has a trailer for this title (§11.1 gating).
-            trailerKey?.let { key ->
-                OwnTVButton(stringResource(R.string.content_play_trailer), onClick = { onPlayTrailer(key) }, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            }
-            // Refetch TMDB details (§11.2 U5a) — always available when enrichment is on, so a "no match"
-            // (7-day negative cache) or a stale match can be cleared and re-searched immediately.
-            if (canRefetchTmdb) {
-                OwnTVButton(stringResource(R.string.content_refetch_tmdb), onClick = onRefetch, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-                // Set TMDB name (§11.2 U5b) — hand-type the exact title to override the auto-match.
-                OwnTVButton(stringResource(R.string.content_set_tmdb_name), onClick = onSetTmdbName, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
+            var previousGroup: Int? = null
+            arranged(ContentMenu.MOVIE, actions).forEachIndexed { index, action ->
+                if (previousGroup != null && action.group != previousGroup) Spacer(Modifier.height(4.dp))
+                previousGroup = action.group
+                OwnTVButton(
+                    action.label,
+                    onClick = action.onClick,
+                    style = OwnTVButtonStyle.SECONDARY,
+                    icon = action.icon,
+                    modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(focus) else Modifier),
+                )
             }
             Spacer(Modifier.height(4.dp))
             OwnTVButton(stringResource(R.string.content_close), onClick = onDismiss, modifier = Modifier.fillMaxWidth())
@@ -977,8 +1009,10 @@ private fun jsonList(json: String?): List<String> {
 @Composable
 private fun MovieListRow(
     movie: MovieEntity,
+    posterUrl: String?,
     isFavorite: Boolean,
     completed: Boolean = false,
+    providerName: String? = null,
     onFocus: () -> Unit,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
@@ -1003,8 +1037,8 @@ private fun MovieListRow(
                 modifier = Modifier.size(width = 44.dp, height = 62.dp).clip(RoundedCornerShape(6.dp)).background(colors.surfaceContainerLowest),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!movie.posterUrl.isNullOrBlank()) {
-                    AsyncImage(model = movie.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                if (!posterUrl.isNullOrBlank()) {
+                    AsyncImage(model = posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
                 } else {
                     OwnTVIcon(OwnTVIcon.MOVIES, tint = colors.onSurfaceVariant, modifier = Modifier.size(22.dp))
                 }
@@ -1035,8 +1069,9 @@ private fun MovieListRow(
                 }
             }
             if (isFavorite) {
-                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.primary, modifier = Modifier.size(18.dp))
+                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.favorite, filled = true, modifier = Modifier.size(18.dp))
             }
+            providerName?.let { ProviderChip(name = it) }
         }
     }
 }

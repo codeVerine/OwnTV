@@ -23,8 +23,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import org.koin.compose.koinInject
-import tv.own.owntv.features.settings.data.SettingsRepository
-import tv.own.owntv.features.settings.data.SubtitleStyle
+import tv.own.owntv.core.settings.SettingsRepository
+import tv.own.owntv.core.settings.SubtitleStyle
 import tv.own.owntv.ui.theme.LocalUiFontScaleFactor
 import tv.own.owntv.ui.theme.asComposeFamily
 
@@ -46,7 +46,9 @@ fun SubtitleOverlay(
     // master toggle is off) resolves to the exact look this overlay has always had: white text on a
     // 45%-black box, centred 56dp above the bottom edge.
     val styleOn by settings.subtitleStyleEnabled.collectAsStateWithLifecycle(initialValue = false)
-    val scale by settings.subtitleScale.collectAsStateWithLifecycle(initialValue = SubtitleStyle.SCALE_DEFAULT)
+    // This overlay draws mpv's own subtitle line (polled from the direct render path), so it takes the
+    // mpv size — including in the mini player, where sizeScale then shrinks it to the window.
+    val scale by settings.subtitleScaleMpv.collectAsStateWithLifecycle(initialValue = SubtitleStyle.SCALE_DEFAULT)
     val font by settings.subtitleFont.collectAsStateWithLifecycle(initialValue = null)
     val colorHex by settings.subtitleColor.collectAsStateWithLifecycle(initialValue = SubtitleStyle.COLOR_DEFAULT)
     val position by settings.subtitlePosition.collectAsStateWithLifecycle(initialValue = SubtitleStyle.Position.DEFAULT)

@@ -1,6 +1,8 @@
 package tv.own.owntv.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import tv.own.owntv.core.theme.AccentColor
+import tv.own.owntv.core.theme.OwnTVPalette
 
 /**
  * Material 3 tonal palette for OwnTV (teal-seeded). NEUTRAL + secondary/tertiary roles are
@@ -8,51 +10,55 @@ import androidx.compose.ui.graphics.Color
  *
  * Dark uses a near-black background (#040e0b) so the panel colours (Phase 6) pop against
  * the deep dark surface while keeping a subtle green undertone.
+ *
+ * **The values themselves live in core**, in [OwnTVPalette], because the mobile app renders the
+ * same product and a second copy of the hex codes would drift. This file only wraps them in
+ * Compose's [Color], which core cannot do — it carries the Compose runtime, not `compose-ui`.
  */
 
 // Brand mark color (the OwnTV play logo) — constant.
-val AccentCyan = Color(0xFF52DBC8)
+val AccentCyan = Color(OwnTVPalette.AccentCyan)
 
 // ---------------- DARK (M3 dark over near-black #040e0b) ----------------
-val DarkBackground = Color(0xFF040E0B) // Option A — nav + inter-panel gap surface
-val DarkSurface = Color(0xFF0E1513)
-val DarkSurfaceContainerLowest = Color(0xFF090F0E)
-val DarkSurfaceContainerLow = Color(0xFF161D1B)
-val DarkSurfaceContainer = Color(0xFF1B211F)
-val DarkSurfaceContainerHigh = Color(0xFF252B29)
-val DarkSurfaceContainerHighest = Color(0xFF303634)
-val DarkOnSurface = Color(0xFFDEE4E1)
-val DarkOnSurfaceVariant = Color(0xFFBFC9C4)
-val DarkOutline = Color(0xFF89938F)
-val DarkOutlineVariant = Color(0xFF3F4945)
-val DarkSecondary = Color(0xFFB1CCC3)
-val DarkOnSecondary = Color(0xFF1C352E)
-val DarkSecondaryContainer = Color(0xFF334B44)
-val DarkOnSecondaryContainer = Color(0xFFCDE8DF)
-val DarkTertiary = Color(0xFFA9CBE4)
-val DarkOnTertiary = Color(0xFF0B3445)
-val DarkTertiaryContainer = Color(0xFF294B5D)
-val DarkOnTertiaryContainer = Color(0xFFC5E7FF)
-val DarkError = Color(0xFFFFB4AB)
+val DarkBackground = Color(OwnTVPalette.DarkBackground) // Option A — nav + inter-panel gap surface
+val DarkSurface = Color(OwnTVPalette.DarkSurface)
+val DarkSurfaceContainerLowest = Color(OwnTVPalette.DarkSurfaceContainerLowest)
+val DarkSurfaceContainerLow = Color(OwnTVPalette.DarkSurfaceContainerLow)
+val DarkSurfaceContainer = Color(OwnTVPalette.DarkSurfaceContainer)
+val DarkSurfaceContainerHigh = Color(OwnTVPalette.DarkSurfaceContainerHigh)
+val DarkSurfaceContainerHighest = Color(OwnTVPalette.DarkSurfaceContainerHighest)
+val DarkOnSurface = Color(OwnTVPalette.DarkOnSurface)
+val DarkOnSurfaceVariant = Color(OwnTVPalette.DarkOnSurfaceVariant)
+val DarkOutline = Color(OwnTVPalette.DarkOutline)
+val DarkOutlineVariant = Color(OwnTVPalette.DarkOutlineVariant)
+val DarkSecondary = Color(OwnTVPalette.DarkSecondary)
+val DarkOnSecondary = Color(OwnTVPalette.DarkOnSecondary)
+val DarkSecondaryContainer = Color(OwnTVPalette.DarkSecondaryContainer)
+val DarkOnSecondaryContainer = Color(OwnTVPalette.DarkOnSecondaryContainer)
+val DarkTertiary = Color(OwnTVPalette.DarkTertiary)
+val DarkOnTertiary = Color(OwnTVPalette.DarkOnTertiary)
+val DarkTertiaryContainer = Color(OwnTVPalette.DarkTertiaryContainer)
+val DarkOnTertiaryContainer = Color(OwnTVPalette.DarkOnTertiaryContainer)
+val DarkError = Color(OwnTVPalette.DarkError)
 
 // ---------------- LIGHT (M3 light) ----------------
-val LightBackground = Color(0xFFF5FBF8)
-val LightSurface = Color(0xFFF5FBF8)
-val LightSurfaceContainerLowest = Color(0xFFFFFFFF)
-val LightSurfaceContainerLow = Color(0xFFEFF5F2)
-val LightSurfaceContainer = Color(0xFFE9EFEC)
-val LightSurfaceContainerHigh = Color(0xFFE3EAE6)
-val LightSurfaceContainerHighest = Color(0xFFDEE4E1)
-val LightOnSurface = Color(0xFF171D1B)
-val LightOnSurfaceVariant = Color(0xFF3F4945)
-val LightOutline = Color(0xFF6F7975)
-val LightOutlineVariant = Color(0xFFBFC9C4)
-val LightSecondary = Color(0xFF4B635C)
-val LightOnSecondary = Color(0xFFFFFFFF)
-val LightSecondaryContainer = Color(0xFFCDE8DF)
-val LightOnSecondaryContainer = Color(0xFF07201A)
-val LightTertiary = Color(0xFF416278)
-val LightOnTertiary = Color(0xFFFFFFFF)
-val LightTertiaryContainer = Color(0xFFC5E7FF)
-val LightOnTertiaryContainer = Color(0xFF001E2F)
-val LightError = Color(0xFFBA1A1A)
+val LightBackground = Color(OwnTVPalette.LightBackground)
+val LightSurface = Color(OwnTVPalette.LightSurface)
+val LightSurfaceContainerLowest = Color(OwnTVPalette.LightSurfaceContainerLowest)
+val LightSurfaceContainerLow = Color(OwnTVPalette.LightSurfaceContainerLow)
+val LightSurfaceContainer = Color(OwnTVPalette.LightSurfaceContainer)
+val LightSurfaceContainerHigh = Color(OwnTVPalette.LightSurfaceContainerHigh)
+val LightSurfaceContainerHighest = Color(OwnTVPalette.LightSurfaceContainerHighest)
+val LightOnSurface = Color(OwnTVPalette.LightOnSurface)
+val LightOnSurfaceVariant = Color(OwnTVPalette.LightOnSurfaceVariant)
+val LightOutline = Color(OwnTVPalette.LightOutline)
+val LightOutlineVariant = Color(OwnTVPalette.LightOutlineVariant)
+val LightSecondary = Color(OwnTVPalette.LightSecondary)
+val LightOnSecondary = Color(OwnTVPalette.LightOnSecondary)
+val LightSecondaryContainer = Color(OwnTVPalette.LightSecondaryContainer)
+val LightOnSecondaryContainer = Color(OwnTVPalette.LightOnSecondaryContainer)
+val LightTertiary = Color(OwnTVPalette.LightTertiary)
+val LightOnTertiary = Color(OwnTVPalette.LightOnTertiary)
+val LightTertiaryContainer = Color(OwnTVPalette.LightTertiaryContainer)
+val LightOnTertiaryContainer = Color(OwnTVPalette.LightOnTertiaryContainer)
+val LightError = Color(OwnTVPalette.LightError)

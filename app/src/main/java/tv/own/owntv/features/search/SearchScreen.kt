@@ -1,6 +1,8 @@
 package tv.own.owntv.features.search
 
 import tv.own.owntv.core.epg.displayLogoUrl
+import tv.own.owntv.core.content.SearchIntent
+import tv.own.owntv.core.content.SearchResults
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -50,7 +52,7 @@ import tv.own.owntv.ui.components.SearchBar
 import tv.own.owntv.ui.components.ContentPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
 
@@ -448,7 +450,7 @@ private fun ResultRow(
                 }
             }
             if (isFavorite) {
-                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.primary, modifier = Modifier.size(18.dp))
+                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.favorite, filled = true, modifier = Modifier.size(18.dp))
             }
         }
     }

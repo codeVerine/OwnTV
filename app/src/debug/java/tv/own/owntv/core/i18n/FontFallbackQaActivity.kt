@@ -16,10 +16,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import tv.own.owntv.ui.theme.AccentColor
+import tv.own.owntv.core.theme.AccentColor
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.PopupFontTheme
-import tv.own.owntv.ui.theme.ThemeMode
+import tv.own.owntv.core.theme.ThemeMode
 
 /** Debug-only, static screen for checking system glyph fallback on representative TV devices. */
 class FontFallbackQaActivity : ComponentActivity() {

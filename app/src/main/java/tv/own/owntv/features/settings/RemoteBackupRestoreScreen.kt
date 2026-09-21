@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -38,6 +39,7 @@ import tv.own.owntv.core.companion.CompanionServerState
 import tv.own.owntv.ui.components.companionLockedText
 import tv.own.owntv.ui.components.displayText
 import tv.own.owntv.ui.components.OwnTVButton
+import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.theme.OwnTVTheme
@@ -103,7 +105,7 @@ fun RemoteBackupRestoreScreen(
                         Spacer(Modifier.height(14.dp))
                         state.qr?.let { qr ->
                             Image(
-                                bitmap = qr,
+                                bitmap = qr.asImageBitmap(),
                                 contentDescription = stringResource(R.string.settings_companion_qr),
                                 modifier = Modifier.size(188.dp).clip(RoundedCornerShape(14.dp)).background(Color.White).padding(9.dp),
                                 contentScale = ContentScale.Fit,
@@ -120,13 +122,13 @@ fun RemoteBackupRestoreScreen(
                     is CompanionServerState.Failed -> {
                         Text(state.failure.displayText(), style = MaterialTheme.typography.bodyMedium, color = Color(0xFFEF4444), textAlign = TextAlign.Center)
                         Spacer(Modifier.height(20.dp))
-                        OwnTVButton(stringResource(R.string.settings_try_again), onClick = { onStart(CompanionLink.DEFAULT_PORT) })
+                        OwnTVButton(stringResource(R.string.settings_try_again), onClick = { onStart(CompanionLink.DEFAULT_PORT) }, icon = OwnTVIcon.REFRESH)
                     }
                     CompanionServerState.Locked -> {
                         Text(companionLockedText(), style = MaterialTheme.typography.bodyMedium, color = Color(0xFFEF4444), textAlign = TextAlign.Center)
                         Spacer(Modifier.height(20.dp))
                         // Restarting mints a fresh PIN, so this is the recovery path — not a retry of a failure.
-                        OwnTVButton(stringResource(R.string.settings_new_pin), onClick = { onStart(CompanionLink.DEFAULT_PORT) })
+                        OwnTVButton(stringResource(R.string.settings_new_pin), onClick = { onStart(CompanionLink.DEFAULT_PORT) }, icon = OwnTVIcon.REFRESH)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -190,7 +192,7 @@ fun RemoteBackupExportScreen(
                         Spacer(Modifier.height(14.dp))
                         listening.qr?.let { qr ->
                             Image(
-                                bitmap = qr,
+                                bitmap = qr.asImageBitmap(),
                                 contentDescription = stringResource(R.string.settings_companion_qr),
                                 modifier = Modifier.size(188.dp).clip(RoundedCornerShape(14.dp)).background(Color.White).padding(9.dp),
                                 contentScale = ContentScale.Fit,

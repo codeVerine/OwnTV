@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,9 +43,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.androidx.compose.koinViewModel
 import tv.own.owntv.R
-import tv.own.owntv.features.settings.data.PanelSection
-import tv.own.owntv.features.settings.data.PanelShares
-import tv.own.owntv.features.settings.data.PanelWidthLimits
+import tv.own.owntv.core.settings.PanelSection
+import tv.own.owntv.core.settings.PanelShares
+import tv.own.owntv.core.settings.PanelWidthLimits
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
 import tv.own.owntv.features.settings.data.BrowseContainerPadding
@@ -57,9 +58,10 @@ import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.PreviewPanelFill
 import tv.own.owntv.ui.components.dialogPanel
 import tv.own.owntv.ui.components.modalScrim
+import tv.own.owntv.ui.components.restoreAfterDialogClose
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 /**
@@ -80,15 +82,16 @@ fun PanelWidthSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) 
 
     var open by remember { mutableStateOf<PanelSection?>(null) }
     val rowFocus = remember { PanelSection.entries.associateWith { FocusRequester() } }
+    val scrollState = rememberScrollState()
     var dialogReturn by remember { mutableStateOf<FocusRequester?>(null) }
 
     LaunchedEffect(Unit) { runCatching { rowFocus.getValue(PanelSection.LIVE).requestFocus() } }
+    // Snapshot the offset while the dialog is up and hold it across the restore, so the row is already
+    // in view when focus lands — see [restoreAfterDialogClose].
+    var savedScroll by remember { mutableIntStateOf(0) }
     LaunchedEffect(open) {
-        if (open != null) return@LaunchedEffect
-        dialogReturn?.let { opener ->
-            kotlinx.coroutines.delay(60)
-            runCatching { opener.requestFocus() }
-        }
+        if (open != null) { savedScroll = scrollState.value; return@LaunchedEffect }
+        restoreAfterDialogClose(dialogReturn, scrollState, savedScroll)
         dialogReturn = null
     }
     BackHandler { onBack() }
@@ -101,7 +104,7 @@ fun PanelWidthSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) 
                 .roundedPanel()
                 .focusProperties { onEnter = { runCatching { rowFocus.getValue(PanelSection.LIVE).requestFocus() } } }
                 .focusGroup()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 40.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
@@ -421,10 +424,12 @@ private fun PanelWidthDiagram(shares: PanelShares) {
 
 /** One panel's row: label, then − value + in [PanelWidthLimits.STEP] increments. */
 @Composable
-private fun StepRow(
+internal fun StepRow(
     label: String,
     value: Int,
     minimum: Int = PanelWidthLimits.MIN,
+    maximum: Int = PanelWidthLimits.MAX,
+    step: Int = PanelWidthLimits.STEP,
     onSet: (Int) -> Unit,
 ) {
     val colors = OwnTVTheme.colors
@@ -438,7 +443,7 @@ private fun StepRow(
         // drop it, and focus is trapped in this dialog — the D-pad would go dead (the bug fixed in
         // StepperDialog). They just stop moving the value and dim instead.
         StepBtn("–", atLimit = value <= minimum) {
-            onSet((value - PanelWidthLimits.STEP).coerceAtLeast(minimum))
+            onSet((value - step).coerceAtLeast(minimum))
         }
         Text(
             stringResource(R.string.common_percent, value),
@@ -447,8 +452,8 @@ private fun StepRow(
             textAlign = TextAlign.Center,
             modifier = Modifier.width(64.dp),
         )
-        StepBtn("+", atLimit = value >= PanelWidthLimits.MAX) {
-            onSet((value + PanelWidthLimits.STEP).coerceAtMost(PanelWidthLimits.MAX))
+        StepBtn("+", atLimit = value >= maximum) {
+            onSet((value + step).coerceAtMost(maximum))
         }
     }
 }

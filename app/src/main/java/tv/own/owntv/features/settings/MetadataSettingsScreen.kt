@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -297,7 +298,7 @@ fun MetadataSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         // three separate settings rather than one choice, and they pushed everything else off screen.
         GroupLabel(stringResource(R.string.settings_metadata_library_details))
         ServiceSettingsRow(
-            icon = OwnTVIcon.VIDEO,
+            icon = OwnTVIcon.IMAGE,
             title = stringResource(R.string.settings_metadata_source),
             desc = stringResource(R.string.settings_metadata_source_description),
             chip = stringResource(metadataModeLabelRes(mode)), chevron = true,
@@ -334,58 +335,6 @@ fun MetadataSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             // destroy it.
             onClick = { showAdvanced = true },
         )
-        if (false && showAdvanced) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stringResource(R.string.settings_metadata_server_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            // A text field swallows the Down key to move its own cursor, so the default search
-            // walked straight past Save to the Test section below. Point Down explicitly at the next
-            // field and then at Save, so key -> URL -> Save is the order the user actually sees.
-            val urlFieldFocus = remember { FocusRequester() }
-            val saveFocus = remember { FocusRequester() }
-            // Typing a 32-character key with a D-pad is the real reason people stay on the shared
-            // service, so offer the remote hand-over directly above the field it fills.
-            Spacer(Modifier.height(10.dp))
-            GroupLabel(stringResource(R.string.settings_metadata_connection))
-            ServiceSettingsRow(
-                icon = OwnTVIcon.GEAR,
-                title = stringResource(R.string.settings_metadata_key_from_phone),
-                desc = stringResource(R.string.settings_metadata_key_from_phone_desc),
-                chevron = true,
-                onClick = { showRemoteHandover = true },
-            )
-            Spacer(Modifier.height(12.dp))
-            OwnTVTextField(
-                value = key,
-                onValueChange = { key = it },
-                label = stringResource(R.string.settings_tmdb_api_key),
-                placeholder = stringResource(R.string.settings_metadata_optional),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusProperties { down = urlFieldFocus },
-            )
-            Spacer(Modifier.height(12.dp))
-            OwnTVTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = stringResource(R.string.settings_self_host_url),
-                placeholder = "https://your-worker.example.workers.dev",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(urlFieldFocus)
-                    .focusProperties { down = saveFocus },
-            )
-            Spacer(Modifier.height(16.dp))
-            OwnTVButton(stringResource(R.string.common_save), modifier = Modifier.focusRequester(saveFocus), onClick = {
-                vm.setTmdbApiKey(key)
-                vm.setMetadataServerUrl(url)
-                vm.resetMetadataTest()
-            })
-        }
 
         Spacer(Modifier.height(20.dp))
         GroupLabel(stringResource(R.string.settings_metadata_test_connection))
@@ -669,7 +618,7 @@ internal fun CompanionKeyDialog(
                     Spacer(Modifier.height(12.dp))
                     state.qr?.let { qr ->
                         androidx.compose.foundation.Image(
-                            bitmap = qr,
+                            bitmap = qr.asImageBitmap(),
                             contentDescription = stringResource(R.string.settings_companion_qr),
                             modifier = Modifier
                                 .size(176.dp)

@@ -71,6 +71,13 @@ object FrameRateController {
      */
     private const val MODE_CHANGE_COOLDOWN_MS = 5_000L
 
+    // Android TV's own "Match content frame rate" preference — see [systemMatchPreference]. Restated
+    // rather than referenced so the constants are readable below API 31, where the platform ones do
+    // not exist. Values match DisplayManager.MATCH_CONTENT_FRAMERATE_*.
+    private const val MATCH_NEVER = 0
+    private const val MATCH_SEAMLESS_ONLY = 1
+    private const val MATCH_ALWAYS = 2
+
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingReset: Runnable? = null
     private var pendingApply: Runnable? = null
@@ -144,19 +151,59 @@ object FrameRateController {
         val display: Display = displayOf(activity) ?: return null
         val current = display.mode ?: return null
         val wanted = snapFps(fps)
+        val systemPreference = systemMatchPreference(activity)
+        if (systemPreference == MATCH_NEVER) return null
         val seamless = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             current.alternativeRefreshRates.toList()
         } else {
             emptyList()
         }
+        fun isSeamless(mode: Display.Mode) = seamless.any { abs(it - mode.refreshRate) <= TOLERANCE_HZ }
         return display.supportedModes
             ?.filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+            ?.filter { systemPreference != MATCH_SEAMLESS_ONLY || isSeamless(it) }
             ?.mapNotNull { mode -> multipleOf(mode.refreshRate, wanted)?.let { mode to it } }
             ?.minByOrNull { (mode, mult) ->
-                val isSeamless = seamless.any { abs(it - mode.refreshRate) <= TOLERANCE_HZ }
-                (if (isSeamless) 0f else 1_000_000f) + mult * 1000f + abs(mode.refreshRate - mult * wanted)
+                (if (isSeamless(mode)) 0f else 1_000_000f) + mult * 1000f + abs(mode.refreshRate - mult * wanted)
             }
             ?.first
+    }
+
+    /**
+     * Android TV's own **Match content frame rate** setting (API 31+), and what OwnTV does with it.
+     *
+     * **The decision, stated plainly: the system setting wins.** When the OS is set to *Never*, OwnTV
+     * does not change the display mode even if its own Auto frame rate is on — [pickMode] returns null,
+     * which every caller already treats as "leave the display alone". When the OS is set to *Seamless
+     * only*, OwnTV restricts itself to modes the panel can move to without re-handshaking HDMI. Anything
+     * else — *Always*, an unknown value, or an Android version that has no such setting — behaves exactly
+     * as before.
+     *
+     * Why that way round rather than letting the app's toggle override the system's:
+     *
+     *  - The two settings are not peers. The system one is a statement about **this television**: the
+     *    user has been through an HDMI handshake they disliked and told the platform to stop. OwnTV's is
+     *    a statement about **this app's content**. "Match the frame rate, when the TV allows it" is a
+     *    coherent reading of both; "match it even though you were told not to" is not.
+     *  - The platform already enforces it on the *other* AFR mechanism. `Surface.setFrameRate()` (see
+     *    the class comment, mechanism 1) is silently ignored when the preference is *Never*. Without
+     *    this check OwnTV would be doing through `preferredDisplayModeId` precisely what the platform
+     *    refuses to do through the supported API — a back door, and one whose black gap the user has
+     *    already objected to.
+     *  - It costs the user nothing they cannot undo: the OS setting is two screens away in Android TV's
+     *    own display settings, and turning it back to *Always* restores OwnTV's full behaviour with no
+     *    change needed here.
+     *
+     * Because the gate lives in [pickMode], the "Auto frame rate would help here" prompt goes quiet too
+     * — [betterRefreshRateFor] shares this path, so the app cannot offer a switch it would then refuse
+     * to make.
+     */
+    private fun systemMatchPreference(activity: Activity): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return MATCH_ALWAYS
+        return runCatching {
+            activity.getSystemService(android.hardware.display.DisplayManager::class.java)
+                ?.matchContentFrameRateUserPreference ?: MATCH_ALWAYS
+        }.getOrDefault(MATCH_ALWAYS)
     }
 
     /**

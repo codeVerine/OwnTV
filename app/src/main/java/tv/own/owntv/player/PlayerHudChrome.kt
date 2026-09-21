@@ -107,10 +107,8 @@ internal fun TopBar(
                         if (i > 0) Box(Modifier.size(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
                         Text(label, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f))
                     }
-                    if (isLive) {
-                        if (parts.isNotEmpty()) Box(Modifier.size(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
-                        LiveBadge()
-                    }
+                    // The LIVE badge has left the top bar: live status belongs beside the timeline that
+                    // describes it, so it is now the stateful badge at the right end of the dock's band A.
                 }
             }
             // Live stacks the technical chips ABOVE the channel name; VOD keeps title-then-chips.
@@ -168,17 +166,6 @@ private fun ChannelLogo(logoUrl: String?, title: String?, size: Int, modifier: M
     }
 }
 
-@Composable
-private fun LiveBadge() {
-    Row(
-        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xCCDC3232)).padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
-        Text(stringResource(R.string.player_live), style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
-    }
-}
-
 /** The player's channel OSD: channel logo beside its name and number. */
 @Composable
 internal fun ChannelOsdCard(
@@ -227,6 +214,8 @@ internal fun ChannelNumberCard(digits: String, error: String? = null, modifier: 
         label = "tuneCaretAlpha",
     )
     val countdown = remember { Animatable(0f) }
+    // Captured before the draw lambda: a DrawScope is not a composable, so it can't read the theme.
+    val accent = OwnTVTheme.colors.accentOnVideo
     LaunchedEffect(digits, error) {
         if (error != null) { countdown.snapTo(0f); return@LaunchedEffect }
         countdown.snapTo(1f)
@@ -240,14 +229,14 @@ internal fun ChannelNumberCard(digits: String, error: String? = null, modifier: 
                 val barHeight = 3.dp.toPx()
                 val top = Offset(0f, size.height - barHeight)
                 drawRect(Color.White.copy(alpha = 0.08f), topLeft = top, size = Size(size.width, barHeight))
-                drawRect(TEAL, topLeft = top, size = Size(size.width * countdown.value, barHeight))
+                drawRect(accent, topLeft = top, size = Size(size.width * countdown.value, barHeight))
             }
             .padding(bottom = 3.dp),
     ) {
         Column(Modifier.padding(start = 16.dp, end = 20.dp, top = 12.dp, bottom = 12.dp)) {
             Text(
                 stringResource(R.string.player_channel_label),
-                style = MaterialTheme.typography.labelSmall, color = TEAL, fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelSmall, color = accent, fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp,
             )
             Row(verticalAlignment = Alignment.Bottom) {
@@ -259,7 +248,7 @@ internal fun ChannelNumberCard(digits: String, error: String? = null, modifier: 
                 if (error == null) {
                     Box(
                         Modifier.padding(start = 4.dp, bottom = 4.dp).width(3.dp).height(22.dp)
-                            .clip(RoundedCornerShape(2.dp)).background(TEAL.copy(alpha = caretAlpha)),
+                            .clip(RoundedCornerShape(2.dp)).background(accent.copy(alpha = caretAlpha)),
                     )
                 }
             }
@@ -275,7 +264,7 @@ internal fun ChannelNumberCard(digits: String, error: String? = null, modifier: 
 @Composable
 internal fun CenterControls(
     player: PlaybackEngine, nav: NavState, isPlaying: Boolean, isLive: Boolean,
-    onRewindLive: (() -> Unit)?, onForwardLive: (() -> Unit)?, onGoToLive: (() -> Unit)?, timeshiftOffsetSec: Int?,
+    onRewindLive: (() -> Unit)?, onForwardLive: (() -> Unit)?, timeshiftOffsetSec: Int?,
     playFocus: FocusRequester, modifier: Modifier = Modifier,
 ) {
     val seekStep by player.seekStepMs.collectAsStateWithLifecycle() // Settings -> Seek step
@@ -287,25 +276,24 @@ internal fun CenterControls(
             Text(
                 if (timeshiftOffsetSec <= 1) stringResource(R.string.player_at_live_edge) else stringResource(R.string.player_behind_live, mmss(timeshiftOffsetSec)),
                 style = MaterialTheme.typography.labelLarge,
-                color = OwnTVTheme.colors.accent,
+                color = OwnTVTheme.colors.accentOnVideo,
             )
             Spacer(Modifier.height(12.dp))
         }
-        Row(Modifier.focusGroup(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            if (nav.hasPrev) CircleButton(OwnTVIcon.SKIP_PREVIOUS, size = 52) { player.previous() }
+        TransportCapsule {
+            if (nav.hasPrev) CircleButton(OwnTVIcon.SKIP_PREVIOUS, size = 44) { player.previous() }
             when {
-                rewindMode -> CircleButton(OwnTVIcon.REWIND, size = 52) { onRewindLive() } // step back into the archive
-                !isLive -> CircleButton(OwnTVIcon.REWIND, size = 52) { player.seekBy(-seekStep) }
+                rewindMode -> CircleButton(OwnTVIcon.REWIND, size = 44) { onRewindLive() } // step back into the archive
+                !isLive -> CircleButton(OwnTVIcon.REWIND, size = 44) { player.seekBy(-seekStep) }
             }
-            CircleButton(if (isPlaying) OwnTVIcon.PAUSE else OwnTVIcon.PLAY, size = 72, primary = true, modifier = Modifier.focusRequester(playFocus)) { player.togglePlayPause() }
+            CircleButton(if (isPlaying) OwnTVIcon.PAUSE else OwnTVIcon.PLAY, size = 64, primary = true, modifier = Modifier.focusRequester(playFocus)) { player.togglePlayPause() }
             when {
-                rewindMode && timeshifting -> CircleButton(OwnTVIcon.FORWARD, size = 52) { onForwardLive!!() } // toward live
-                !isLive && !rewindMode -> CircleButton(OwnTVIcon.FORWARD, size = 52) { player.seekBy(seekStep) }
+                rewindMode && timeshifting -> CircleButton(OwnTVIcon.FORWARD, size = 44) { onForwardLive?.invoke() } // toward live
+                !isLive && !rewindMode -> CircleButton(OwnTVIcon.FORWARD, size = 44) { player.seekBy(seekStep) }
             }
-            if (rewindMode && timeshifting && onGoToLive != null) {
-                CircleButton(OwnTVIcon.LIVE_TV, size = 52, primary = true) { onGoToLive() } // jump to the live edge
-            }
-            if (nav.hasNext) CircleButton(OwnTVIcon.SKIP_NEXT, size = 52) { player.next() }
+            // "Go to live" is no longer a transport button: it is the Go Live pill at the head of the
+            // dock's left cluster, beside the timeline it acts on.
+            if (nav.hasNext) CircleButton(OwnTVIcon.SKIP_NEXT, size = 44) { player.next() }
         }
     }
 }
@@ -316,7 +304,8 @@ internal fun CenterControls(
 internal fun BottomBar(
     player: PlaybackEngine, isLive: Boolean, position: Long, duration: Long,
     volume: Int, audioCount: Int, subCount: Int, zoomMode: ZoomMode, speedLabel: String,
-    onScrubLive: ((Int) -> Unit)?, timeshiftOffsetSec: Int?, onOpenJumpBack: (() -> Unit)?,
+    onScrubLive: ((Int) -> Unit)?, timeshiftOffsetSec: Int?, onGoToLive: (() -> Unit)?, onOpenJumpBack: (() -> Unit)?,
+    liveProgrammes: List<LiveProgramme> = emptyList(),
     compatMode: Boolean?, onToggleCompatMode: (() -> Unit)?,
     vodOnExo: Boolean?, onToggleVodEngine: (() -> Unit)?,
     onInfo: (() -> Unit)? = null, infoOn: Boolean = false, onReport: (() -> Unit)? = null,
@@ -324,62 +313,98 @@ internal fun BottomBar(
     onOpenDialog: (HudDialog) -> Unit, onPip: (() -> Unit)?, onAudioMode: (() -> Unit)?, onBack: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val seekStep by player.seekStepMs.collectAsStateWithLifecycle() // Settings -> Seek step
-    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 20.dp)) {
+    val buffered by player.bufferedMs.collectAsStateWithLifecycle()
+    Dock(modifier = modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 20.dp)) {
+        // Band A — the instrument. The times are the bar's own end caps now; the separate time row is
+        // gone, and on live the right cap is the state badge instead of a clock.
         when {
             // Catch-up live channel → a scrubbable live timeline (last LIVE_WINDOW up to the live edge).
             onScrubLive != null -> {
-                LiveTimelineBar(offsetSec = timeshiftOffsetSec ?: 0, onScrub = onScrubLive)
-                Spacer(Modifier.height(10.dp))
-            }
-            !isLive && duration > 0 -> {
-                SeekBar(positionMs = position, durationMs = duration, stepMs = seekStep, onSeek = { player.seekBy(it) })
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth()) {
-                    Text(formatTime(position), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
-                    Spacer(Modifier.weight(1f))
-                    Text(formatTime(duration), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        // The live edge is now; the offset says how far behind it the picture is.
+                        LiveTimelineBar(
+                            offsetSec = timeshiftOffsetSec ?: 0,
+                            programmes = liveProgrammes,
+                            liveEdgeMs = System.currentTimeMillis(),
+                            onScrub = onScrubLive,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    LiveStateBadge(timeshiftOffsetSec)
                 }
                 Spacer(Modifier.height(10.dp))
             }
+            !isLive && duration > 0 -> {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TimeCap(formatTime(position), Alignment.Start)
+                    Spacer(Modifier.width(12.dp))
+                    Box(Modifier.weight(1f)) {
+                        SeekBar(positionMs = position, durationMs = duration, bufferedMs = buffered, stepMs = seekStep, onSeek = { player.seekBy(it) })
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    TimeCap(stringResource(R.string.player_time_remaining, formatTime((duration - position).coerceAtLeast(0))), Alignment.End)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            // A live channel with no archive has no timeline to scrub, but it still has a state to
+            // report — and the badge no longer lives in the top bar.
+            isLive -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { LiveStateBadge(timeshiftOffsetSec) }
+                Spacer(Modifier.height(10.dp))
+            }
         }
+        // Band B — the tools. Each cluster hugs its own screen edge and the gap between them is the
+        // slack a focused button expands into, so growth is always toward the centre: the left cluster
+        // pushes only the buttons to its right, the right cluster only those to its left. Walk either
+        // cluster outward-in and nothing you have already passed ever moves.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().focusGroup()) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CtrlButton(volumeIcon(volume)) { onOpenDialog(HudDialog.VOLUME) }
-                SpeedButton(label = speedLabel, active = speedLabel != stringResource(R.string.player_speed_normal_short)) { onOpenDialog(HudDialog.SPEED) }
-                CtrlButton(OwnTVIcon.SUBTITLE, badge = subCount.takeIf { it > 0 }) { onOpenDialog(HudDialog.SUBS) }
-                CtrlButton(OwnTVIcon.AUDIO, badge = audioCount.takeIf { it > 1 }) { onOpenDialog(HudDialog.AUDIO) }
-                // Favorite the current channel/movie/series without leaving the stream (teal heart = on).
-                if (onToggleFavorite != null) CtrlButton(OwnTVIcon.FAVORITE, active = favorite) { onToggleFavorite() }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Go Live leads the media cluster, but only while there is actually a live edge to go
+                // back to: at the edge it is absent and the tools sit flush left, and falling behind
+                // inserts it and pushes them right. onGoToLive alone is non-null on every tuned live
+                // channel, so onScrubLive is what says the channel has an archive at all.
+                if (onGoToLive != null && onScrubLive != null) {
+                    GoLivePill(enabled = (timeshiftOffsetSec ?: 0) > 1) { onGoToLive() }
+                }
+                CtrlButton(volumeIcon(volume), label = stringResource(R.string.player_tool_volume)) { onOpenDialog(HudDialog.VOLUME) }
+                SpeedButton(label = speedLabel, active = speedLabel != stringResource(R.string.player_speed_normal_short), toolLabel = stringResource(R.string.player_tool_speed)) { onOpenDialog(HudDialog.SPEED) }
+                CtrlButton(OwnTVIcon.SUBTITLE, badge = subCount.takeIf { it > 0 }, label = stringResource(R.string.player_tool_subtitles)) { onOpenDialog(HudDialog.SUBS) }
+                CtrlButton(OwnTVIcon.AUDIO, badge = audioCount.takeIf { it > 1 }, label = stringResource(R.string.player_tool_audio)) { onOpenDialog(HudDialog.AUDIO) }
+                // Favorite the current channel/movie/series without leaving the stream (coral heart = on,
+                // the same colour the marker has on posters and in browse rows).
+                if (onToggleFavorite != null) CtrlButton(OwnTVIcon.FAVORITE, active = favorite, activeTint = OwnTVTheme.colors.favorite, label = stringResource(R.string.player_tool_favorite)) { onToggleFavorite() }
                 // "Go back to…" — jump straight to a time in this channel's archive. Only on catch-up
                 // channels. CATCHUP (a TV with a replay loop): REWIND is already the transport button
                 // beside it, and a plain clock would not say which of the two time controls this is.
-                if (onOpenJumpBack != null) CtrlButton(OwnTVIcon.CATCHUP) { onOpenJumpBack() }
+                if (onOpenJumpBack != null) CtrlButton(OwnTVIcon.CATCHUP, label = stringResource(R.string.player_tool_catchup)) { onOpenJumpBack() }
             }
+            Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 // Live "compatibility mode" (Live TV + channels opened from the Guide): pin this channel
                 // to mpv. The pill shows the active engine and flips on click (teal while pinned to mpv).
                 if (onToggleCompatMode != null) {
-                    EngineToggle(label = stringResource(if (compatMode == true) R.string.player_engine_mpv else R.string.player_engine_exo), active = compatMode == true) { onToggleCompatMode() }
+                    EngineToggle(label = stringResource(if (compatMode == true) R.string.player_engine_mpv else R.string.player_engine_exo), active = compatMode == true, toolLabel = stringResource(R.string.player_tool_engine)) { onToggleCompatMode() }
                 }
                 // VOD engine toggle (Movies/Series): flip THIS movie/episode between mpv and ExoPlayer.
                 // The pill shows the active engine (teal while ExoPlayer owns playback).
                 if (onToggleVodEngine != null) {
-                    EngineToggle(label = stringResource(if (vodOnExo == true) R.string.player_engine_exo else R.string.player_engine_mpv), active = vodOnExo == true) { onToggleVodEngine() }
+                    EngineToggle(label = stringResource(if (vodOnExo == true) R.string.player_engine_exo else R.string.player_engine_mpv), active = vodOnExo == true, toolLabel = stringResource(R.string.player_tool_engine)) { onToggleVodEngine() }
                 }
                 // Aspect/zoom works in every mode now — direct mode resizes the surface view itself
                 // (see MpvVideoSurface), GL mode scales internally.
-                CtrlButton(OwnTVIcon.ASPECT, active = zoomMode != ZoomMode.FIT) { onOpenDialog(HudDialog.ZOOM) }
-                if (onPip != null) CtrlButton(OwnTVIcon.PIP) { onPip() }
-                if (onAudioMode != null) CtrlButton(OwnTVIcon.HEADPHONES) { onAudioMode() }
+                CtrlButton(OwnTVIcon.ASPECT, active = zoomMode != ZoomMode.FIT, label = stringResource(R.string.player_tool_aspect)) { onOpenDialog(HudDialog.ZOOM) }
+                if (onPip != null) CtrlButton(OwnTVIcon.PIP, label = stringResource(R.string.player_tool_mini)) { onPip() }
+                if (onAudioMode != null) CtrlButton(OwnTVIcon.HEADPHONES, label = stringResource(R.string.player_tool_audio_only)) { onAudioMode() }
                 // Stream technical info (codec/res/HDR/bitrate/decoder/audio/buffer) — toggles the overlay.
                 // Parked at the far right, where the redundant exit-fullscreen button used to sit (Back
                 // already leaves the player, so that button never did anything the remote couldn't).
-                if (onInfo != null) CtrlButton(OwnTVIcon.INFO, active = infoOn) { onInfo() }
+                if (onInfo != null) CtrlButton(OwnTVIcon.INFO, active = infoOn, label = stringResource(R.string.player_tool_info)) { onInfo() }
                 // "Report this stream": copies the readout the user is looking at into the playback log,
                 // so a "this channel judders" complaint carries the codec/decoder/bitrate that caused it.
                 // Only offered while the info overlay is open — there is nothing to report otherwise, and
                 // the bar stays as short as it was for everyone who never needs this.
-                if (infoOn && onReport != null) CtrlButton(OwnTVIcon.SHARE) { onReport() }
+                if (infoOn && onReport != null) CtrlButton(OwnTVIcon.SHARE, label = stringResource(R.string.player_tool_report)) { onReport() }
             }
         }
     }
@@ -413,7 +438,7 @@ internal fun NextEpisodeCard(
         Text(
             stringResource(R.string.player_next_episode, seconds),
             style = MaterialTheme.typography.labelLarge,
-            color = colors.primary,
+            color = colors.accentOnVideo,
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(4.dp))

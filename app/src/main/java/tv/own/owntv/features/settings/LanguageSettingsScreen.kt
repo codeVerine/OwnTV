@@ -46,6 +46,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -70,7 +71,7 @@ import tv.own.owntv.ui.components.dialogPanel
 import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 /** Compact first-launch dropdown. The list itself uses [OwnTVPopup], so it follows the same popup
@@ -431,7 +432,7 @@ private fun TranslationContributionDialog(onDismiss: () -> Unit) {
                         .padding(8.dp),
                 ) {
                     Image(
-                        bitmap = qr,
+                        bitmap = qr.asImageBitmap(),
                         contentDescription = stringResource(R.string.settings_language_contribution_qr_description),
                         modifier = Modifier.size(220.dp),
                     )

@@ -16,7 +16,7 @@ class LocaleTestActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("localized_context_test", MODE_PRIVATE)
         prefs.edit().putString("ui_language", "en-US").commit()
-        val store = LocaleStore(prefs, null)
+        val store = LocaleStore.overPreferences(prefs)
         setContent {
             LocalizedContent(store) {
                 localizedContext = LocalContext.current

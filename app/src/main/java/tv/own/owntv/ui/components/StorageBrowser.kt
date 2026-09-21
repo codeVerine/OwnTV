@@ -49,7 +49,7 @@ import kotlinx.coroutines.withContext
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.storage.StorageAccess
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import java.io.File
 

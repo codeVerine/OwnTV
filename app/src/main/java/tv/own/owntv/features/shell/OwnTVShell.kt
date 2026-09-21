@@ -2,6 +2,7 @@ package tv.own.owntv.features.shell
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,23 +22,38 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.style.TextOverflow
+import tv.own.owntv.core.epg.displayLogoUrl
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import tv.own.owntv.R
 import tv.own.owntv.core.database.entity.ChannelEntity
 import tv.own.owntv.core.launcher.LauncherDeepLink
+import tv.own.owntv.core.nav.MainSection
 import tv.own.owntv.core.launcher.LauncherIntegrationRepository
 import tv.own.owntv.core.launcher.LauncherLaunch
 import tv.own.owntv.core.update.UpdateManager
@@ -47,16 +63,17 @@ import tv.own.owntv.features.downloads.DownloadsScreen
 import tv.own.owntv.features.epg.EpgScreen
 import tv.own.owntv.features.home.HomeScreen
 import tv.own.owntv.features.home.HomeViewModel
-import tv.own.owntv.features.live.LiveKey
 import tv.own.owntv.features.live.LiveScreen
 import tv.own.owntv.features.live.LiveViewModel
 import tv.own.owntv.features.movies.MoviesScreen
 import tv.own.owntv.features.movies.MovieViewModel
 import tv.own.owntv.features.search.SearchScreen
 import tv.own.owntv.features.search.SearchViewModel
-import tv.own.owntv.features.home.TrendingHomeItem
+import tv.own.owntv.core.home.TrendingHomeItem
 import tv.own.owntv.features.series.SeriesScreen
 import tv.own.owntv.features.series.SeriesViewModel
+import tv.own.owntv.core.settings.RemoteShortcutAction
+import tv.own.owntv.core.settings.RemoteShortcutBindings
 import tv.own.owntv.player.MiniPlayer
 import tv.own.owntv.player.MpvVideoSurface
 import tv.own.owntv.player.OwnTVPlayer
@@ -76,13 +93,17 @@ import tv.own.owntv.features.shell.components.TopBar
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.ui.res.stringResource
+import tv.own.owntv.player.alignment
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.ui.components.LocalRemoteShortcuts
+import tv.own.owntv.ui.components.RemoteShortcutEnvironment
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalContentScrolled
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.OwnTVTheme
-import tv.own.owntv.ui.theme.ThemeMode
+import tv.own.owntv.core.theme.ThemeMode
+import tv.own.owntv.core.live.LiveKey
 
 /** Which layer currently holds focus (drives Back navigation). */
 private enum class ShellLayer { SIDEBAR, RAIL, CONTENT }
@@ -102,9 +123,10 @@ fun OwnTVShell(
     themeMode: ThemeMode,
     uiZoomPercent: Int,
     onSetZoom: (Int) -> Unit,
-    fontCustomization: tv.own.owntv.ui.theme.FontCustomization,
-    onSetFontCustomization: (tv.own.owntv.ui.theme.FontCustomization) -> Unit,
+    fontCustomization: tv.own.owntv.core.theme.FontCustomization,
+    onSetFontCustomization: (tv.own.owntv.core.theme.FontCustomization) -> Unit,
     avatarId: Int,
+    showProfileAvatars: Boolean,
     onSetAvatar: (Int) -> Unit,
     profileName: String,
     sourceSummary: String?,
@@ -148,13 +170,26 @@ fun OwnTVShell(
     val player = koinInject<OwnTVPlayer>()
     // Docked mini-player size (% of screen width) + position, configurable in Settings and from the
     // mini-player's own controls. Read straight from settings so both entry points stay in sync.
-    val settingsRepo = koinInject<tv.own.owntv.features.settings.data.SettingsRepository>()
-    val miniSizePct by settingsRepo.miniPlayerSizePct.collectAsStateWithLifecycle(initialValue = tv.own.owntv.player.MiniPlayerSize.DEFAULT)
-    val miniPosName by settingsRepo.miniPlayerPosition.collectAsStateWithLifecycle(initialValue = tv.own.owntv.player.MiniPlayerPosition.DEFAULT.name)
+    val settingsRepo = koinInject<tv.own.owntv.core.settings.SettingsRepository>()
+    val remoteShortcutsEnabled by settingsRepo.chNavEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val remoteShortcutBindings by settingsRepo.remoteShortcutBindings.collectAsStateWithLifecycle(
+        initialValue = RemoteShortcutBindings.defaults,
+    )
+    val miniSizePct by settingsRepo.miniPlayerSizePct.collectAsStateWithLifecycle(initialValue = tv.own.owntv.core.player.MiniPlayerSize.DEFAULT)
+    val miniPosName by settingsRepo.miniPlayerPosition.collectAsStateWithLifecycle(initialValue = tv.own.owntv.core.player.MiniPlayerPosition.DEFAULT.name)
     val ambientGlowEnabled by settingsRepo.ambientGlowEnabled.collectAsStateWithLifecycle(initialValue = false)
     val ambientGlowPulse by settingsRepo.ambientGlowPulse.collectAsStateWithLifecycle(initialValue = true)
-    val shellAnimationLevel by settingsRepo.animationLevel.collectAsStateWithLifecycle(initialValue = tv.own.owntv.ui.theme.AnimationLevel.FULL)
-    val miniPos = tv.own.owntv.player.MiniPlayerPosition.fromName(miniPosName)
+    val shellAnimationLevel by settingsRepo.animationLevel.collectAsStateWithLifecycle(initialValue = tv.own.owntv.core.theme.AnimationLevel.FULL)
+    val miniPos = tv.own.owntv.core.player.MiniPlayerPosition.fromName(miniPosName)
+    // §8 "Reaching the mini player" — the mini window floats above the content panel, so D-pad focus
+    // search has no spatial path into it from most screens. These are the three deliberate ways in:
+    // the rail's Now Playing item, long-press Back, and the media keys.
+    val miniEntryFocus = remember { FocusRequester() }
+    val audioEntryFocus = remember { FocusRequester() }
+    // The browse UI is one focus group with a restorer, so handing focus back to it after the mini
+    // player returns to the exact control the user left rather than to the top of the screen.
+    val shellContentFocus = remember { FocusRequester() }
+    var miniHasFocus by remember { mutableStateOf(false) }
     val subtitleController = koinInject<tv.own.owntv.core.subtitles.SubtitleController>()
     val subtitleContext by subtitleController.current.collectAsStateWithLifecycle()
     var showSubtitleSearch by remember { mutableStateOf(false) }
@@ -189,6 +224,9 @@ fun OwnTVShell(
     // there is exactly ONE zap path: liveVm's. The Guide keeps its own EpgViewModel only for the grid.
     val liveVm = org.koin.androidx.compose.koinViewModel<LiveViewModel>()
     val epgVm = org.koin.androidx.compose.koinViewModel<tv.own.owntv.features.epg.EpgViewModel>()
+    // Livezap-with-D-pad preference (group feedback: JUL) — Up/Down keep zapping with the HUD bar up.
+    val settingsVm = org.koin.androidx.compose.koinViewModel<tv.own.owntv.features.settings.SettingsViewModel>()
+    val zapWithDpadAlways by settingsVm.zapWithDpadAlways.collectAsStateWithLifecycle()
     val liveCanZap by liveVm.canZap.collectAsStateWithLifecycle()
     // Full-screen is running on the ExoPlayer engine (a promoted Live preview) rather than mpv.
     val liveOnExo by liveVm.liveOnExo.collectAsStateWithLifecycle()
@@ -220,7 +258,16 @@ fun OwnTVShell(
     }
     // Live rewind / timeshift: whether the live channel supports catch-up, and how far behind live we are.
     val canRewindLive by liveVm.canRewindLive.collectAsStateWithLifecycle()
-    val timeshiftOffset by liveVm.timeshiftOffsetSec.collectAsStateWithLifecycle()
+    // The offset itself ticks once a second while an archive plays. Held as State and deliberately NOT
+    // read here — reading it in the shell's own scope invalidated the whole shell body every second.
+    // It is handed to the HUD as a lambda, so only the HUD reads the ticking value; the shell needs
+    // just the on/off fact, which changes when the user enters or leaves the rewind and no oftener.
+    val timeshiftOffsetState = liveVm.timeshiftOffsetSec.collectAsStateWithLifecycle()
+    val watchingWallState = liveVm.watchingWallMs.collectAsStateWithLifecycle()
+    val timelineProgrammes by liveVm.timelineProgrammes.collectAsStateWithLifecycle()
+    val timeshifted by remember(liveVm) {
+        liveVm.timeshiftOffsetSec.map { it != null }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(false)
     // Which section armed the current fullscreen stream — picks whose channel list CH+/CH- step through.
     var zapSource by remember { mutableStateOf<MainSection?>(null) }
     // In-player channel-list overlay (Left while controls hidden, live only).
@@ -241,12 +288,31 @@ fun OwnTVShell(
     val showCategoryBrowser by liveVm.showCategoryBrowser.collectAsStateWithLifecycle()
     val browserCategories by liveVm.browserCategories.collectAsStateWithLifecycle()
     val previewChannel by liveVm.previewChannel.collectAsStateWithLifecycle()
+    val liveProviderNames by liveVm.providerNames.collectAsStateWithLifecycle()
     // Favorite state for the player HUD's in-stream favorite toggle (live channel / movie / series).
     val liveFavoriteIds by liveVm.favoriteIds.collectAsStateWithLifecycle()
     val playingMovie by movieVm.playingMovie.collectAsStateWithLifecycle()
     val movieFavoriteIds by movieVm.favoriteIds.collectAsStateWithLifecycle()
     val playingSeries by seriesVm.playingSeries.collectAsStateWithLifecycle()
     val seriesFavoriteIds by seriesVm.favoriteIds.collectAsStateWithLifecycle()
+    // Favorite toggle for whatever is playing: the live channel, the movie, or the series (episodes
+    // favorite their parent series). Picked by the section that armed the stream. Hoisted here because
+    // the audio capsule in the top bar carries the same control as the fullscreen HUD.
+    val favToggle: (() -> Unit)? = when (zapSource) {
+        MainSection.LIVE_TV -> previewChannel?.let { ch -> { liveVm.toggleFavorite(ch) } }
+        MainSection.MOVIES -> playingMovie?.let { m -> { movieVm.toggleFavorite(m) } }
+        MainSection.SERIES -> playingSeries?.let { s -> { seriesVm.toggleFavorite(s) } }
+        else -> null
+    }
+    // The audio capsule grows when it takes focus; the top strip grows with it so the content panel
+    // is pushed down rather than covered.
+    var audioBarExpanded by remember { mutableStateOf(false) }
+    val favActive = when (zapSource) {
+        MainSection.LIVE_TV -> previewChannel?.let { liveFavoriteIds.contains(it.id) } ?: false
+        MainSection.MOVIES -> playingMovie?.let { movieFavoriteIds.contains(it.id) } ?: false
+        MainSection.SERIES -> playingSeries?.let { seriesFavoriteIds.contains(it.id) } ?: false
+        else -> false
+    }
     // Current programme per channel for the in-player channel list overlay (small subtitle under each row).
     // Only resolved while the overlay is actually open. Keyed on the channel set so a zap-list change re-resolves.
     val overlayNowPlaying by produceState<Map<Long, String>>(emptyMap(), showChannelList, zapChannels) {
@@ -268,28 +334,30 @@ fun OwnTVShell(
 
     // Per-profile startup action runs once when the authenticated shell first appears. With one unlocked
     // profile that is immediately; profile/PIN gates keep the shell out of composition until authorized.
-    val resumeSettings = koinInject<tv.own.owntv.features.settings.data.SettingsRepository>()
+    val resumeSettings = koinInject<tv.own.owntv.core.settings.SettingsRepository>()
     val startupChannelUnavailable = androidx.compose.ui.res.stringResource(tv.own.owntv.R.string.settings_startup_channel_unavailable)
     LaunchedEffect(Unit) {
         if (playerMode != PlayerMode.NONE) return@LaunchedEffect
         val pid = resumeSettings.activeProfileId.first()
         when (resumeSettings.startupMode(pid).first()) {
-            tv.own.owntv.features.settings.data.StartupMode.LAST_CHANNEL -> {
+            tv.own.owntv.core.settings.StartupMode.LAST_CHANNEL -> {
                 val ch = liveVm.lastWatchedLiveChannel()
                 if (ch != null && playerMode == PlayerMode.NONE) {
                     zapSource = MainSection.LIVE_TV
-                    liveVm.watchFullscreen(ch, listOf(ch))
+                    // There is no caller-owned browse rail here. Let LiveViewModel build the channel's
+                    // provider context instead of permanently arming a one-item list that disables CH+/CH-.
+                    liveVm.watchFullscreen(ch, emptyList())
                     playerMode = PlayerMode.FULLSCREEN
                 }
             }
             // Open straight to Live TV on the Favorites folder, with focus landing inside the channel list
             // (restoreFocus drives LiveScreen to focus the first/last channel, not the nav panel).
-            tv.own.owntv.features.settings.data.StartupMode.FAVORITES -> {
+            tv.own.owntv.core.settings.StartupMode.FAVORITES -> {
                 onSelectSection(MainSection.LIVE_TV)
-                liveVm.select(tv.own.owntv.features.live.LiveKey.Favorites)
+                liveVm.select(tv.own.owntv.core.live.LiveKey.Favorites)
                 restoreFocus = true
             }
-            tv.own.owntv.features.settings.data.StartupMode.SPECIFIC_CHANNEL -> {
+            tv.own.owntv.core.settings.StartupMode.SPECIFIC_CHANNEL -> {
                 val ref = resumeSettings.startupChannel(pid).first()
                 var launch: LauncherLaunch? = null
                 if (ref != null) {
@@ -315,14 +383,14 @@ fun OwnTVShell(
                 val channel = (launch as? LauncherLaunch.Live)?.channel
                 if (channel != null && liveVm.isVisibleToActiveProfile(channel) && playerMode == PlayerMode.NONE) {
                     zapSource = MainSection.LIVE_TV
-                    liveVm.watchFullscreen(channel, listOf(channel))
+                    liveVm.watchFullscreen(channel, emptyList())
                     playerMode = PlayerMode.FULLSCREEN
                 } else {
                     onSelectSection(MainSection.HOME)
                     localSubToast.show(startupChannelUnavailable)
                 }
             }
-            tv.own.owntv.features.settings.data.StartupMode.HOME -> Unit
+            tv.own.owntv.core.settings.StartupMode.HOME -> Unit
         }
     }
 
@@ -334,7 +402,7 @@ fun OwnTVShell(
     // and is skipped if the user is already on EPG.)
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(1_200)
-        if (selectedSection != MainSection.EPG) { tv.own.owntv.Perf.stamp("epg-preload"); epgVm.load() }
+        if (selectedSection != MainSection.EPG) { tv.own.owntv.core.util.Perf.stamp("epg-preload"); epgVm.load() }
     }
 
     // Opening content from a browse screen goes fullscreen — UNLESS the player is already docked as a
@@ -401,7 +469,115 @@ fun OwnTVShell(
         Unit
     }
 
-    LaunchedEffect(Unit) { tv.own.owntv.Perf.stamp("shell-composed"); runCatching { sidebarFocus.requestFocus() } }
+    // Whichever engine is on the speaker right now — what the rail item pictures and what the media
+    // keys act on while the window is docked.
+    val dockedEngine = if (liveOnExo) liveVm.previewEngine else mpvEngine
+    val dockedPlaying by dockedEngine.isPlaying.collectAsStateWithLifecycle()
+    val nowPlayingRail = when (playerMode) {
+        PlayerMode.MINI, PlayerMode.AUDIO -> tv.own.owntv.features.shell.components.NowPlayingRail(
+            // Only a live channel has a logo to show; a movie or an episode falls back to the play mark.
+            logoUrl = if (zapSource == MainSection.LIVE_TV) previewChannel?.displayLogoUrl else null,
+            audioMode = playerMode == PlayerMode.AUDIO,
+            playing = dockedPlaying,
+        )
+        else -> null
+    }
+    // OK on the rail item moves focus INTO the window (it is not a section and navigates nowhere).
+    val enterNowPlaying = {
+        when (playerMode) {
+            PlayerMode.MINI -> runCatching { miniEntryFocus.requestFocus() }
+            PlayerMode.AUDIO -> runCatching { audioEntryFocus.requestFocus() }
+            else -> Unit
+        }
+        Unit
+    }
+    // Long-press Back toggles: into the window, and back out to the control you came from.
+    val toggleNowPlayingFocus = {
+        if (miniHasFocus) runCatching { shellContentFocus.requestFocus() } else enterNowPlaying()
+        Unit
+    }
+
+    val continueLastWatched = {
+        continueTarget?.let { target ->
+            scope.launch {
+                when (target.kind) {
+                    tv.own.owntv.features.home.ContinueKind.LIVE ->
+                        if (liveVm.ensurePlayingByIdAsync(target.channelId)) openFullscreen(MainSection.LIVE_TV)
+                    tv.own.owntv.features.home.ContinueKind.MOVIE ->
+                        if (movieVm.playByIdAsync(target.movieId, target.positionMs) && !movieVm.externalPlayerOn.value) openFullscreen(MainSection.MOVIES)
+                    tv.own.owntv.features.home.ContinueKind.EPISODE ->
+                        if (seriesVm.playFromHomeAsync(target.seriesId, target.episodeId, target.positionMs) && !seriesVm.externalPlayerOn.value) openFullscreen(MainSection.SERIES)
+                }
+            }
+        }
+        Unit
+    }
+    val openShortcutSection: (MainSection) -> Unit = { section ->
+        if (playerMode == PlayerMode.FULLSCREEN) dockPlayer()
+        if (section == MainSection.SEARCH) {
+            searchVm.setQuery("")
+            trendingSearchActive = false
+            restoreTrendingSearchFocus = false
+        }
+        onSelectSection(section)
+        // A shortcut may be fired by a control inside the destination being replaced (most notably
+        // Settings). Once that screen leaves composition its focused node disappears, so hand focus
+        // to the persistent sidebar after the new destination has rendered.
+        scope.launch {
+            withFrameNanos { }
+            runCatching { sidebarFocus.requestFocus() }
+        }
+    }
+    val dispatchRemoteShortcut: (RemoteShortcutAction) -> Unit = { action ->
+        when (action) {
+            RemoteShortcutAction.OPEN_HOME -> openShortcutSection(MainSection.HOME)
+            RemoteShortcutAction.OPEN_LIVE_TV -> openShortcutSection(MainSection.LIVE_TV)
+            RemoteShortcutAction.OPEN_MOVIES -> openShortcutSection(MainSection.MOVIES)
+            RemoteShortcutAction.OPEN_SERIES -> openShortcutSection(MainSection.SERIES)
+            RemoteShortcutAction.OPEN_DOWNLOADS -> openShortcutSection(MainSection.DOWNLOADS)
+            RemoteShortcutAction.OPEN_GUIDE -> openShortcutSection(MainSection.EPG)
+            RemoteShortcutAction.OPEN_SEARCH -> openShortcutSection(MainSection.SEARCH)
+            RemoteShortcutAction.OPEN_SETTINGS -> openShortcutSection(MainSection.SETTINGS)
+            RemoteShortcutAction.OPEN_PROFILE_SWITCHER -> {
+                if (playerMode == PlayerMode.FULLSCREEN) dockPlayer()
+                onSwitchProfile()
+            }
+            RemoteShortcutAction.OPEN_PLAYLIST_SWITCHER -> {
+                if (playerMode == PlayerMode.FULLSCREEN) dockPlayer()
+                if (playlists.size > 1) showPlaylistPicker = true
+            }
+            RemoteShortcutAction.CONTINUE_LAST_WATCHED -> continueLastWatched()
+            RemoteShortcutAction.FOCUS_NOW_PLAYING -> enterNowPlaying()
+            RemoteShortcutAction.EXPAND_NOW_PLAYING -> if (playerMode == PlayerMode.MINI || playerMode == PlayerMode.AUDIO) expandPlayer()
+            RemoteShortcutAction.ENTER_MINI_PLAYER -> if (playerMode == PlayerMode.FULLSCREEN) dockPlayer()
+            RemoteShortcutAction.ENTER_AUDIO_MODE -> if (playerMode == PlayerMode.FULLSCREEN || playerMode == PlayerMode.MINI) toAudioMode()
+            RemoteShortcutAction.PLAY_PAUSE -> if (playerMode != PlayerMode.NONE) dockedEngine.togglePlayPause()
+            RemoteShortcutAction.RETURN_TO_LIVE -> if (playerMode != PlayerMode.NONE && zapSource == MainSection.LIVE_TV && timeshifted) liveVm.goToLive()
+            RemoteShortcutAction.PAGE_TOWARD_FIRST,
+            RemoteShortcutAction.PAGE_TOWARD_LAST,
+            RemoteShortcutAction.JUMP_TO_FIRST,
+            RemoteShortcutAction.JUMP_TO_LAST,
+            RemoteShortcutAction.OPEN_SUBTITLE_CONTROLS,
+            RemoteShortcutAction.OPEN_AUDIO_CONTROLS,
+            RemoteShortcutAction.OPEN_ASPECT_CONTROLS,
+            RemoteShortcutAction.TOGGLE_PLAYBACK_INFO,
+            -> Unit
+        }
+    }
+    val latestRemoteShortcutDispatch by rememberUpdatedState(dispatchRemoteShortcut)
+    val remoteShortcutEnvironment = remember(remoteShortcutsEnabled, remoteShortcutBindings) {
+        RemoteShortcutEnvironment(
+            enabled = remoteShortcutsEnabled,
+            bindings = remoteShortcutBindings,
+            dispatch = { action -> latestRemoteShortcutDispatch(action) },
+        )
+    }
+
+    LaunchedEffect(sidebarFocus) {
+        tv.own.owntv.core.util.Perf.stamp("shell-composed")
+        withFrameNanos { }
+        runCatching { sidebarFocus.requestFocus() }
+    }
 
     LaunchedEffect(pendingDeepLink, activeProfileId) {
         val deepLink = pendingDeepLink ?: return@LaunchedEffect
@@ -427,7 +603,9 @@ fun OwnTVShell(
                 }
                 is LauncherLaunch.Live -> {
                     onSelectSection(MainSection.LIVE_TV)
-                    liveVm.ensurePlaying(launch.channel)
+                    // A launcher tile has no browse rail, so arm the channel's provider context before
+                    // opening the player. A bare ensurePlaying() leaves CH+/CH- with no list to step through.
+                    liveVm.watchFullscreen(launch.channel, emptyList())
                     openFullscreen(MainSection.LIVE_TV)
                     onDeepLinkConsumed()
                 }
@@ -451,7 +629,7 @@ fun OwnTVShell(
 
     LaunchedEffect(selectedSection, playerMode, activeProfileId, activePlaylistId) {
         if (selectedSection == MainSection.HOME && playerMode == PlayerMode.NONE && (activeProfileId?.let { it >= 0 } == true)) {
-            homeVm.refresh()
+            homeVm.refresh(activeProfileId)
         }
     }
 
@@ -475,11 +653,116 @@ fun OwnTVShell(
     // normal browsing, and restored to the taller reservation while Audio Mode shows its player controls.
     val shellTopBarHeight = if (playerMode == PlayerMode.AUDIO) Dimens.TopBarHeight else Dimens.TopBarCompactHeight
 
-    CompositionLocalProvider(LocalContentScrolled provides contentScrolled) {
-    Box(modifier = modifier.fillMaxSize().background(shellBase)) {
+    // Long-press Back (§8 tier 2). Deliberately timed from the FIRST KeyDown rather than counted from
+    // key repeats: several TVs re-fire KeyDown while a key is held, so a repeat-counting version fires
+    // the long-press the instant Back is touched. Short Back is never consumed, so every existing Back
+    // handler — HUD hide, search clear, dialog dismiss, direct-tune cancel — behaves exactly as before.
+    var backHoldJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var backLongFired by remember { mutableStateOf(false) }
+    var shortcutKeyCode by remember { mutableStateOf(android.view.KeyEvent.KEYCODE_UNKNOWN) }
+    var shortcutLongFired by remember { mutableStateOf(false) }
+    var shortcutHoldJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val longPressBackArmed = playerMode == PlayerMode.MINI && !showExit && !showAvatarPicker && !showPlaylistPicker
+    // Media keys (§8 tier 3) act on the docked window wherever focus is — but only if nothing nearer
+    // claimed them first, which is why this is a bubbling handler: a focused browse list still gets its
+    // CH+/CH− paging, and the full-screen HUD still owns zapping.
+    val dockedZap: ((Int) -> Unit)? = when {
+        playerMode != PlayerMode.MINI -> null
+        zapSource == MainSection.LIVE_TV && liveCanZap && (liveOnExo || player.isLiveContent) -> liveVm::zap
+        else -> null
+    }
+
+    CompositionLocalProvider(
+        LocalContentScrolled provides contentScrolled,
+        LocalRemoteShortcuts provides remoteShortcutEnvironment,
+    ) {
+    Box(
+        modifier = modifier.fillMaxSize().background(shellBase)
+            .onPreviewKeyEvent { e ->
+                if (e.key != Key.Back) return@onPreviewKeyEvent false
+                when (e.type) {
+                    KeyEventType.KeyDown -> {
+                        if (longPressBackArmed && backHoldJob == null) {
+                            backLongFired = false
+                            backHoldJob = scope.launch {
+                                kotlinx.coroutines.delay(600)
+                                backLongFired = true
+                                toggleNowPlayingFocus()
+                            }
+                        }
+                        false
+                    }
+                    KeyEventType.KeyUp -> {
+                        backHoldJob?.cancel()
+                        backHoldJob = null
+                        val fired = backLongFired
+                        backLongFired = false
+                        fired // consume ONLY when the long-press already acted, so Back isn't run twice
+                    }
+                    else -> false
+                }
+            }
+            .onKeyEvent { e ->
+                val shortcutKey = e.nativeKeyEvent.keyCode
+                val shellBindings = remoteShortcutBindings.filter {
+                    it.keyCode == shortcutKey &&
+                        it.action != RemoteShortcutAction.PAGE_TOWARD_FIRST &&
+                        it.action != RemoteShortcutAction.PAGE_TOWARD_LAST &&
+                        it.action != RemoteShortcutAction.JUMP_TO_FIRST &&
+                        it.action != RemoteShortcutAction.JUMP_TO_LAST
+                }
+                if (remoteShortcutsEnabled && shellBindings.isNotEmpty()) {
+                    when (e.type) {
+                        KeyEventType.KeyDown -> {
+                            if (shortcutKeyCode != shortcutKey) {
+                                shortcutHoldJob?.cancel()
+                                shortcutKeyCode = shortcutKey
+                                shortcutLongFired = false
+                                shellBindings.firstOrNull { it.press == tv.own.owntv.core.settings.RemoteShortcutPress.LONG }
+                                    ?.let { binding ->
+                                        shortcutHoldJob = scope.launch {
+                                            kotlinx.coroutines.delay(600)
+                                            if (shortcutKeyCode == shortcutKey) {
+                                                shortcutLongFired = true
+                                                dispatchRemoteShortcut(binding.action)
+                                            }
+                                        }
+                                    }
+                            }
+                            return@onKeyEvent true
+                        }
+                        KeyEventType.KeyUp -> if (shortcutKeyCode == shortcutKey) {
+                            shortcutHoldJob?.cancel()
+                            shortcutHoldJob = null
+                            if (!shortcutLongFired) {
+                                shellBindings.firstOrNull { it.press == tv.own.owntv.core.settings.RemoteShortcutPress.SHORT }
+                                    ?.let { dispatchRemoteShortcut(it.action) }
+                            }
+                            shortcutKeyCode = android.view.KeyEvent.KEYCODE_UNKNOWN
+                            shortcutLongFired = false
+                            return@onKeyEvent true
+                        }
+                    }
+                }
+                if (e.type != KeyEventType.KeyDown || playerMode != PlayerMode.MINI) return@onKeyEvent false
+                when (e.key) {
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { dockedEngine.togglePlayPause(); true }
+                    Key.ChannelUp -> dockedZap?.let { it(1); true } ?: false
+                    Key.ChannelDown -> dockedZap?.let { it(-1); true } ?: false
+                    else -> false
+                }
+            },
+    ) {
       // Browse UI — hidden while the player is fullscreen (stays visible behind the docked mini-player).
       if (playerMode != PlayerMode.FULLSCREEN) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+                // One group with a restorer: leaving for the mini player and coming back lands on the
+                // exact control that was focused, without every screen having to remember its own.
+                .focusRequester(shellContentFocus)
+                .focusRestorer()
+                .focusGroup(),
+        ) {
           if (isOffline) OfflineBanner()
           Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Sidebar(
@@ -494,6 +777,7 @@ fun OwnTVShell(
                 },
                 visibleSections = visibleSections,
                 avatarId = avatarId,
+                showAvatar = showProfileAvatars,
                 onPickAvatar = { showAvatarPicker = true },
                 profileName = profileName,
                 sourceSummary = sourceSummary,
@@ -501,6 +785,8 @@ fun OwnTVShell(
                 selectedItemFocusRequester = sidebarFocus,
                 onFocused = { focusedLayer = ShellLayer.SIDEBAR },
                 topInset = shellTopBarHeight,
+                nowPlaying = nowPlayingRail,
+                onNowPlaying = enterNowPlaying,
             )
 
             Column(
@@ -558,22 +844,10 @@ fun OwnTVShell(
                         tv.own.owntv.features.home.ContinueKind.EPISODE -> OwnTVIcon.SERIES
                         null -> OwnTVIcon.PLAY
                     },
-                    onContinueClick = {
-                        continueTarget?.let { t ->
-                            scope.launch {
-                                when (t.kind) {
-                                    tv.own.owntv.features.home.ContinueKind.LIVE ->
-                                        if (liveVm.ensurePlayingByIdAsync(t.channelId)) openFullscreen(MainSection.LIVE_TV)
-                                    tv.own.owntv.features.home.ContinueKind.MOVIE ->
-                                        if (movieVm.playByIdAsync(t.movieId, t.positionMs) && !movieVm.externalPlayerOn.value) openFullscreen(MainSection.MOVIES)
-                                    tv.own.owntv.features.home.ContinueKind.EPISODE ->
-                                        if (seriesVm.playFromHomeAsync(t.seriesId, t.episodeId, t.positionMs) && !seriesVm.externalPlayerOn.value) openFullscreen(MainSection.SERIES)
-                                }
-                            }
-                        }
-                    },
+                    onContinueClick = continueLastWatched,
                     // Audio Mode: the now-playing bar, left of the weather chip. Present only while
                     // PlayerMode.AUDIO; focusable only while the nav panel holds focus (same rule as Search).
+                    audioBarExpanded = audioBarExpanded,
                     audioBar = if (playerMode == PlayerMode.AUDIO) {
                         {
                             val isLiveStream = liveOnExo || player.isLiveContent
@@ -598,6 +872,10 @@ fun OwnTVShell(
                                 // nav panel like the other chips, because its own D-pad trap keeps focus
                                 // inside once entered and Back is the only way out.
                                 focusable = true,
+                                entryFocusRequester = audioEntryFocus,
+                                favorite = favActive,
+                                onToggleFavorite = favToggle,
+                                onExpandedChange = { audioBarExpanded = it },
                             )
                         }
                     } else null,
@@ -800,7 +1078,7 @@ fun OwnTVShell(
         // video and glass mode skip it entirely. Global Animations Off also freezes the slow pulse.
         SolidAmbientBackdrop(
             glowEnabled = ambientGlowEnabled,
-            pulseEnabled = ambientGlowPulse && shellAnimationLevel != tv.own.owntv.ui.theme.AnimationLevel.OFF,
+            pulseEnabled = ambientGlowPulse && shellAnimationLevel != tv.own.owntv.core.theme.AnimationLevel.OFF,
             modifier = Modifier.fillMaxSize(),
         )
       }
@@ -823,7 +1101,7 @@ fun OwnTVShell(
                 // Dynamic docked size/position: a screen-width fraction at the chosen corner/edge, so it
                 // scales with the panel + UI zoom (unlike the old fixed 340×191 dp box).
                 Modifier.align(miniPos.alignment).padding(24.dp)
-                    .fillMaxWidth(tv.own.owntv.player.MiniPlayerSize.fraction(miniSizePct)).aspectRatio(16f / 9f)
+                    .fillMaxWidth(tv.own.owntv.core.player.MiniPlayerSize.fraction(miniSizePct)).aspectRatio(16f / 9f)
                     .clip(RoundedCornerShape(14.dp)).background(Color.Black)
             },
         ) {
@@ -858,7 +1136,7 @@ fun OwnTVShell(
                     // Tied to the chosen mini size, but nudged up and floored: a strictly proportional
                     // line would be unreadable in the smallest box.
                     sizeScale = if (isFull) 1f else {
-                        (tv.own.owntv.player.MiniPlayerSize.fraction(miniSizePct) * 1.5f).coerceIn(0.35f, 0.7f)
+                        (tv.own.owntv.core.player.MiniPlayerSize.fraction(miniSizePct) * 1.5f).coerceIn(0.35f, 0.7f)
                     },
                 )
             }
@@ -886,16 +1164,15 @@ fun OwnTVShell(
                 )
             }
             if (isFull) {
-                // CH+/CH- zap through the channel list of whichever section opened the current stream
-                // (Live TV or the Guide); never for VOD. When live plays on ExoPlayer (liveOnExo=true) the
-                // mpv `player` is stopped so player.isLiveContent is false — the ExoPlayer engine is the one
-                // playing live, so we must check liveOnExo too (otherwise zap breaks for the common case).
+                // Engine state still distinguishes the live edge from catch-up/archive playback for
+                // controls such as direct number tuning. It must not gate the physical CH keys below.
                 val isLiveStream = liveOnExo || player.isLiveContent
-                val zap: ((Int) -> Unit)? = when {
-                    !isLiveStream -> null
-                    zapSource == MainSection.LIVE_TV && liveCanZap -> liveVm::zap
-                    else -> null
-                }
+                // Dedicated CH+/CH- belong to a Live TV/catch-up player for its whole lifetime. Do not
+                // derive this callback from the active engine or current list readiness: both legitimately
+                // go through short false/empty windows during startup and ExoPlayer/mpv handoffs. Browse
+                // panels keep their configurable paging because PlayerHud exists only in full-screen here.
+                val zap: ((Int) -> Unit)? =
+                    if (zapSource == MainSection.LIVE_TV) liveVm::zap else null
                 // Live rewind controls apply to a Live-TV channel (live OR its timeshift archive).
                 val isLiveChannel = zapSource == MainSection.LIVE_TV
                 // ...but NOT to a catch-up archive programme. That's VOD-style playback of a past
@@ -903,20 +1180,6 @@ fun OwnTVShell(
                 // position on the other engine) rather than Live TV's compatibility toggle, which would
                 // re-tune the live stream and jump the user to the current programme.
                 val isTunedLive = isLiveChannel && !catchupActive
-                // Favorite toggle for whatever is playing: the live channel, the movie, or the series
-                // (episodes favorite their parent series). Picked by the section that armed the stream.
-                val favToggle: (() -> Unit)? = when {
-                    isLiveChannel -> previewChannel?.let { ch -> { liveVm.toggleFavorite(ch) } }
-                    zapSource == MainSection.MOVIES -> playingMovie?.let { m -> { movieVm.toggleFavorite(m) } }
-                    zapSource == MainSection.SERIES -> playingSeries?.let { s -> { seriesVm.toggleFavorite(s) } }
-                    else -> null
-                }
-                val favActive = when {
-                    isLiveChannel -> previewChannel?.let { liveFavoriteIds.contains(it.id) } ?: false
-                    zapSource == MainSection.MOVIES -> playingMovie?.let { movieFavoriteIds.contains(it.id) } ?: false
-                    zapSource == MainSection.SERIES -> playingSeries?.let { seriesFavoriteIds.contains(it.id) } ?: false
-                    else -> false
-                }
                 PlayerHud(
                     player = if (liveOnExo) liveVm.previewEngine else mpvEngine, // HUD drives the active engine
                     onBack = exitPlayer,
@@ -927,30 +1190,33 @@ fun OwnTVShell(
                     inert = showChannelList || showHistoryList || showCategoryBrowser || showSubtitleSearch || showLocalSubPicker,
                     onChannelUp = zap?.let { z -> { z(-1) } },
                     onChannelDown = zap?.let { z -> { z(1) } },
+                    zapWithDpadAlways = zapWithDpadAlways,
                     onOpenChannelList = if (isTunedLive && liveCanZap) { { showChannelList = true } } else null,
                     onOpenHistoryList = if (isTunedLive) { { showHistoryList = true } } else null,
                     onRewindLive = if (isTunedLive && canRewindLive) liveVm::rewindLive else null,
                     onForwardLive = if (isTunedLive) liveVm::forwardLive else null,
                     onGoToLive = if (isTunedLive) liveVm::goToLive else null,
                     onScrubLive = if (isTunedLive && canRewindLive) liveVm::scrubLive else null,
+                    // Only collected where there is a timeline to draw them on.
+                    liveProgrammes = if (isTunedLive && canRewindLive) timelineProgrammes else emptyList(),
                     jumpBackOptions = if (isTunedLive && canRewindLive) liveVm::currentJumpOptions else null,
                     onJumpBack = if (isTunedLive && canRewindLive) liveVm::jumpBackTo else null,
                     jumpBackWindowSec = if (isTunedLive && canRewindLive) liveVm::currentCatchupWindowSec else null,
                     // Non-null only while an archive is on screen, so movies, episodes and live TV get
                     // the single real clock and catch-up gets the pair.
-                    watchingWallMs = liveVm.watchingWallMs.collectAsStateWithLifecycle().value,
-                    timeshiftOffsetSec = if (isTunedLive) timeshiftOffset else null,
-                    onTuneToNumber = if (directTuneEnabled && isTunedLive && isLiveStream && timeshiftOffset == null && previewChannel != null) liveVm::tuneByNumber else null,
+                    watchingWallMs = { watchingWallState.value },
+                    timeshiftOffsetSec = if (isTunedLive) { { timeshiftOffsetState.value } } else null,
+                    onTuneToNumber = if (directTuneEnabled && isTunedLive && isLiveStream && !timeshifted && previewChannel != null) liveVm::tuneByNumber else null,
                     directTuneContextKey = previewChannel?.id ?: 0L,
                     // Show the ACTUAL running engine (mpv when pinned OR auto-fallen-back), not just the pin —
                     // otherwise an auto-fallback to mpv still read "EXO". true = on mpv (pill shows MPV, teal).
                     compatMode = if (isTunedLive) !liveOnExo else null,
-                    // Hidden while rewound into the archive (same `timeshiftOffset == null` rule direct
+                    // Hidden while rewound into the archive (same `!timeshifted` rule direct
                     // tune follows above): switching engine restarts the channel at the live edge, which
                     // threw the user out of the rewind with the HUD still counting "behind live".
                     // Also hidden for a protected channel (#115): only ExoPlayer can license it, so the
                     // toggle's other position is not a compatibility choice but a guaranteed failure.
-                    onToggleCompatMode = if (isTunedLive && timeshiftOffset == null && previewChannel?.drmConfig == null) liveVm::toggleForceMpv else null,
+                    onToggleCompatMode = if (isTunedLive && !timeshifted && previewChannel?.drmConfig == null) liveVm::toggleForceMpv else null,
                     // VOD engine toggle (movies/series only — live and catch-up channels keep their own
                     // engine handling above): flip the current item between mpv and ExoPlayer.
                     vodOnExo = if (!isLiveStream && !isTunedLive) vodExoActive else null,
@@ -1047,7 +1313,8 @@ fun OwnTVShell(
                             showNumbers = directTuneEnabled,
                             onSelect = { liveVm.ensurePlaying(it); showChannelList = false },
                             onDismiss = { showChannelList = false },
-                            onOpenCategories = { liveVm.showCategories() },
+                    onOpenCategories = { liveVm.showCategories() },
+                    providerNames = liveProviderNames,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -1058,7 +1325,8 @@ fun OwnTVShell(
                         channels = historyChannels,
                         currentId = previewChannel?.id,
                         nowPlaying = historyNowPlaying,
-                        title = stringResource(R.string.content_history),
+                title = stringResource(R.string.content_history),
+                providerNames = liveProviderNames,
                         showNumbers = directTuneEnabled,
                         alignEnd = true,
                         onSelect = { liveVm.ensurePlaying(it); showHistoryList = false },
@@ -1071,57 +1339,65 @@ fun OwnTVShell(
                     player = if (liveOnExo) liveVm.previewEngine else mpvEngine,
                     onExpand = expandPlayer,
                     onClose = exitPlayer,
-                    onCycleSize = { scope.launch { settingsRepo.setMiniPlayerSizePct(tv.own.owntv.player.MiniPlayerSize.next(miniSizePct)) } },
+                    onCycleSize = { scope.launch { settingsRepo.setMiniPlayerSizePct(tv.own.owntv.core.player.MiniPlayerSize.next(miniSizePct)) } },
                     onCyclePosition = { scope.launch { settingsRepo.setMiniPlayerPosition(miniPos.next().name) } },
                     onAudioMode = toAudioMode,
-                    modifier = Modifier.fillMaxSize(),
+                    entryFocusRequester = miniEntryFocus,
+                    onBack = { runCatching { shellContentFocus.requestFocus() } },
+                    modifier = Modifier.fillMaxSize().onFocusChanged { miniHasFocus = it.hasFocus },
                 )
             }
         }
       }
 
-        if (showExit) {
+    if (showExit) {
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { showExit = false }) {
             ExitDialog(onConfirm = onExitApp, onDismiss = { showExit = false })
         }
-        if (showAvatarPicker) {
-            AvatarPickerDialog(
+    }
+    if (showAvatarPicker) {
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { showAvatarPicker = false }) { AvatarPickerDialog(
                 selectedId = avatarId,
                 onSelect = onSetAvatar,
                 onDismiss = { showAvatarPicker = false },
-            )
-        }
-        if (showPlaylistPicker) {
-            PlaylistPickerDialog(
+        ) }
+    }
+    if (showPlaylistPicker) {
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { showPlaylistPicker = false }) { PlaylistPickerDialog(
                 playlists = playlists,
                 activeId = activePlaylistId,
                 onSelect = onSelectPlaylist,
                 onDismiss = { showPlaylistPicker = false },
             )
         }
+    }
 
-        // Automatic update check (GitHub Releases) shortly after launch, once per session: a small
+    // Automatic update check (GitHub Releases) shortly after launch, once per session: a small
         // top-right status card shows "Checking… / up to date" (auto-hides) or stays with
         // Update now / Later when a release is newer. Hidden while in Settings (its manual
         // "Check for updates" dialog drives the same state machine) and during playback.
         // Interrupted restore (B2): the marker outlives the process, so if it's still set at launch
         // the last restore didn't complete. Acknowledging clears it.
-        val restoreSettings = koinInject<tv.own.owntv.features.settings.data.SettingsRepository>()
-        val incompleteRestore by restoreSettings.restoreInProgress.collectAsStateWithLifecycle(initialValue = null)
-        var restoreNoticeDismissed by remember { mutableStateOf(false) }
-        incompleteRestore?.takeIf { !restoreNoticeDismissed }?.let { description ->
+        val restoreSettings = koinInject<tv.own.owntv.core.settings.SettingsRepository>()
+    val incompleteRestore by restoreSettings.restoreInProgress.collectAsStateWithLifecycle(initialValue = null)
+    var restoreNoticeDismissed by remember { mutableStateOf(false) }
+    incompleteRestore?.takeIf { !restoreNoticeDismissed }?.let { description ->
+        val dismissRestoreNotice: () -> Unit = {
+            restoreNoticeDismissed = true
+            scope.launch { restoreSettings.clearRestoreMarker() }
+        }
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = dismissRestoreNotice) {
             IncompleteRestoreDialog(
                 description = description,
-                onDismiss = {
-                    restoreNoticeDismissed = true
-                    scope.launch { restoreSettings.clearRestoreMarker() }
-                },
+                onDismiss = dismissRestoreNotice,
             )
         }
+    }
 
         val updateManager = koinInject<UpdateManager>()
         var showStartupToast by remember { mutableStateOf(false) }
         var showChangelog by remember { mutableStateOf(false) }
-        val settingsRepo = koinInject<tv.own.owntv.features.settings.data.SettingsRepository>()
+        val settingsRepo = koinInject<tv.own.owntv.core.settings.SettingsRepository>()
         val updateCheckOnStart by settingsRepo.updateCheckOnStart.collectAsStateWithLifecycle(initialValue = false)
         LaunchedEffect(updateCheckOnStart) {
             if (updateCheckOnStart && !showStartupToast) {
@@ -1133,7 +1409,14 @@ fun OwnTVShell(
         if (showChangelog) {
             // Full "What's New" changelog (same dialog the manual Settings check uses), shown when
             // the startup card's "What's New" is pressed. No re-check — the release is already loaded.
-            UpdateDialog(onDismiss = { showChangelog = false; showStartupToast = false; updateManager.reset() }, checkOnOpen = false)
+            val dismissChangelog: () -> Unit = {
+                showChangelog = false
+                showStartupToast = false
+                updateManager.reset()
+            }
+            tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = dismissChangelog) {
+                UpdateDialog(onDismiss = dismissChangelog, checkOnOpen = false)
+            }
         } else if (showStartupToast && selectedSection != MainSection.SETTINGS && playerMode == PlayerMode.NONE) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
                 UpdateStatusToast(
@@ -1162,9 +1445,8 @@ private fun OfflineBanner() {
             stringResource(R.string.content_offline_banner),
             style = MaterialTheme.typography.labelLarge,
             color = colors.onTertiaryContainer,
-        )
+        ) }
     }
-}
 
 private val MainSection.emptyIcon: OwnTVIcon
     get() = when (this) {

@@ -5,6 +5,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import tv.own.owntv.core.settings.PanelShares
+import tv.own.owntv.core.settings.PanelWidthLimits
+import tv.own.owntv.core.settings.balanceToTotal
 
 class PanelWidthsTest {
 

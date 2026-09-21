@@ -18,8 +18,8 @@ import tv.own.owntv.core.repository.EpgRepository
 import tv.own.owntv.core.repository.SourceRepository
 import tv.own.owntv.core.sync.work.EpgSyncScheduler
 import tv.own.owntv.core.sync.work.EpgSyncState
-import tv.own.owntv.features.settings.data.EpgAutoRefresh
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.EpgAutoRefresh
+import tv.own.owntv.core.settings.SettingsRepository
 
 /** Manage standalone EPG (XMLTV) sources: list, add (auto-sync), edit, re-sync, delete. */
 class EpgSourcesViewModel(

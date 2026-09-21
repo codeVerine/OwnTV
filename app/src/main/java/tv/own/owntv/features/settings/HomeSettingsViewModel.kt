@@ -15,11 +15,11 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import tv.own.owntv.features.home.HeroKind
-import tv.own.owntv.features.home.HomeConfig
-import tv.own.owntv.features.home.HomeLiveRowMode
-import tv.own.owntv.features.home.HomeRow
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.model.HeroKind
+import tv.own.owntv.core.model.HomeConfig
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.core.database.dao.SourceDao
 import tv.own.owntv.core.database.dao.TrendingDao
 import tv.own.owntv.core.database.entity.TrendingAttemptStatus
@@ -41,6 +41,14 @@ class HomeSettingsViewModel(
     val config: StateFlow<HomeConfig> = settings.activeProfileId
         .flatMapLatest { pid -> if (pid < 0) flowOf(HomeConfig()) else settings.homeConfig(pid) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeConfig())
+
+    /** Whether the expanded Home hero plays its video. Defaults off on low-RAM devices. */
+    val heroPreviewEnabled: StateFlow<Boolean> = settings.heroPreviewEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), settings.heroPreviewDefault)
+
+    fun setHeroPreviewEnabled(enabled: Boolean) {
+        viewModelScope.launch { settings.setHeroPreviewEnabled(enabled) }
+    }
 
     private data class TrendingSettingsData(
         val sourceIds: Set<Long> = emptySet(),

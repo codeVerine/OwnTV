@@ -2,16 +2,19 @@ package tv.own.owntv.features.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -37,20 +41,25 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import tv.own.owntv.core.database.entity.FOLLOW_GLOBAL_LATENCY_SECS
 import tv.own.owntv.R
-import tv.own.owntv.features.settings.data.SubtitleStyle
+import tv.own.owntv.core.settings.SubtitleStyle
 import tv.own.owntv.player.ZoomMode
 import tv.own.owntv.player.alignment
 import tv.own.owntv.ui.components.FocusableSurface
@@ -60,18 +69,287 @@ import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.dialogPanel
 import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.OwnTVButtonStyle
-import tv.own.owntv.player.EnginePreference
+import tv.own.owntv.core.player.EnginePreference
+import tv.own.owntv.features.shell.components.AutoFrameRateWarningDialog
+import tv.own.owntv.features.shell.components.LivePreviewPanelHiddenDialog
+import tv.own.owntv.features.shell.components.surroundModeLabel
+import tv.own.owntv.core.player.SurroundMode
+import tv.own.owntv.features.shell.components.LocalSettingsRowTone
+import tv.own.owntv.features.shell.components.colors
 import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
+import tv.own.owntv.ui.theme.glass
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.theme.OwnTVTheme
-import tv.own.owntv.ui.theme.AppFontFamily
+import tv.own.owntv.core.theme.AppFontFamily
 import tv.own.owntv.ui.theme.asComposeFamily
+
+// The six sections of this screen, in spine order — the mockup's Video Player Settings model.
+private const val SECTION_ENGINE = 0
+private const val SECTION_LIVE = 1
+private const val SECTION_SOUND = 2
+private const val SECTION_SUBTITLES = 3
+private const val SECTION_EPISODES = 4
+private const val SECTION_DIAGNOSTICS = 5
+
+/**
+ * One row of this screen as Quick can show it: which section it lives in, and what to draw for it.
+ * Quick pins keys, and a key pinned from in here has no row on the Settings root to borrow a title
+ * from — so the catalogue below is what lets the pinned copy appear there and jump back to the real
+ * row. Keep an entry in step with its row: the key on the row's `quickKey`, the same icon and title.
+ */
+internal data class VideoQuickRef(
+    val key: String,
+    val section: Int,
+    val icon: OwnTVIcon,
+    val titleRes: Int,
+    val descRes: Int? = null,
+)
+
+/** Every row of this screen that can be pinned to Quick, in the order the sections show them. */
+internal val VIDEO_QUICK_ROWS: List<VideoQuickRef> = listOf(
+    VideoQuickRef("vp_hw", SECTION_ENGINE, OwnTVIcon.VIDEO, R.string.settings_hardware_decoding, R.string.settings_hardware_decoding_description),
+    VideoQuickRef("vp_deinterlace", SECTION_ENGINE, OwnTVIcon.VIDEO, R.string.settings_deinterlace, R.string.settings_deinterlace_description),
+    VideoQuickRef("vp_hdr", SECTION_ENGINE, OwnTVIcon.VIDEO, R.string.settings_quick_hdr, R.string.settings_hdr_description),
+    VideoQuickRef("vp_afr", SECTION_ENGINE, OwnTVIcon.VIDEO, R.string.settings_auto_frame_rate, R.string.settings_auto_frame_rate_description),
+    VideoQuickRef("vp_live_engine", SECTION_ENGINE, OwnTVIcon.PLAY, R.string.settings_live_tv_player, R.string.settings_live_player_description),
+    VideoQuickRef("vp_live_engine_sources", SECTION_ENGINE, OwnTVIcon.PLAY, R.string.settings_live_engine_per_playlist, R.string.settings_live_engine_per_playlist_description),
+    VideoQuickRef("vp_vod_engine", SECTION_ENGINE, OwnTVIcon.PLAY, R.string.settings_movies_series_player, R.string.settings_movies_player_description),
+    VideoQuickRef("vp_reset_pins", SECTION_ENGINE, OwnTVIcon.PLAY, R.string.settings_reset_player_choices, R.string.settings_reset_player_choices_description),
+    VideoQuickRef("vp_external", SECTION_ENGINE, OwnTVIcon.PLAY, R.string.settings_external_player, R.string.settings_external_player_row_description),
+    VideoQuickRef("vp_zoom", SECTION_ENGINE, OwnTVIcon.ASPECT, R.string.settings_default_zoom, R.string.settings_default_zoom_description),
+    VideoQuickRef("vp_reset_zoom", SECTION_ENGINE, OwnTVIcon.ASPECT, R.string.settings_reset_saved_zoom, R.string.settings_reset_saved_zoom_description),
+    VideoQuickRef("vp_seek_step", SECTION_ENGINE, OwnTVIcon.FORWARD, R.string.settings_seek_step, R.string.settings_seek_step_description),
+    VideoQuickRef("vp_rewind_step", SECTION_ENGINE, OwnTVIcon.REWIND, R.string.settings_live_rewind_step, R.string.settings_live_rewind_step_description),
+    VideoQuickRef("vp_live_preview", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_quick_live_preview, R.string.settings_live_preview_description),
+    VideoQuickRef("vp_preview_audio", SECTION_LIVE, OwnTVIcon.AUDIO, R.string.settings_preview_audio, R.string.settings_preview_audio_description),
+    VideoQuickRef("vp_live_latency", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_live_latency, R.string.settings_live_latency_description),
+    VideoQuickRef("vp_latency_sources", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_live_latency_per_playlist, R.string.settings_live_latency_per_playlist_description),
+    VideoQuickRef("vp_preroll", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_live_preroll, R.string.settings_live_preroll_description),
+    VideoQuickRef("vp_tune_timeout", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_live_tune_timeout, R.string.settings_live_tune_timeout_description),
+    VideoQuickRef("vp_preroll_sources", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_live_preroll_per_playlist, R.string.settings_live_preroll_per_playlist_description),
+    VideoQuickRef("vp_channel_numbers", SECTION_LIVE, OwnTVIcon.LIVE_TV, R.string.settings_channel_numbers, R.string.settings_channel_numbers_description),
+    VideoQuickRef("vp_volume", SECTION_SOUND, OwnTVIcon.VOLUME_HIGH, R.string.settings_default_volume, R.string.settings_default_volume_description),
+    VideoQuickRef("vp_reset_volume", SECTION_SOUND, OwnTVIcon.VOLUME_HIGH, R.string.settings_reset_saved_volume, R.string.settings_reset_saved_volume_description),
+    VideoQuickRef("vp_audio_lang", SECTION_SOUND, OwnTVIcon.AUDIO, R.string.settings_preferred_audio_language, R.string.settings_preferred_language_description),
+    VideoQuickRef("vp_surround", SECTION_SOUND, OwnTVIcon.AUDIO, R.string.settings_surround_sound),
+    VideoQuickRef("vp_audio_sync", SECTION_SOUND, OwnTVIcon.AUDIO, R.string.settings_audio_sync, R.string.settings_audio_sync_description),
+    VideoQuickRef("vp_reset_audio_delay", SECTION_SOUND, OwnTVIcon.AUDIO, R.string.settings_reset_saved_audio_delay, R.string.settings_reset_saved_audio_delay_description),
+    VideoQuickRef("vp_sub_style", SECTION_SUBTITLES, OwnTVIcon.SUBTITLE, R.string.settings_subtitle_appearance, R.string.settings_subtitle_appearance_description),
+    VideoQuickRef("vp_sub_lang", SECTION_SUBTITLES, OwnTVIcon.SUBTITLE, R.string.settings_preferred_subtitle_language, R.string.settings_preferred_language_description),
+    VideoQuickRef("vp_resume", SECTION_EPISODES, OwnTVIcon.PLAY, R.string.settings_resume_playback, R.string.settings_resume_playback_description),
+    VideoQuickRef("vp_autoplay", SECTION_EPISODES, OwnTVIcon.AUTOPLAY_NEXT, R.string.settings_autoplay_next, R.string.settings_autoplay_next_description),
+    VideoQuickRef("vp_mini", SECTION_EPISODES, OwnTVIcon.PIP, R.string.settings_mini_player_root, R.string.settings_mini_player_root_description),
+    VideoQuickRef("vp_measured_stats", SECTION_DIAGNOSTICS, OwnTVIcon.VIDEO, R.string.settings_measured_stats, R.string.settings_measured_stats_description),
+    VideoQuickRef("vp_logging", SECTION_DIAGNOSTICS, OwnTVIcon.INFO, R.string.settings_detailed_playback_logging, R.string.settings_detailed_playback_logging_description),
+)
+
+/**
+ * What a Video player row pinned to Quick shows and does over there.
+ *
+ * A pin is meant to be a copy of the row, not a link to it: the chip carries the same value the real
+ * row shows, and a row that is a plain toggle flips in place on the Settings root. Rows whose value
+ * comes from a dialog — and the two toggles that must ask before turning ON — leave [onToggle] null,
+ * so pressing them still opens Video player settings on the row, with that row's dialog already up.
+ */
+internal class VideoQuickBinding(
+    val chip: String?,
+    val primaryChip: Boolean,
+    val onToggle: (() -> Unit)?,
+)
+
+/** The live value and behaviour of one pinned Video player row. Mirrors that row, key for key. */
+@Composable
+internal fun videoQuickBinding(key: String, vm: SettingsViewModel): VideoQuickBinding? {
+    fun toggle(chip: String, on: Boolean, flip: () -> Unit) = VideoQuickBinding(chip, on, flip)
+    fun link(chip: String?, primary: Boolean = false) = VideoQuickBinding(chip, primary, null)
+
+    @Composable
+    fun onOff(on: Boolean) = stringResource(if (on) R.string.common_on else R.string.common_off)
+
+    @Composable
+    fun overrides(count: Int) =
+        if (count == 0) stringResource(R.string.common_off)
+        else pluralStringResource(R.plurals.settings_live_preroll_overrides, count, count)
+
+    @Composable
+    fun saved(count: Int) =
+        if (count == 0) stringResource(R.string.settings_reset_player_choices_none)
+        else pluralStringResource(R.plurals.settings_reset_player_choices_count, count, count)
+
+    return when (key) {
+        "vp_hw" -> {
+            val on by vm.hwDecoding.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setHwDecoding(!on) }
+        }
+        "vp_deinterlace" -> {
+            val on by vm.deinterlace.collectAsStateWithLifecycle()
+            toggle(if (on) stringResource(R.string.settings_auto) else stringResource(R.string.common_off), on) { vm.setDeinterlace(!on) }
+        }
+        "vp_hdr" -> {
+            val on by vm.hdrEnabled.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setHdrEnabled(!on) }
+        }
+        "vp_afr" -> {
+            val on by vm.autoFrameRate.collectAsStateWithLifecycle()
+            // Below Android 12 turning it ON asks first, and that warning lives on the screen itself.
+            val needsWarning = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+            if (!on && needsWarning) link(onOff(on)) else toggle(onOff(on), on) { vm.setAutoFrameRate(!on) }
+        }
+        "vp_live_engine" -> {
+            val engine by vm.liveEnginePreference.collectAsStateWithLifecycle()
+            link(engineLabel(engine), engine != EnginePreference.EXO_FIRST)
+        }
+        "vp_live_engine_sources" -> {
+            val sources by vm.sources.collectAsStateWithLifecycle()
+            val count = sources.count { it.liveEnginePreference != null }
+            link(overrides(count), count > 0)
+        }
+        "vp_vod_engine" -> {
+            val engine by vm.vodEnginePreference.collectAsStateWithLifecycle()
+            link(engineLabel(engine), engine != EnginePreference.MPV_FIRST)
+        }
+        "vp_reset_pins" -> {
+            val pins by vm.vodEnginePinCount.collectAsStateWithLifecycle()
+            link(saved(pins), pins > 0)
+        }
+        "vp_external" -> {
+            val live by vm.externalPlayerLive.collectAsStateWithLifecycle()
+            val movies by vm.externalPlayerMovies.collectAsStateWithLifecycle()
+            val series by vm.externalPlayerSeries.collectAsStateWithLifecycle()
+            link(externalPlayerChip(live, movies, series), live || movies || series)
+        }
+        "vp_zoom" -> {
+            val zoom by vm.defaultZoom.collectAsStateWithLifecycle()
+            link(stringResource(runCatching { ZoomMode.valueOf(zoom) }.getOrDefault(ZoomMode.FIT).labelRes))
+        }
+        "vp_reset_zoom" -> {
+            val count by vm.savedZoomCount.collectAsStateWithLifecycle()
+            link(saved(count), count > 0)
+        }
+        "vp_seek_step" -> {
+            val secs by vm.seekStepSec.collectAsStateWithLifecycle()
+            link(stringResource(R.string.settings_live_buffer_seconds, secs))
+        }
+        "vp_rewind_step" -> {
+            val secs by vm.liveRewindStepSec.collectAsStateWithLifecycle()
+            link(stringResource(R.string.settings_live_buffer_seconds, secs))
+        }
+        "vp_live_preview" -> {
+            val on by vm.livePreviewEnabled.collectAsStateWithLifecycle()
+            val panelActive by vm.livePreviewPanelActive.collectAsStateWithLifecycle()
+            // Turning it ON with no room for the panel explains itself in a popup on the screen.
+            if (!on && !panelActive) link(onOff(on)) else toggle(onOff(on), on) { vm.setLivePreviewEnabled(!on) }
+        }
+        "vp_preview_audio" -> {
+            val on by vm.livePreviewAudio.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setLivePreviewAudio(!on) }
+        }
+        "vp_live_latency" -> {
+            val mode by vm.liveLatencyMode.collectAsStateWithLifecycle()
+            val custom by vm.liveLatencyCustomSecs.collectAsStateWithLifecycle()
+            link(
+                if (mode == tv.own.owntv.core.settings.LiveLatency.CUSTOM) stringResource(R.string.settings_live_buffer_seconds, custom)
+                else stringResource(liveLatencyLabelRes(mode)),
+            )
+        }
+        "vp_latency_sources" -> {
+            val sources by vm.sources.collectAsStateWithLifecycle()
+            val count = sources.count { it.liveLatencyMode != null }
+            link(overrides(count), count > 0)
+        }
+        "vp_preroll" -> {
+            val secs by vm.livePrerollSecs.collectAsStateWithLifecycle()
+            link(if (secs <= 0) stringResource(R.string.common_off) else stringResource(R.string.settings_live_buffer_seconds, secs), secs > 0)
+        }
+        "vp_tune_timeout" -> {
+            val secs by vm.liveTuneTimeoutSecs.collectAsStateWithLifecycle()
+            link(if (secs <= 0) stringResource(R.string.common_never) else stringResource(R.string.settings_video_seconds, secs), secs > 0)
+        }
+        "vp_preroll_sources" -> {
+            val sources by vm.sources.collectAsStateWithLifecycle()
+            val count = sources.count { it.livePrerollSecs >= 0 }
+            link(overrides(count), count > 0)
+        }
+        "vp_channel_numbers" -> {
+            val on by vm.directTune.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setDirectTune(!on) }
+        }
+        "vp_volume" -> {
+            val volume by vm.defaultVolume.collectAsStateWithLifecycle()
+            link(stringResource(R.string.player_percent, volume))
+        }
+        "vp_reset_volume" -> {
+            val count by vm.savedVolumeCount.collectAsStateWithLifecycle()
+            link(saved(count), count > 0)
+        }
+        "vp_audio_lang" -> {
+            val code by vm.preferredAudioLang.collectAsStateWithLifecycle()
+            link(langName(code))
+        }
+        "vp_surround" -> {
+            val mode by vm.surroundMode.collectAsStateWithLifecycle()
+            toggle(surroundModeLabel(mode), mode != SurroundMode.STEREO) { vm.cycleSurroundMode() }
+        }
+        "vp_audio_sync" -> {
+            val delay by vm.audioDelayMs.collectAsStateWithLifecycle()
+            link(stringResource(R.string.settings_audio_delay_value, delay))
+        }
+        "vp_reset_audio_delay" -> {
+            val count by vm.savedAudioDelayCount.collectAsStateWithLifecycle()
+            link(saved(count), count > 0)
+        }
+        "vp_sub_style" -> {
+            val on by vm.subtitleStyleEnabled.collectAsStateWithLifecycle()
+            link(onOff(on), on)
+        }
+        "vp_sub_lang" -> {
+            val code by vm.preferredSubLang.collectAsStateWithLifecycle()
+            link(langName(code))
+        }
+        "vp_resume" -> {
+            val mode by vm.resumeMode.collectAsStateWithLifecycle()
+            link(stringResource(resumeModeLabelRes(mode)))
+        }
+        "vp_autoplay" -> {
+            val on by vm.autoPlayNext.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setAutoPlayNext(!on) }
+        }
+        "vp_measured_stats" -> {
+            val on by vm.measuredStreamStats.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setMeasuredStreamStats(!on) }
+        }
+        "vp_logging" -> {
+            val on by vm.detailedDiagnostics.collectAsStateWithLifecycle()
+            toggle(onOff(on), on) { vm.setDetailedDiagnostics(!on) }
+        }
+        // vp_mini has no value of its own — the mini player row is a screen, nothing else.
+        else -> null
+    }
+}
+
+/**
+ * What a [Row2] needs in order to be pinnable: the keys pinned right now, the handler for a held OK,
+ * and which row a Quick shortcut arrived asking for. Screens that do not pin never provide it, so
+ * their rows behave exactly as before.
+ */
+internal class QuickPinScope(
+    val pinned: List<String>,
+    val onHold: (String) -> Unit,
+    val focusKey: String?,
+    val focusRequester: FocusRequester,
+)
+
+internal val LocalQuickPin = androidx.compose.runtime.staticCompositionLocalOf<QuickPinScope?> { null }
 
 /** Common language codes offered for the audio/subtitle preference. Display names resolve in Compose. */
 private val LANGUAGE_CODES = listOf("", "eng", "spa", "fra", "deu", "ita", "por", "nld", "rus", "ara", "hin", "zho", "jpn", "kor", "tur")
+/** Backdrop for both subtitle previews: a busy-ish frame, because a flat panel makes even a solid box look harmless. */
+private val SUB_PREVIEW_BRUSH = androidx.compose.ui.graphics.Brush.linearGradient(
+    listOf(Color(0xFF2E4A6B), Color(0xFF7A5C3E), Color(0xFF3B6B4A)),
+)
 private val SUB_SIZES = listOf(0.8f to R.string.settings_subtitle_small, 1.0f to R.string.settings_subtitle_normal, 1.3f to R.string.settings_subtitle_large, 1.6f to R.string.settings_subtitle_extra_large)
 
 @Composable
@@ -98,22 +376,34 @@ private fun langName(code: String): String = stringResource(
 
 private fun nearestSubSize(scale: Float) = SUB_SIZES.minByOrNull { kotlin.math.abs(it.first - scale) } ?: SUB_SIZES[1]
 
+/** The next size in the four-step table, wrapping Extra large back to Small — the size rows cycle. */
+private fun nextSubSize(scale: Float): Float =
+    SUB_SIZES[(SUB_SIZES.indexOf(nearestSubSize(scale)) + 1) % SUB_SIZES.size].first
+
 @Composable
 private fun subSizeName(scale: Float): String = stringResource(
     SUB_SIZES.minByOrNull { kotlin.math.abs(it.first - scale) }?.second ?: R.string.settings_subtitle_normal,
 )
 
-private fun resumeModeLabelRes(mode: tv.own.owntv.features.settings.data.SettingsRepository.ResumeMode): Int = when (mode) {
-    tv.own.owntv.features.settings.data.SettingsRepository.ResumeMode.AUTO -> R.string.settings_resume_always
-    tv.own.owntv.features.settings.data.SettingsRepository.ResumeMode.ASK -> R.string.settings_resume_ask
-    tv.own.owntv.features.settings.data.SettingsRepository.ResumeMode.NEVER -> R.string.settings_resume_never
+/** Chip for the one "Subtitle size" row now that there are two values: "Normal · Large", ExoPlayer first. */
+@Composable
+private fun subSizePairName(scaleExo: Float, scaleMpv: Float): String {
+    val exo = subSizeName(scaleExo)
+    val mpv = subSizeName(scaleMpv)
+    return if (exo == mpv) exo else "$exo · $mpv"
 }
 
-private fun liveLatencyLabelRes(mode: tv.own.owntv.features.settings.data.LiveLatency): Int = when (mode) {
-    tv.own.owntv.features.settings.data.LiveLatency.LOW -> R.string.settings_live_latency_low
-    tv.own.owntv.features.settings.data.LiveLatency.BALANCED -> R.string.settings_live_latency_balanced
-    tv.own.owntv.features.settings.data.LiveLatency.STABLE -> R.string.settings_live_latency_stable
-    tv.own.owntv.features.settings.data.LiveLatency.CUSTOM -> R.string.settings_live_latency_custom
+private fun resumeModeLabelRes(mode: tv.own.owntv.core.settings.SettingsRepository.ResumeMode): Int = when (mode) {
+    tv.own.owntv.core.settings.SettingsRepository.ResumeMode.AUTO -> R.string.settings_resume_always
+    tv.own.owntv.core.settings.SettingsRepository.ResumeMode.ASK -> R.string.settings_resume_ask
+    tv.own.owntv.core.settings.SettingsRepository.ResumeMode.NEVER -> R.string.settings_resume_never
+}
+
+private fun liveLatencyLabelRes(mode: tv.own.owntv.core.settings.LiveLatency): Int = when (mode) {
+    tv.own.owntv.core.settings.LiveLatency.LOW -> R.string.settings_live_latency_low
+    tv.own.owntv.core.settings.LiveLatency.BALANCED -> R.string.settings_live_latency_balanced
+    tv.own.owntv.core.settings.LiveLatency.STABLE -> R.string.settings_live_latency_stable
+    tv.own.owntv.core.settings.LiveLatency.CUSTOM -> R.string.settings_live_latency_custom
 }
 
 /**
@@ -121,7 +411,15 @@ private fun liveLatencyLabelRes(mode: tv.own.owntv.features.settings.data.LiveLa
  * value is persisted and applied to the shared mpv player (live where possible, otherwise next load).
  */
 @Composable
-fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun VideoPlayerSettingsScreen(
+    onBack: () -> Unit,
+    /** Open the Mini player popup straight away — the settings search lists that setting by name. */
+    openMiniPlayer: Boolean = false,
+    /** Arriving from a Quick shortcut: the section to show and the row to put the cursor on. */
+    openSection: Int? = null,
+    focusRowKey: String? = null,
+    modifier: Modifier = Modifier,
+) {
     val colors = OwnTVTheme.colors
     val vm: SettingsViewModel = koinViewModel()
     val hw by vm.hwDecoding.collectAsStateWithLifecycle()
@@ -131,6 +429,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
     val defaultVolume by vm.defaultVolume.collectAsStateWithLifecycle()
     val savedZoom by vm.savedZoomCount.collectAsStateWithLifecycle()
     val savedVolume by vm.savedVolumeCount.collectAsStateWithLifecycle()
+    val savedAudioDelay by vm.savedAudioDelayCount.collectAsStateWithLifecycle()
     val seekStep by vm.seekStepSec.collectAsStateWithLifecycle()
     val liveRewindStep by vm.liveRewindStepSec.collectAsStateWithLifecycle()
     val deinterlace by vm.deinterlace.collectAsStateWithLifecycle()
@@ -142,7 +441,8 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
     val externalSeries by vm.externalPlayerSeries.collectAsStateWithLifecycle()
     val zoom by vm.defaultZoom.collectAsStateWithLifecycle()
     val subStyleOn by vm.subtitleStyleEnabled.collectAsStateWithLifecycle()
-    val subScale by vm.subtitleScale.collectAsStateWithLifecycle()
+    val subScaleExo by vm.subtitleScaleExo.collectAsStateWithLifecycle()
+    val subScaleMpv by vm.subtitleScaleMpv.collectAsStateWithLifecycle()
     val subFont by vm.subtitleFont.collectAsStateWithLifecycle()
     val subColor by vm.subtitleColor.collectAsStateWithLifecycle()
     val subPosition by vm.subtitlePosition.collectAsStateWithLifecycle()
@@ -152,11 +452,25 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
     val subLang by vm.preferredSubLang.collectAsStateWithLifecycle()
     val resumeMode by vm.resumeMode.collectAsStateWithLifecycle()
     val liveLatency by vm.liveLatencyMode.collectAsStateWithLifecycle()
+    val zapWithDpadAlways by vm.zapWithDpadAlways.collectAsStateWithLifecycle()
     val liveCustomSecs by vm.liveLatencyCustomSecs.collectAsStateWithLifecycle()
     val livePreroll by vm.livePrerollSecs.collectAsStateWithLifecycle()
+    val liveTuneTimeout by vm.liveTuneTimeoutSecs.collectAsStateWithLifecycle()
+    // The playback settings that also appear on the Settings root. They live here too so that Video
+    // player is the one complete list; the root rows are shortcuts to the same values (item 14).
+    val hdr by vm.hdrEnabled.collectAsStateWithLifecycle()
+    val autoFrameRate by vm.autoFrameRate.collectAsStateWithLifecycle()
+    val surroundMode by vm.surroundMode.collectAsStateWithLifecycle()
+    val autoPlayNext by vm.autoPlayNext.collectAsStateWithLifecycle()
+    val livePreview by vm.livePreviewEnabled.collectAsStateWithLifecycle()
+    val previewAudio by vm.livePreviewAudio.collectAsStateWithLifecycle()
+    val livePreviewPanelActive by vm.livePreviewPanelActive.collectAsStateWithLifecycle()
     val sources by vm.sources.collectAsStateWithLifecycle()
     // The playlist whose per-playlist "Pre-buffer" override is being edited.
     var prerollSource by remember { mutableStateOf<tv.own.owntv.core.database.entity.SourceEntity?>(null) }
+    // Same, for the per-playlist Live TV engine and Live latency overrides.
+    var engineSource by remember { mutableStateOf<tv.own.owntv.core.database.entity.SourceEntity?>(null) }
+    var latencySource by remember { mutableStateOf<tv.own.owntv.core.database.entity.SourceEntity?>(null) }
     // Low-latency acknowledgement popup (shown for "Low latency" and below-Balanced custom values).
     // First lambda runs on "I understand", second on "Cancel".
     var lowWarning by remember { mutableStateOf<Pair<() -> Unit, () -> Unit>?>(null) }
@@ -168,10 +482,50 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
     /** Whether the Custom-latency stepper actually set a value this time round — the mode switch to
      *  Custom, and the low-latency acknowledgement, both hang off that rather than off merely opening it. */
     var customCommitted by remember { mutableStateOf(false) }
-    val firstFocus = remember { FocusRequester() }
-    // Kick focus into the group; the group's onEnter (below) decides the actual target — first row on
-    // a fresh open, or the OpenSubtitles row when we're returning from that sub-screen.
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    val selectedSectionFocus = remember { FocusRequester() }
+    /** Which of the six sections the spine has selected, and whose rows the sheet is showing. */
+    var section by rememberSaveable { mutableIntStateOf(openSection ?: 0) }
+    // Rows here can be pinned to Quick just like the ones on the Settings root: hold OK for the menu.
+    val quickPinned by vm.quickPinnedKeys.collectAsStateWithLifecycle()
+    /** The row whose hold-OK menu is open, then the row that menu owes its focus back to. */
+    var menuKey by remember { mutableStateOf<String?>(null) }
+    var menuReturnKey by remember { mutableStateOf<String?>(null) }
+    val rowReturnFocus = remember { FocusRequester() }
+    LaunchedEffect(menuReturnKey) {
+        if (menuReturnKey == null) return@LaunchedEffect
+        kotlinx.coroutines.delay(60)
+        if (runCatching { rowReturnFocus.requestFocus() }.isFailure) {
+            runCatching { selectedSectionFocus.requestFocus() }
+        }
+    }
+    // A Quick shortcut names the row it was pinned from — land the cursor on it, not on the sections.
+    LaunchedEffect(focusRowKey) {
+        if (focusRowKey == null) return@LaunchedEffect
+        // A pinned row whose value lives in a dialog opens that dialog straight away: the pin should
+        // land the user where pressing the real row would, not one press short of it.
+        dialogForQuickKey(focusRowKey)?.let { dialog = it }
+        repeat(10) {
+            kotlinx.coroutines.delay(50)
+            if (runCatching { rowReturnFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
+    // Kick focus into the group; the group's onEnter (below) decides the actual target.
+    //
+    // NOT when returning from the Mini player sub-screen. Requesting focus here would win the race
+    // against the scroll-restore effect below, which then snapped the list back to the top one frame
+    // later and left the highlight on a row that had scrolled off screen. That effect already does
+    // the two steps in the right order — scroll first, then focus the pending return row — so on this
+    // one entry it is left to do the whole job.
+    LaunchedEffect(Unit) {
+        if (openMiniPlayer) {
+            // Arriving straight on the Mini player popup: show the section that owns that row, so
+            // closing the popup has somewhere to put the cursor back.
+            section = SECTION_EPISODES
+            dialog = Dialog.MINI_PLAYER
+        } else if (focusRowKey == null) {
+            runCatching { selectedSectionFocus.requestFocus() }
+        }
+    }
     BackHandler { onBack() }
 
     // Dialog-close focus return: closing a picker refocuses the row that opened it. The restore
@@ -192,6 +546,8 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
                 Dialog.LIVE_CUSTOM -> Dialog.LIVE_LATENCY
                 // The per-playlist value picker belongs to the playlist row that opened it.
                 Dialog.LIVE_PREROLL_SOURCE -> Dialog.LIVE_PREROLL_SOURCES
+                Dialog.LIVE_ENGINE_SOURCE -> Dialog.LIVE_ENGINE_SOURCES
+                Dialog.LIVE_LATENCY_SOURCE, Dialog.LIVE_LATENCY_CUSTOM_SOURCE -> Dialog.LIVE_LATENCY_SOURCES
                 else -> dialog
             }
             dialogReturn = dialogRowFocus.getValue(returnRow)
@@ -202,27 +558,91 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             dialogReturn = dialogRowFocus.getValue(Dialog.LIVE_LATENCY)
         } else {
             // Don't steal focus back to the row while the low-latency warning popup is up — it keeps
-            // focus itself. Restore only once it (and every dialog) is closed. First snap the scroll
-            // back to where the user was (one frame, so the scrim is gone) — then the opener row is
-            // already in view and requestFocus() won't animate.
-            withFrameNanos { }
-            runCatching { scrollState.scrollTo(savedScroll) }
-            dialogReturn?.let { row ->
-                kotlinx.coroutines.delay(80)
-                runCatching { row.requestFocus() }
-            }
+            // focus itself. Restore only once it (and every dialog) is closed, holding the scroll
+            // offset still while focus lands — see [restoreAfterDialogClose].
+            tv.own.owntv.ui.components.restoreAfterDialogClose(dialogReturn, scrollState, savedScroll)
+        }
+    }
+
+    // Auto frame rate below Android 12 asks before turning ON: there is no way to query the display
+    // for the refresh rates it can reach without blanking it. Turning it off stays immediate. This is
+    // the same rule the root row follows, and both go through the same warning popup.
+    val afrNeedsWarning = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+    val toggleAutoFrameRate = {
+        if (!autoFrameRate && afrNeedsWarning) {
+            savedScroll = scrollState.value; dialog = Dialog.AFR_WARNING
+        } else {
+            vm.setAutoFrameRate(!autoFrameRate)
+        }
+    }
+    // Turning Live preview ON while the layout leaves no room for the preview panel would do nothing
+    // visible, so say so rather than silently accepting it. Turning it off is always allowed.
+    val toggleLivePreview = {
+        if (livePreview) {
+            vm.setLivePreviewEnabled(false)
+        } else if (!livePreviewPanelActive) {
+            savedScroll = scrollState.value; dialog = Dialog.LIVE_PREVIEW_PANEL
+        } else {
+            vm.setLivePreviewEnabled(true)
         }
     }
 
     val zoomMode = runCatching { ZoomMode.valueOf(zoom) }.getOrDefault(ZoomMode.FIT)
 
-    Column(
+    // --- The spine stack. This screen keeps the two-column shape of the Settings root: the six
+    // sections on the left, the selected section's rows on the right, and a back row at the head of
+    // the spine saying where the screen sits. Focus selects, Right enters the rows, Left comes back.
+    val perPlaylist = sources.isNotEmpty()
+    val sectionNames = listOf(
+        stringResource(R.string.settings_vp_section_engine),
+        stringResource(R.string.settings_live_tv),
+        stringResource(R.string.settings_vp_section_sound),
+        stringResource(R.string.settings_subtitles),
+        stringResource(R.string.settings_vp_section_episodes),
+        stringResource(R.string.settings_diagnostics),
+    )
+    val sectionSummaries = listOf(
+        stringResource(R.string.settings_vp_section_engine_summary),
+        stringResource(R.string.settings_vp_section_live_summary),
+        stringResource(R.string.settings_vp_section_sound_summary),
+        stringResource(R.string.settings_vp_section_subtitles_summary),
+        stringResource(R.string.settings_vp_section_episodes_summary),
+        stringResource(R.string.settings_vp_section_diagnostics_summary),
+    )
+    val sectionIcons = listOf(
+        OwnTVIcon.VIDEO, OwnTVIcon.LIVE_TV, OwnTVIcon.AUDIO,
+        OwnTVIcon.SUBTITLE, OwnTVIcon.SKIP_NEXT, OwnTVIcon.INFO,
+    )
+    val sectionCounts = listOf(
+        13 + if (perPlaylist) 1 else 0,
+        5 + (if (livePreview) 1 else 0) + (if (perPlaylist) 2 else 0),
+        6, 2, 3, 2,
+    )
+    var sheetFocused by remember { mutableStateOf(false) }
+    val spineScroll = rememberScrollState()
+
+    // Back leaves the rows for the sections first, and only then the screen — the same step Left
+    // makes, so whichever the user reaches for does the same thing.
+    BackHandler(enabled = sheetFocused) { runCatching { selectedSectionFocus.requestFocus() } }
+    // A new section starts at its first row. The scroll offset is shared by all six, so without this
+    // a short section inherits a long one's offset and opens looking empty.
+    LaunchedEffect(section) { scrollState.scrollTo(0) }
+
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalQuickPin provides QuickPinScope(
+            pinned = quickPinned,
+            onHold = { menuKey = it },
+            focusKey = menuReturnKey ?: focusRowKey,
+            focusRequester = rowReturnFocus,
+        ),
+    ) {
+    Row(
         modifier = modifier
             .fillMaxSize()
             .roundedPanel()
             // onEnter fires for any entry from outside the group — including our own dialog-close
             // restores (the dialogs live outside it) and the return from the OpenSubtitles sub-screen —
-            // so it must prefer the pending return row over the first row.
+            // so it must prefer the pending return row over the section column.
             .focusProperties {
                 onEnter = {
                     if (lowWarning != null) {
@@ -231,29 +651,93 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
                         // so the popup-close restore still has a target to return to.
                         runCatching { dialogRowFocus.getValue(Dialog.LIVE_LATENCY).requestFocus() }
                     } else {
-                    val target = dialogReturn ?: firstFocus
-                    dialogReturn = null
-                    runCatching { target.requestFocus() }
+                        val target = dialogReturn
+                        dialogReturn = null
+                        runCatching { (target ?: selectedSectionFocus).requestFocus() }
                     }
                 }
             }
             .focusGroup()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 40.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Header(stringResource(R.string.settings_video_player_title), onBack)
-        Spacer(Modifier.height(8.dp))
-
-        GroupLabel(stringResource(R.string.settings_decoding))
+        val paneShape = tv.own.owntv.features.shell.components.SettingsSkin.PaneShape
+        Column(
+            modifier = Modifier
+                .width(tv.own.owntv.features.shell.components.SettingsSkin.SpineWidth)
+                .fillMaxHeight()
+                .clip(paneShape)
+                .glass(surface = GlassSurface.CARDS, baseFill = colors.surfaceContainerLow, shape = paneShape)
+                .border(1.dp, colors.outlineVariant, paneShape)
+                .verticalScroll(spineScroll)
+                .padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 8.dp)
+                .focusProperties { onEnter = { runCatching { selectedSectionFocus.requestFocus() } } }
+                .focusGroup(),
+        ) {
+            tv.own.owntv.features.shell.components.SpineBackRow(
+                from = stringResource(R.string.settings_playback_group),
+                title = stringResource(R.string.settings_video_player_title),
+                onBack = onBack,
+            )
+            sectionNames.forEachIndexed { i, name ->
+                tv.own.owntv.features.shell.components.SpineItem(
+                    label = name,
+                    summary = sectionSummaries[i],
+                    icon = sectionIcons[i],
+                    count = sectionCounts[i],
+                    selected = i == section,
+                    active = false,
+                    onFocused = { section = i },
+                    modifier = if (i == section) Modifier.focusRequester(selectedSectionFocus) else Modifier,
+                )
+            }
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(paneShape)
+                .glass(surface = GlassSurface.CARDS, baseFill = colors.surfaceContainerLow, shape = paneShape)
+                .border(1.dp, colors.outlineVariant, paneShape),
+        ) {
+            tv.own.owntv.features.shell.components.SheetHeader(
+                title = sectionNames[section],
+                summary = sectionSummaries[section],
+                tag = pluralStringResource(R.plurals.settings_setting_count, sectionCounts[section], sectionCounts[section]),
+                tagHot = sheetFocused,
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .onFocusChanged { sheetFocused = it.hasFocus }
+                    // Left is the way back to the sections. A full-width row has no neighbour to its
+                    // left inside the sheet's own plate, so the sheet says it explicitly.
+                    .onPreviewKeyEvent { e ->
+                        if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                            e.key == androidx.compose.ui.input.key.Key.DirectionLeft
+                        ) {
+                            runCatching { selectedSectionFocus.requestFocus() }.isSuccess
+                        } else {
+                            false
+                        }
+                    }
+                    .focusGroup()
+                    .verticalScroll(scrollState)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                when (section) {
+                    SECTION_ENGINE -> {
         Row2(
+            quickKey = "vp_hw",
             icon = OwnTVIcon.VIDEO, title = stringResource(R.string.settings_hardware_decoding),
             desc = stringResource(R.string.settings_hardware_decoding_description),
             chip = if (hw) stringResource(R.string.common_on) else stringResource(R.string.common_off), primaryChip = hw,
-            modifier = Modifier.focusRequester(firstFocus),
             onClick = { vm.setHwDecoding(!hw) },
         )
         Row2(
+            quickKey = "vp_deinterlace",
             icon = OwnTVIcon.VIDEO, title = stringResource(R.string.settings_deinterlace),
             desc = stringResource(R.string.settings_deinterlace_description),
             chip = if (deinterlace) stringResource(R.string.settings_auto) else stringResource(R.string.common_off),
@@ -261,6 +745,23 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { vm.setDeinterlace(!deinterlace) },
         )
         Row2(
+            quickKey = "vp_hdr",
+            icon = OwnTVIcon.VIDEO, title = stringResource(R.string.settings_quick_hdr),
+            desc = stringResource(R.string.settings_hdr_description),
+            chip = stringResource(if (hdr) R.string.common_on else R.string.common_off), primaryChip = hdr,
+            onClick = { vm.setHdrEnabled(!hdr) },
+        )
+        Row2(
+            quickKey = "vp_afr",
+            icon = OwnTVIcon.VIDEO, title = stringResource(R.string.settings_auto_frame_rate),
+            desc = stringResource(R.string.settings_auto_frame_rate_description) +
+                if (afrNeedsWarning) " " + stringResource(R.string.settings_auto_frame_rate_warning_suffix) else "",
+            chip = stringResource(if (autoFrameRate) R.string.common_on else R.string.common_off), primaryChip = autoFrameRate,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.AFR_WARNING)),
+            onClick = toggleAutoFrameRate,
+        )
+        Row2(
+            quickKey = "vp_live_engine",
             icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_live_tv_player),
             desc = stringResource(R.string.settings_live_player_description),
             chip = engineLabel(liveEngine), chevron = true,
@@ -268,7 +769,24 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_ENGINE)),
             onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_ENGINE },
         )
+        if (sources.isNotEmpty()) {
+            Row2(
+                quickKey = "vp_live_engine_sources",
+                icon = OwnTVIcon.PLAY,
+                title = stringResource(R.string.settings_live_engine_per_playlist),
+                desc = stringResource(R.string.settings_live_engine_per_playlist_description),
+                chip = sources.count { it.liveEnginePreference != null }.let { count ->
+                    if (count == 0) stringResource(R.string.common_off)
+                    else pluralStringResource(R.plurals.settings_live_preroll_overrides, count, count)
+                },
+                primaryChip = sources.any { it.liveEnginePreference != null },
+                chevron = true,
+                modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_ENGINE_SOURCES)),
+                onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_ENGINE_SOURCES },
+            )
+        }
         Row2(
+            quickKey = "vp_vod_engine",
             icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_movies_series_player),
             desc = stringResource(R.string.settings_movies_player_description),
             chip = engineLabel(vodEngine), chevron = true,
@@ -277,6 +795,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.VOD_ENGINE },
         )
         Row2(
+            quickKey = "vp_reset_pins",
             icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_reset_player_choices),
             desc = stringResource(R.string.settings_reset_player_choices_description),
             chip = if (enginePins == 0) stringResource(R.string.settings_reset_player_choices_none)
@@ -289,6 +808,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.RESET_PINS },
         )
         Row2(
+            quickKey = "vp_external",
             icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_external_player),
             desc = stringResource(R.string.settings_external_player_row_description),
             chip = externalPlayerChip(externalLive, externalMovies, externalSeries), chevron = true,
@@ -297,6 +817,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.EXTERNAL_PLAYER },
         )
         Row2(
+            quickKey = "vp_zoom",
             icon = OwnTVIcon.ASPECT, title = stringResource(R.string.settings_default_zoom),
             desc = stringResource(R.string.settings_default_zoom_description),
             chip = stringResource(zoomMode.labelRes), chevron = true,
@@ -304,6 +825,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.ZOOM },
         )
         Row2(
+            quickKey = "vp_reset_zoom",
             icon = OwnTVIcon.ASPECT, title = stringResource(R.string.settings_reset_saved_zoom),
             desc = stringResource(R.string.settings_reset_saved_zoom_description),
             chip = if (savedZoom == 0) stringResource(R.string.settings_reset_player_choices_none)
@@ -313,6 +835,25 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.RESET_SAVED_ZOOM },
         )
         Row2(
+            quickKey = "vp_seek_step",
+            icon = OwnTVIcon.FORWARD, title = stringResource(R.string.settings_seek_step),
+            desc = stringResource(R.string.settings_seek_step_description),
+            chip = stringResource(R.string.settings_live_buffer_seconds, seekStep), chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SEEK_STEP)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.SEEK_STEP },
+        )
+        Row2(
+            quickKey = "vp_rewind_step",
+            icon = OwnTVIcon.REWIND, title = stringResource(R.string.settings_live_rewind_step),
+            desc = stringResource(R.string.settings_live_rewind_step_description),
+            chip = stringResource(R.string.settings_live_buffer_seconds, liveRewindStep), chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_REWIND_STEP)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_REWIND_STEP },
+        )
+                    }
+                    SECTION_SOUND -> {
+        Row2(
+            quickKey = "vp_volume",
             icon = OwnTVIcon.VOLUME_HIGH, title = stringResource(R.string.settings_default_volume),
             desc = stringResource(R.string.settings_default_volume_description),
             chip = stringResource(R.string.player_percent, defaultVolume), chevron = true,
@@ -320,6 +861,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.VOLUME },
         )
         Row2(
+            quickKey = "vp_reset_volume",
             icon = OwnTVIcon.VOLUME_HIGH, title = stringResource(R.string.settings_reset_saved_volume),
             desc = stringResource(R.string.settings_reset_saved_volume_description),
             chip = if (savedVolume == 0) stringResource(R.string.settings_reset_player_choices_none)
@@ -329,47 +871,7 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.RESET_SAVED_VOLUME },
         )
         Row2(
-            icon = OwnTVIcon.FORWARD, title = stringResource(R.string.settings_seek_step),
-            desc = stringResource(R.string.settings_seek_step_description),
-            chip = stringResource(R.string.settings_live_buffer_seconds, seekStep), chevron = true,
-            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SEEK_STEP)),
-            onClick = { savedScroll = scrollState.value; dialog = Dialog.SEEK_STEP },
-        )
-        Row2(
-            icon = OwnTVIcon.REWIND, title = stringResource(R.string.settings_live_rewind_step),
-            desc = stringResource(R.string.settings_live_rewind_step_description),
-            chip = stringResource(R.string.settings_live_buffer_seconds, liveRewindStep), chevron = true,
-            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_REWIND_STEP)),
-            onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_REWIND_STEP },
-        )
-        Row2(
-            icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_resume_playback),
-            desc = stringResource(R.string.settings_resume_playback_description),
-            chip = stringResource(resumeModeLabelRes(resumeMode)), chevron = true,
-            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.RESUME)),
-            onClick = { savedScroll = scrollState.value; dialog = Dialog.RESUME },
-        )
-
-        Divider()
-        GroupLabel(stringResource(R.string.settings_subtitles))
-        Row2(
-            icon = OwnTVIcon.SUBTITLE, title = stringResource(R.string.settings_subtitle_appearance),
-            desc = stringResource(R.string.settings_subtitle_appearance_description),
-            chip = stringResource(if (subStyleOn) R.string.common_on else R.string.common_off), primaryChip = subStyleOn, chevron = true,
-            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SUB_STYLE)),
-            onClick = { savedScroll = scrollState.value; dialog = Dialog.SUB_STYLE },
-        )
-        Row2(
-            icon = OwnTVIcon.SUBTITLE, title = stringResource(R.string.settings_preferred_subtitle_language),
-            desc = stringResource(R.string.settings_preferred_language_description),
-            chip = langName(subLang), chevron = true,
-            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SUB_LANG)),
-            onClick = { savedScroll = scrollState.value; dialog = Dialog.SUB_LANG },
-        )
-
-        Divider()
-        GroupLabel(stringResource(R.string.settings_audio))
-        Row2(
+            quickKey = "vp_audio_lang",
             icon = OwnTVIcon.AUDIO, title = stringResource(R.string.settings_preferred_audio_language),
             desc = stringResource(R.string.settings_preferred_language_description),
             chip = langName(audioLang), chevron = true,
@@ -377,24 +879,140 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onClick = { savedScroll = scrollState.value; dialog = Dialog.AUDIO_LANG },
         )
         Row2(
+            quickKey = "vp_surround",
+            icon = OwnTVIcon.AUDIO, title = stringResource(R.string.settings_surround_sound),
+            desc = when (surroundMode) {
+                SurroundMode.AUTO -> stringResource(R.string.settings_surround_auto_description)
+                SurroundMode.STEREO -> stringResource(R.string.settings_surround_stereo_description)
+                SurroundMode.SURROUND -> stringResource(R.string.settings_surround_forced_description)
+            },
+            chip = surroundModeLabel(surroundMode), primaryChip = surroundMode != SurroundMode.STEREO,
+            onClick = { vm.cycleSurroundMode() },
+        )
+        Row2(
+            quickKey = "vp_audio_sync",
             icon = OwnTVIcon.AUDIO, title = stringResource(R.string.settings_audio_sync),
             desc = stringResource(R.string.settings_audio_sync_description),
             chip = stringResource(R.string.settings_audio_delay_value, audioDelay), chevron = true,
             modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.AUDIO_SYNC)),
             onClick = { savedScroll = scrollState.value; dialog = Dialog.AUDIO_SYNC },
         )
-
-        Divider()
-        GroupLabel(stringResource(R.string.settings_live_tv))
         Row2(
+            quickKey = "vp_reset_audio_delay",
+            icon = OwnTVIcon.AUDIO, title = stringResource(R.string.settings_reset_saved_audio_delay),
+            desc = stringResource(R.string.settings_reset_saved_audio_delay_description),
+            chip = if (savedAudioDelay == 0) stringResource(R.string.settings_reset_player_choices_none)
+            else pluralStringResource(R.plurals.settings_reset_player_choices_count, savedAudioDelay, savedAudioDelay),
+            primaryChip = savedAudioDelay > 0,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.RESET_SAVED_AUDIO_DELAY)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.RESET_SAVED_AUDIO_DELAY },
+        )
+                    }
+                    SECTION_EPISODES -> {
+        Row2(
+            quickKey = "vp_resume",
+            icon = OwnTVIcon.PLAY, title = stringResource(R.string.settings_resume_playback),
+            desc = stringResource(R.string.settings_resume_playback_description),
+            chip = stringResource(resumeModeLabelRes(resumeMode)), chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.RESUME)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.RESUME },
+        )
+        Row2(
+            quickKey = "vp_autoplay",
+            icon = OwnTVIcon.AUTOPLAY_NEXT, title = stringResource(R.string.settings_autoplay_next),
+            desc = stringResource(R.string.settings_autoplay_next_description),
+            chip = stringResource(if (autoPlayNext) R.string.common_on else R.string.common_off), primaryChip = autoPlayNext,
+            onClick = { vm.setAutoPlayNext(!autoPlayNext) },
+        )
+        Row2(
+            quickKey = "vp_mini",
+            icon = OwnTVIcon.PIP, title = stringResource(R.string.settings_mini_player_root),
+            desc = stringResource(R.string.settings_mini_player_root_description),
+            chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.MINI_PLAYER)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.MINI_PLAYER },
+        )
+
+                    }
+                    SECTION_SUBTITLES -> {
+        Row2(
+            quickKey = "vp_sub_style",
+            icon = OwnTVIcon.SUBTITLE, title = stringResource(R.string.settings_subtitle_appearance),
+            desc = stringResource(R.string.settings_subtitle_appearance_description),
+            chip = stringResource(if (subStyleOn) R.string.common_on else R.string.common_off), primaryChip = subStyleOn, chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SUB_STYLE)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.SUB_STYLE },
+        )
+        Row2(
+            quickKey = "vp_sub_lang",
+            icon = OwnTVIcon.SUBTITLE, title = stringResource(R.string.settings_preferred_subtitle_language),
+            desc = stringResource(R.string.settings_preferred_language_description),
+            chip = langName(subLang), chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.SUB_LANG)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.SUB_LANG },
+        )
+
+                    }
+                    SECTION_LIVE -> {
+        Row2(
+            quickKey = "vp_live_preview",
+            icon = OwnTVIcon.LIVE_TV, title = stringResource(R.string.settings_quick_live_preview),
+            desc = stringResource(R.string.settings_live_preview_description),
+            chip = stringResource(if (livePreview) R.string.common_on else R.string.common_off), primaryChip = livePreview,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_PREVIEW_PANEL)),
+            onClick = toggleLivePreview,
+        )
+        // D-pad zapping with the player bar up (group feedback: JUL — "ch+/- works. Not pad up und
+        // down, when there is the bar"). Off keeps the shipped behaviour: with the bar visible,
+        // Up/Down navigate the bar's controls.
+        Row2(
+            quickKey = "vp_zap_dpad_always",
+            icon = OwnTVIcon.LIVE_TV, title = stringResource(R.string.settings_zap_dpad_always),
+            desc = stringResource(R.string.settings_zap_dpad_always_description),
+            chip = stringResource(if (zapWithDpadAlways) R.string.common_on else R.string.common_off), primaryChip = zapWithDpadAlways,
+            onClick = { vm.setZapWithDpadAlways(!zapWithDpadAlways) },
+        )
+        if (livePreview) {
+            Row2(
+                quickKey = "vp_preview_audio",
+                icon = OwnTVIcon.AUDIO, title = stringResource(R.string.settings_preview_audio),
+                desc = stringResource(R.string.settings_preview_audio_description),
+                chip = stringResource(if (previewAudio) R.string.common_on else R.string.common_off), primaryChip = previewAudio,
+                onClick = { vm.setLivePreviewAudio(!previewAudio) },
+            )
+        }
+        Row2(
+            quickKey = "vp_live_latency",
             icon = OwnTVIcon.LIVE_TV, title = stringResource(R.string.settings_live_latency),
-            desc = stringResource(R.string.settings_live_latency_description),
-            chip = if (liveLatency == tv.own.owntv.features.settings.data.LiveLatency.CUSTOM) stringResource(R.string.settings_live_buffer_seconds, liveCustomSecs) else stringResource(liveLatencyLabelRes(liveLatency)),
+            // The requested depth is a time, but the buffer is also capped in BYTES
+            // (`LiveBuffer.targetBufferBytes`), and on a 4K feed that cap is what binds. The code has
+            // always handled it; the user was never told, so a 60 s setting that behaved like far less
+            // looked like a bug rather than a memory limit.
+            desc = stringResource(R.string.settings_live_latency_description) + " " +
+                stringResource(R.string.settings_live_latency_bitrate_note),
+            chip = if (liveLatency == tv.own.owntv.core.settings.LiveLatency.CUSTOM) stringResource(R.string.settings_live_buffer_seconds, liveCustomSecs) else stringResource(liveLatencyLabelRes(liveLatency)),
             chevron = true,
             modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_LATENCY)),
             onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_LATENCY },
         )
+        if (sources.isNotEmpty()) {
+            Row2(
+                quickKey = "vp_latency_sources",
+                icon = OwnTVIcon.LIVE_TV,
+                title = stringResource(R.string.settings_live_latency_per_playlist),
+                desc = stringResource(R.string.settings_live_latency_per_playlist_description),
+                chip = sources.count { it.liveLatencyMode != null }.let { count ->
+                    if (count == 0) stringResource(R.string.common_off)
+                    else pluralStringResource(R.plurals.settings_live_preroll_overrides, count, count)
+                },
+                primaryChip = sources.any { it.liveLatencyMode != null },
+                chevron = true,
+                modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_LATENCY_SOURCES)),
+                onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_LATENCY_SOURCES },
+            )
+        }
         Row2(
+            quickKey = "vp_preroll",
             icon = OwnTVIcon.LIVE_TV,
             title = stringResource(R.string.settings_live_preroll),
             desc = stringResource(R.string.settings_live_preroll_description),
@@ -408,8 +1026,24 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_PREROLL)),
             onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_PREROLL },
         )
+        Row2(
+            quickKey = "vp_tune_timeout",
+            icon = OwnTVIcon.LIVE_TV,
+            title = stringResource(R.string.settings_live_tune_timeout),
+            desc = stringResource(R.string.settings_live_tune_timeout_description),
+            chip = if (liveTuneTimeout <= 0) {
+                stringResource(R.string.common_never)
+            } else {
+                stringResource(R.string.settings_video_seconds, liveTuneTimeout)
+            },
+            primaryChip = liveTuneTimeout > 0,
+            chevron = true,
+            modifier = Modifier.focusRequester(dialogRowFocus.getValue(Dialog.LIVE_TUNE_TIMEOUT)),
+            onClick = { savedScroll = scrollState.value; dialog = Dialog.LIVE_TUNE_TIMEOUT },
+        )
         if (sources.isNotEmpty()) {
             Row2(
+                quickKey = "vp_preroll_sources",
                 icon = OwnTVIcon.LIVE_TV,
                 title = stringResource(R.string.settings_live_preroll_per_playlist),
                 desc = stringResource(R.string.settings_live_preroll_per_playlist_description),
@@ -424,25 +1058,52 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             )
         }
         Row2(
+            quickKey = "vp_channel_numbers",
             icon = OwnTVIcon.LIVE_TV, title = stringResource(R.string.settings_channel_numbers),
             desc = stringResource(R.string.settings_channel_numbers_description),
             chip = if (directTune) stringResource(R.string.common_on) else stringResource(R.string.common_off), primaryChip = directTune,
             onClick = { vm.setDirectTune(!directTune) },
         )
 
-        Divider()
-        GroupLabel(stringResource(R.string.settings_diagnostics))
+                    }
+                    else -> {
         Row2(
+            quickKey = "vp_measured_stats",
             icon = OwnTVIcon.VIDEO, title = stringResource(R.string.settings_measured_stats),
             desc = stringResource(R.string.settings_measured_stats_description),
             chip = if (measuredStats) stringResource(R.string.common_on) else stringResource(R.string.common_off), primaryChip = measuredStats,
             onClick = { vm.setMeasuredStreamStats(!measuredStats) },
         )
         Row2(
+            quickKey = "vp_logging",
             icon = OwnTVIcon.INFO, title = stringResource(R.string.settings_detailed_playback_logging),
             desc = stringResource(R.string.settings_detailed_playback_logging_description),
             chip = stringResource(if (detailedDiagnostics) R.string.common_on else R.string.common_off), primaryChip = detailedDiagnostics,
             onClick = { vm.setDetailedDiagnostics(!detailedDiagnostics) },
+        )
+                    }
+                }
+            }
+        }
+    }
+    }
+
+    menuKey?.let { key ->
+        val ref = VIDEO_QUICK_ROWS.first { it.key == key }
+        val at = quickPinned.indexOf(key)
+        // Order belongs to the Quick list, which is not on screen here — so this menu only says
+        // whether the row is pinned.
+        tv.own.owntv.features.shell.components.SettingsRowMenu(
+            title = stringResource(ref.titleRes),
+            pinned = at >= 0,
+            canMoveUp = false,
+            canMoveDown = false,
+            onPinToggle = {
+                vm.setQuickPinnedKeys(if (at >= 0) quickPinned - key else quickPinned + key)
+            },
+            onMoveUp = {},
+            onMoveDown = {},
+            onDismiss = { menuReturnKey = key; menuKey = null },
         )
     }
 
@@ -470,20 +1131,22 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
         )
         Dialog.RESUME -> PickerDialog(
             title = stringResource(R.string.settings_resume_playback),
-            options = tv.own.owntv.features.settings.data.SettingsRepository.ResumeMode.entries.map { it.name to stringResource(resumeModeLabelRes(it)) },
+            options = tv.own.owntv.core.settings.SettingsRepository.ResumeMode.entries.map { it.name to stringResource(resumeModeLabelRes(it)) },
             selected = resumeMode.name,
             onSelect = { vm.setResumeMode(it); dialog = Dialog.NONE },
             onDismiss = { dialog = Dialog.NONE },
         )
         Dialog.SUB_STYLE -> SubtitleAppearanceDialog(
                 enabled = subStyleOn,
-                scale = subScale,
+                scaleExo = subScaleExo,
+                scaleMpv = subScaleMpv,
                 font = subFont,
                 color = subColor,
             position = subPosition,
             bgOpacity = subBgOpacity,
                 onToggle = { vm.setSubtitleStyleEnabled(it) },
-                onScale = { vm.setSubtitleScale(it) },
+                onScaleExo = { vm.setSubtitleScaleExo(it) },
+                onScaleMpv = { vm.setSubtitleScaleMpv(it) },
                 onFont = { vm.setSubtitleFont(it) },
                 onColor = { vm.setSubtitleColor(it) },
             onPosition = { vm.setSubtitlePosition(it) },
@@ -518,19 +1181,19 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
         )
         Dialog.LIVE_LATENCY -> PickerDialog(
             title = stringResource(R.string.settings_live_latency),
-            options = tv.own.owntv.features.settings.data.LiveLatency.entries.map { it.name to stringResource(liveLatencyLabelRes(it)) },
+            options = tv.own.owntv.core.settings.LiveLatency.entries.map { it.name to stringResource(liveLatencyLabelRes(it)) },
             selected = liveLatency.name,
             onSelect = { name ->
-                val mode = tv.own.owntv.features.settings.data.LiveLatency.fromName(name)
+                val mode = tv.own.owntv.core.settings.LiveLatency.fromName(name)
                 dialog = Dialog.NONE
                 when (mode) {
                     // "Low latency" — warn before applying; Cancel leaves the current choice untouched.
-                    tv.own.owntv.features.settings.data.LiveLatency.LOW ->
+                    tv.own.owntv.core.settings.LiveLatency.LOW ->
                         lowWarning = Pair({ vm.setLiveLatencyMode(mode) }, {})
                     // "Custom" — enter the seconds first. The mode is committed by the stepper itself, not
                     // here: switching on open meant backing out of the number dialog still left the user on
                     // Custom, with a value they never chose.
-                    tv.own.owntv.features.settings.data.LiveLatency.CUSTOM -> {
+                    tv.own.owntv.core.settings.LiveLatency.CUSTOM -> {
                         customCommitted = false
                         dialog = Dialog.LIVE_CUSTOM
                     }
@@ -543,34 +1206,43 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             title = stringResource(R.string.settings_custom_live_buffer),
             value = liveCustomSecs,
             step = 1,
-            min = tv.own.owntv.features.settings.data.LiveBuffer.CUSTOM_MIN,
-            max = tv.own.owntv.features.settings.data.LiveBuffer.CUSTOM_MAX,
+            min = tv.own.owntv.core.settings.LiveBuffer.CUSTOM_MIN,
+            max = tv.own.owntv.core.settings.LiveBuffer.CUSTOM_MAX,
             format = { stringResource(R.string.settings_live_buffer_seconds, it) },
             onSet = {
                 vm.setLiveLatencyCustomSecs(it)
-                vm.setLiveLatencyMode(tv.own.owntv.features.settings.data.LiveLatency.CUSTOM)
+                vm.setLiveLatencyMode(tv.own.owntv.core.settings.LiveLatency.CUSTOM)
                 customCommitted = true
             },
             onReset = {
-                vm.setLiveLatencyCustomSecs(tv.own.owntv.features.settings.data.LiveBuffer.CUSTOM_DEFAULT)
-                vm.setLiveLatencyMode(tv.own.owntv.features.settings.data.LiveLatency.CUSTOM)
+                vm.setLiveLatencyCustomSecs(tv.own.owntv.core.settings.LiveBuffer.CUSTOM_DEFAULT)
+                vm.setLiveLatencyMode(tv.own.owntv.core.settings.LiveLatency.CUSTOM)
                 customCommitted = true
             },
             onDismiss = {
                 dialog = Dialog.NONE
                 // A below-Balanced custom value gets the same acknowledgement; Cancel reverts to Balanced.
-                if (customCommitted && tv.own.owntv.features.settings.data.LiveBuffer.isLowLatency(liveCustomSecs)) {
-                    lowWarning = Pair({}, { vm.setLiveLatencyMode(tv.own.owntv.features.settings.data.LiveLatency.BALANCED) })
+                if (customCommitted && tv.own.owntv.core.settings.LiveBuffer.isLowLatency(liveCustomSecs)) {
+                    lowWarning = Pair({}, { vm.setLiveLatencyMode(tv.own.owntv.core.settings.LiveLatency.BALANCED) })
                 }
             },
         )
         Dialog.LIVE_PREROLL -> PickerDialog(
             title = stringResource(R.string.settings_live_preroll),
-            options = tv.own.owntv.features.settings.data.LiveBuffer.PREROLL_CHOICES.map {
+            options = tv.own.owntv.core.settings.LiveBuffer.PREROLL_CHOICES.map {
                 it.toString() to if (it <= 0) stringResource(R.string.common_off) else stringResource(R.string.settings_video_seconds, it)
             },
             selected = livePreroll.toString(),
             onSelect = { vm.setLivePrerollSecs(it.toIntOrNull() ?: 0); dialog = Dialog.NONE },
+            onDismiss = { dialog = Dialog.NONE },
+        )
+        Dialog.LIVE_TUNE_TIMEOUT -> PickerDialog(
+            title = stringResource(R.string.settings_live_tune_timeout),
+            options = tv.own.owntv.player.LiveLadder.BUDGET_CHOICES_SECS.map {
+                it.toString() to if (it <= 0) stringResource(R.string.common_never) else stringResource(R.string.settings_video_seconds, it)
+            },
+            selected = liveTuneTimeout.toString(),
+            onSelect = { vm.setLiveTuneTimeoutSecs(it.toIntOrNull() ?: 0); dialog = Dialog.NONE },
             onDismiss = { dialog = Dialog.NONE },
         )
         Dialog.LIVE_PREROLL_SOURCES -> PickerDialog(
@@ -588,22 +1260,132 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
                 prerollSource = sources.firstOrNull { it.id.toString() == id }
                 dialog = if (prerollSource != null) Dialog.LIVE_PREROLL_SOURCE else Dialog.NONE
             },
-            onDismiss = { dialog = Dialog.NONE },
+            onDismiss = { prerollSource = null; dialog = Dialog.NONE },
+        )
+        // --- per-playlist Live TV engine: pick the playlist, then its value ---
+        Dialog.LIVE_ENGINE_SOURCES -> PickerDialog(
+            title = stringResource(R.string.settings_live_preroll_playlist_picker),
+            options = sources.map { src ->
+                val value = src.liveEnginePreference
+                    ?.let { name -> EnginePreference.entries.firstOrNull { it.name == name } }
+                    ?.let { engineLabel(it) }
+                    ?: stringResource(R.string.settings_live_preroll_follow)
+                src.id.toString() to "${src.name}  ·  $value"
+            },
+            selected = engineSource?.id?.toString() ?: "",
+            onSelect = { id ->
+                engineSource = sources.firstOrNull { it.id.toString() == id }
+                dialog = if (engineSource != null) Dialog.LIVE_ENGINE_SOURCE else Dialog.NONE
+            },
+            onDismiss = { engineSource = null; dialog = Dialog.NONE },
+        )
+        Dialog.LIVE_ENGINE_SOURCE -> PickerDialog(
+            title = engineSource?.name ?: stringResource(R.string.settings_live_tv_player),
+            options = listOf(FOLLOW_GLOBAL to stringResource(R.string.settings_live_preroll_follow)) +
+                EnginePreference.entries.map { it.name to engineLabel(it) },
+            selected = engineSource?.liveEnginePreference ?: FOLLOW_GLOBAL,
+            onSelect = { value ->
+                engineSource?.let { vm.setSourceLiveEngine(it.id, value.takeIf { v -> v != FOLLOW_GLOBAL }) }
+                dialog = Dialog.LIVE_ENGINE_SOURCES
+            },
+            // Back goes back ONE level, to the playlist list — which is also where the value just set is
+            // shown. Closing both levels stranded the user on the row two steps above what they opened,
+            // and made configuring a second playlist a fresh trip from the top.
+            onDismiss = { dialog = Dialog.LIVE_ENGINE_SOURCES },
+        )
+        // --- per-playlist Live latency: pick the playlist, then its value (Custom opens the stepper) ---
+        Dialog.LIVE_LATENCY_SOURCES -> PickerDialog(
+            title = stringResource(R.string.settings_live_preroll_playlist_picker),
+            options = sources.map { src ->
+                val mode = src.liveLatencyMode?.let { tv.own.owntv.core.settings.LiveLatency.fromName(it) }
+                val value = when {
+                    mode == null -> stringResource(R.string.settings_live_preroll_follow)
+                    mode == tv.own.owntv.core.settings.LiveLatency.CUSTOM ->
+                        stringResource(R.string.settings_live_buffer_seconds, sourceCustomSecs(src))
+                    else -> stringResource(liveLatencyLabelRes(mode))
+                }
+                src.id.toString() to "${src.name}  ·  $value"
+            },
+            selected = latencySource?.id?.toString() ?: "",
+            onSelect = { id ->
+                latencySource = sources.firstOrNull { it.id.toString() == id }
+                dialog = if (latencySource != null) Dialog.LIVE_LATENCY_SOURCE else Dialog.NONE
+            },
+            onDismiss = { latencySource = null; dialog = Dialog.NONE },
+        )
+        Dialog.LIVE_LATENCY_SOURCE -> PickerDialog(
+            title = latencySource?.name ?: stringResource(R.string.settings_live_latency),
+            options = listOf(FOLLOW_GLOBAL to stringResource(R.string.settings_live_preroll_follow)) +
+                tv.own.owntv.core.settings.LiveLatency.entries.map { it.name to stringResource(liveLatencyLabelRes(it)) },
+            selected = latencySource?.liveLatencyMode ?: FOLLOW_GLOBAL,
+            onSelect = { name ->
+                val src = latencySource
+                dialog = Dialog.NONE
+                when {
+                    name == FOLLOW_GLOBAL -> {
+                        src?.let { vm.setSourceLiveLatency(it.id, null, FOLLOW_GLOBAL_LATENCY_SECS) }
+                        dialog = Dialog.LIVE_LATENCY_SOURCES
+                    }
+                    // Same rules as the global picker: Low is acknowledged first, Custom asks for the
+                    // seconds and is committed by the stepper rather than on opening it.
+                    name == tv.own.owntv.core.settings.LiveLatency.LOW.name ->
+                        lowWarning = Pair(
+                            { src?.let { vm.setSourceLiveLatency(it.id, name, FOLLOW_GLOBAL_LATENCY_SECS) }; latencySource = null },
+                            { latencySource = null },
+                        )
+                    name == tv.own.owntv.core.settings.LiveLatency.CUSTOM.name ->
+                        dialog = Dialog.LIVE_LATENCY_CUSTOM_SOURCE
+                    else -> {
+                        src?.let { vm.setSourceLiveLatency(it.id, name, FOLLOW_GLOBAL_LATENCY_SECS) }
+                        dialog = Dialog.LIVE_LATENCY_SOURCES
+                    }
+                }
+            },
+            // Back to the playlist list, one level. The Low/Custom branches above still close the chain:
+            // both hand over to another popup (the acknowledgement, the seconds stepper) that owns what
+            // happens next, and re-opening the list underneath them would fight for focus.
+            onDismiss = { dialog = Dialog.LIVE_LATENCY_SOURCES },
+        )
+        Dialog.LIVE_LATENCY_CUSTOM_SOURCE -> StepperDialog(
+            title = stringResource(R.string.settings_custom_live_buffer),
+            value = latencySource?.let { sourceCustomSecs(it) } ?: tv.own.owntv.core.settings.LiveBuffer.CUSTOM_DEFAULT,
+            step = 1,
+            min = tv.own.owntv.core.settings.LiveBuffer.CUSTOM_MIN,
+            max = tv.own.owntv.core.settings.LiveBuffer.CUSTOM_MAX,
+            format = { stringResource(R.string.settings_live_buffer_seconds, it) },
+            onSet = { secs ->
+                val src = latencySource
+                val commit: () -> Unit = {
+                    src?.let {
+                        vm.setSourceLiveLatency(it.id, tv.own.owntv.core.settings.LiveLatency.CUSTOM.name, secs)
+                    }
+                }
+                // A below-Balanced number gets the same acknowledgement the global setting asks for.
+                if (tv.own.owntv.core.settings.LiveBuffer.isLowLatency(secs)) {
+                    lowWarning = Pair(commit, { latencySource = null })
+                } else {
+                    commit()
+                }
+            },
+            onReset = {
+                latencySource?.let { vm.setSourceLiveLatency(it.id, null, FOLLOW_GLOBAL_LATENCY_SECS) }
+            },
+            onDismiss = { dialog = Dialog.LIVE_LATENCY_SOURCE }, // back one level, to the mode picker
         )
         Dialog.LIVE_PREROLL_SOURCE -> PickerDialog(
             title = prerollSource?.name ?: stringResource(R.string.settings_sort_playlist),
             options = listOf("-1" to stringResource(R.string.settings_live_preroll_follow)) +
-                tv.own.owntv.features.settings.data.LiveBuffer.PREROLL_CHOICES.map {
+                tv.own.owntv.core.settings.LiveBuffer.PREROLL_CHOICES.map {
                     it.toString() to if (it <= 0) stringResource(R.string.common_off) else stringResource(R.string.settings_video_seconds, it)
                 },
             selected = (prerollSource?.livePrerollSecs ?: -1).toString(),
             onSelect = { value ->
                 prerollSource?.let { vm.setSourcePreroll(it.id, value.toIntOrNull() ?: -1) }
-                prerollSource = null
-                dialog = Dialog.NONE
+                dialog = Dialog.LIVE_PREROLL_SOURCES
             },
-            onDismiss = { prerollSource = null; dialog = Dialog.NONE },
+            onDismiss = { dialog = Dialog.LIVE_PREROLL_SOURCES }, // back one level, to the playlist list
         )
+        Dialog.MINI_PLAYER -> MiniPlayerSettingsDialog(onDismiss = { dialog = Dialog.NONE })
         Dialog.EXTERNAL_PLAYER -> ExternalPlayerDialog(
             live = externalLive, movies = externalMovies, series = externalSeries,
             onToggle = { section, enabled -> vm.setExternalPlayer(section, enabled) },
@@ -627,20 +1409,20 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
         )
         Dialog.SEEK_STEP -> PickerDialog(
             title = stringResource(R.string.settings_seek_step),
-            options = tv.own.owntv.features.settings.data.SeekSteps.SEEK_CHOICES.map {
+            options = tv.own.owntv.core.settings.SeekSteps.SEEK_CHOICES.map {
                 it.toString() to stringResource(R.string.settings_live_buffer_seconds, it)
             },
             selected = seekStep.toString(),
-            onSelect = { vm.setSeekStepSec(it.toIntOrNull() ?: tv.own.owntv.features.settings.data.SeekSteps.DEFAULT_SEEK_STEP_SEC); dialog = Dialog.NONE },
+            onSelect = { vm.setSeekStepSec(it.toIntOrNull() ?: tv.own.owntv.core.settings.SeekSteps.DEFAULT_SEEK_STEP_SEC); dialog = Dialog.NONE },
             onDismiss = { dialog = Dialog.NONE },
         )
         Dialog.LIVE_REWIND_STEP -> PickerDialog(
             title = stringResource(R.string.settings_live_rewind_step),
-            options = tv.own.owntv.features.settings.data.SeekSteps.LIVE_REWIND_CHOICES.map {
+            options = tv.own.owntv.core.settings.SeekSteps.LIVE_REWIND_CHOICES.map {
                 it.toString() to stringResource(R.string.settings_live_buffer_seconds, it)
             },
             selected = liveRewindStep.toString(),
-            onSelect = { vm.setLiveRewindStepSec(it.toIntOrNull() ?: tv.own.owntv.features.settings.data.SeekSteps.DEFAULT_LIVE_REWIND_STEP_SEC); dialog = Dialog.NONE },
+            onSelect = { vm.setLiveRewindStepSec(it.toIntOrNull() ?: tv.own.owntv.core.settings.SeekSteps.DEFAULT_LIVE_REWIND_STEP_SEC); dialog = Dialog.NONE },
             onDismiss = { dialog = Dialog.NONE },
         )
         Dialog.RESET_SAVED_ZOOM -> ConfirmResetDialog(
@@ -655,6 +1437,21 @@ fun VideoPlayerSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier)
             onConfirm = { vm.clearSavedVolume(); dialog = Dialog.NONE },
             onCancel = { dialog = Dialog.NONE },
         )
+        Dialog.RESET_SAVED_AUDIO_DELAY -> ConfirmResetDialog(
+            title = stringResource(R.string.settings_reset_saved_audio_delay_confirm),
+            description = stringResource(R.string.settings_reset_saved_audio_delay_confirm_description),
+            onConfirm = { vm.clearSavedAudioDelay(); dialog = Dialog.NONE },
+            onCancel = { dialog = Dialog.NONE },
+        )
+        Dialog.AFR_WARNING -> tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { dialog = Dialog.NONE }) {
+            AutoFrameRateWarningDialog(
+                onEnable = { vm.setAutoFrameRate(true); dialog = Dialog.NONE },
+                onDismiss = { dialog = Dialog.NONE },
+            )
+        }
+        Dialog.LIVE_PREVIEW_PANEL -> tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { dialog = Dialog.NONE }) {
+            LivePreviewPanelHiddenDialog(onDismiss = { dialog = Dialog.NONE })
+        }
         Dialog.NONE -> Unit
     }
 
@@ -724,7 +1521,37 @@ private fun ConfirmResetDialog(title: String, description: String, onConfirm: ()
     }
 }
 
-private enum class Dialog { NONE, LIVE_ENGINE, VOD_ENGINE, ZOOM, VOLUME, RESET_SAVED_ZOOM, RESET_SAVED_VOLUME, SEEK_STEP, LIVE_REWIND_STEP, SUB_STYLE, SUB_LANG, AUDIO_LANG, AUDIO_SYNC, RESUME, LIVE_LATENCY, LIVE_CUSTOM, LIVE_PREROLL, LIVE_PREROLL_SOURCES, LIVE_PREROLL_SOURCE, EXTERNAL_PLAYER, RESET_PINS }
+/** The dialog a pinned row opens when Quick jumps into this screen. Null for rows that toggle. */
+private fun dialogForQuickKey(key: String): Dialog? = when (key) {
+    "vp_afr" -> Dialog.AFR_WARNING
+    "vp_live_engine" -> Dialog.LIVE_ENGINE
+    "vp_live_engine_sources" -> Dialog.LIVE_ENGINE_SOURCES
+    "vp_vod_engine" -> Dialog.VOD_ENGINE
+    "vp_reset_pins" -> Dialog.RESET_PINS
+    "vp_external" -> Dialog.EXTERNAL_PLAYER
+    "vp_zoom" -> Dialog.ZOOM
+    "vp_reset_zoom" -> Dialog.RESET_SAVED_ZOOM
+    "vp_seek_step" -> Dialog.SEEK_STEP
+    "vp_rewind_step" -> Dialog.LIVE_REWIND_STEP
+    "vp_live_preview" -> Dialog.LIVE_PREVIEW_PANEL
+    "vp_live_latency" -> Dialog.LIVE_LATENCY
+    "vp_latency_sources" -> Dialog.LIVE_LATENCY_SOURCES
+    "vp_preroll" -> Dialog.LIVE_PREROLL
+    "vp_tune_timeout" -> Dialog.LIVE_TUNE_TIMEOUT
+    "vp_preroll_sources" -> Dialog.LIVE_PREROLL_SOURCES
+    "vp_volume" -> Dialog.VOLUME
+    "vp_reset_volume" -> Dialog.RESET_SAVED_VOLUME
+    "vp_audio_lang" -> Dialog.AUDIO_LANG
+    "vp_audio_sync" -> Dialog.AUDIO_SYNC
+    "vp_reset_audio_delay" -> Dialog.RESET_SAVED_AUDIO_DELAY
+    "vp_sub_style" -> Dialog.SUB_STYLE
+    "vp_sub_lang" -> Dialog.SUB_LANG
+    "vp_resume" -> Dialog.RESUME
+    "vp_mini" -> Dialog.MINI_PLAYER
+    else -> null
+}
+
+private enum class Dialog { NONE, LIVE_ENGINE, LIVE_ENGINE_SOURCES, LIVE_ENGINE_SOURCE, LIVE_LATENCY_SOURCES, LIVE_LATENCY_SOURCE, LIVE_LATENCY_CUSTOM_SOURCE, VOD_ENGINE, ZOOM, VOLUME, RESET_SAVED_ZOOM, RESET_SAVED_VOLUME, RESET_SAVED_AUDIO_DELAY, SEEK_STEP, LIVE_REWIND_STEP, SUB_STYLE, SUB_LANG, AUDIO_LANG, AUDIO_SYNC, RESUME, LIVE_LATENCY, LIVE_CUSTOM, LIVE_PREROLL, LIVE_TUNE_TIMEOUT, LIVE_PREROLL_SOURCES, LIVE_PREROLL_SOURCE, EXTERNAL_PLAYER, RESET_PINS, AFR_WARNING, LIVE_PREVIEW_PANEL, MINI_PLAYER }
 
 /**
  * Label for one engine preference — "ExoPlayer, then mpv", "mpv only", and so on.
@@ -744,6 +1571,15 @@ internal fun engineLabel(preference: EnginePreference): String {
         EnginePreference.MPV_ONLY -> stringResource(R.string.settings_engine_only, mpv)
     }
 }
+
+/** Picker key for "follow the global setting" — the state a null column reads as. */
+private const val FOLLOW_GLOBAL = ""
+
+/** A playlist's stored custom-latency seconds, falling back to the global default when it has none
+ *  yet (the `-1` sentinel), so the stepper always opens on a sensible number. */
+private fun sourceCustomSecs(src: tv.own.owntv.core.database.entity.SourceEntity): Int =
+    src.liveLatencyCustomSecs.takeIf { it >= tv.own.owntv.core.settings.LiveBuffer.CUSTOM_MIN }
+        ?: tv.own.owntv.core.settings.LiveBuffer.CUSTOM_DEFAULT
 
 /** The four options for an engine picker, with [default] marked — Live TV and Movies & Series have
  *  different defaults, so which line carries the mark depends on the section, not on the option. */
@@ -820,13 +1656,27 @@ internal fun Row2(
     chip: String? = null,
     primaryChip: Boolean = true,
     chevron: Boolean = false,
+    iconTint: Color? = null,
+    iconBadge: String? = null,
+    accentIconBadge: Boolean = false,
+    keycapColor: Color? = null,
+    keycapLabel: String? = null,
+    /** Its key in [VIDEO_QUICK_ROWS]. Present = a held OK offers to pin this row to Quick. */
+    quickKey: String? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val colors = OwnTVTheme.colors
+    val pin = if (quickKey != null) LocalQuickPin.current else null
+    // A held OK raises the long press while the key is still down and a plain click when it is finally
+    // released — so without this the menu would open and the row would fire underneath it.
+    var longAt by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     FocusableSurface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        onClick = { if (android.os.SystemClock.uptimeMillis() - longAt > 800) onClick() },
+        onLongClick = pin?.let { p -> { longAt = android.os.SystemClock.uptimeMillis(); p.onHold(quickKey!!) } },
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (pin != null && pin.focusKey == quickKey) Modifier.focusRequester(pin.focusRequester) else Modifier),
         shape = RoundedCornerShape(16.dp),
         surface = GlassSurface.CARDS,
         contentAlignment = Alignment.CenterStart,
@@ -836,12 +1686,74 @@ internal fun Row2(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(
-                modifier = Modifier.size(Dimens.IconTileSize).clip(RoundedCornerShape(Dimens.IconTileCorner)).background(colors.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) { OwnTVIcon(icon = icon, tint = colors.onPrimaryContainer, modifier = Modifier.size(22.dp)) }
+            // Tile tone comes from the sub-screen, not the row, so these match the root row that
+            // opened the screen instead of always being the accent.
+            val (tileBg, tileOn) = LocalSettingsRowTone.current.colors()
+            Box {
+                Box(
+                    modifier = Modifier.size(Dimens.IconTileSize).clip(RoundedCornerShape(Dimens.IconTileCorner)).background(tileBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (keycapColor != null) {
+                        val keycapShape = RoundedCornerShape(6.dp)
+                        Box(
+                            modifier = Modifier
+                                .width(30.dp)
+                                .height(18.dp)
+                                .clip(keycapShape)
+                                .background(keycapColor)
+                                .border(1.5.dp, Color.White.copy(alpha = .78f), keycapShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            keycapLabel?.let {
+                                Text(
+                                    it,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, lineHeight = 8.sp),
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                            }
+                        }
+                    } else {
+                        OwnTVIcon(icon = icon, tint = iconTint ?: tileOn, modifier = Modifier.size(22.dp))
+                    }
+                }
+                iconBadge?.let {
+                    val badgeBackground = if (accentIconBadge) colors.primary else colors.onSurface
+                    val badgeForeground = if (accentIconBadge) colors.onPrimary else colors.surface
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset(x = 5.dp, y = 5.dp)
+                            .size(19.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(badgeBackground)
+                            .border(2.dp, colors.surface, androidx.compose.foundation.shape.CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            it,
+                            color = badgeForeground,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 9.sp),
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    // The same dot the root rows carry: this one is also sitting in Quick.
+                    if (pin != null && quickKey in pin.pinned) {
+                        Box(Modifier.size(6.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors.primary))
+                    }
+                }
                 if (desc != null) Text(desc, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
             if (chip != null) {
@@ -866,6 +1778,8 @@ internal fun PickerDialog(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     searchable: Boolean = false,
+    trailingLabels: Map<String, String> = emptyMap(),
+    leadingIcons: Map<String, OwnTVIcon> = emptyMap(),
 ) {
     val colors = OwnTVTheme.colors
     val fr = remember { FocusRequester() }
@@ -918,8 +1832,23 @@ internal fun PickerDialog(
                         surface = GlassSurface.DIALOGS,
                     ) { _ ->
                         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(label, style = MaterialTheme.typography.bodyMedium, color = if (isSel) colors.onPrimaryContainer else colors.onSurface, modifier = Modifier.weight(1f))
-                            if (isSel) OwnTVIcon(OwnTVIcon.STAR, tint = colors.onPrimaryContainer, filled = true, modifier = Modifier.size(14.dp))
+                        leadingIcons[value]?.let { icon ->
+                            OwnTVIcon(
+                                icon,
+                                tint = if (isSel) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 8.dp).size(18.dp),
+                            )
+                        }
+                        Text(label, style = MaterialTheme.typography.bodyMedium, color = if (isSel) colors.onPrimaryContainer else colors.onSurface, modifier = Modifier.weight(1f))
+                        trailingLabels[value]?.let {
+                            tv.own.owntv.ui.components.ProviderChip(
+                                name = it,
+                                maxWidth = 92.dp,
+                                compact = true,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
+                        if (isSel) OwnTVIcon(OwnTVIcon.STAR, tint = colors.onPrimaryContainer, filled = true, modifier = Modifier.size(14.dp))
                         }
                     }
                 }
@@ -945,7 +1874,7 @@ private fun ExternalPlayerDialog(
     live: Boolean,
     movies: Boolean,
     series: Boolean,
-    onToggle: (tv.own.owntv.features.settings.data.SettingsRepository.ExternalPlayerSection, Boolean) -> Unit,
+    onToggle: (tv.own.owntv.core.settings.SettingsRepository.ExternalPlayerSection, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = OwnTVTheme.colors
@@ -953,9 +1882,9 @@ private fun ExternalPlayerDialog(
     LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
     BackHandler { onDismiss() }
     val rows = listOf(
-        Triple(tv.own.owntv.features.settings.data.SettingsRepository.ExternalPlayerSection.LIVE_TV, stringResource(R.string.common_nav_live_tv), live),
-        Triple(tv.own.owntv.features.settings.data.SettingsRepository.ExternalPlayerSection.MOVIES, stringResource(R.string.common_nav_movies), movies),
-        Triple(tv.own.owntv.features.settings.data.SettingsRepository.ExternalPlayerSection.SERIES, stringResource(R.string.common_nav_series), series),
+        Triple(tv.own.owntv.core.settings.SettingsRepository.ExternalPlayerSection.LIVE_TV, stringResource(R.string.common_nav_live_tv), live),
+        Triple(tv.own.owntv.core.settings.SettingsRepository.ExternalPlayerSection.MOVIES, stringResource(R.string.common_nav_movies), movies),
+        Triple(tv.own.owntv.core.settings.SettingsRepository.ExternalPlayerSection.SERIES, stringResource(R.string.common_nav_series), series),
     )
     tv.own.owntv.ui.theme.PopupFontTheme {
         Box(Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(), contentAlignment = Alignment.Center) {
@@ -1103,13 +2032,15 @@ private fun subtitlePositionName(position: SubtitleStyle.Position): String = str
 @Composable
 private fun SubtitleAppearanceDialog(
     enabled: Boolean,
-    scale: Float,
+    scaleExo: Float,
+    scaleMpv: Float,
     font: AppFontFamily?,
     color: String,
     position: SubtitleStyle.Position,
     bgOpacity: Int,
     onToggle: (Boolean) -> Unit,
-    onScale: (Float) -> Unit,
+    onScaleExo: (Float) -> Unit,
+    onScaleMpv: (Float) -> Unit,
     onFont: (AppFontFamily?) -> Unit,
     onColor: (String) -> Unit,
     onPosition: (SubtitleStyle.Position) -> Unit,
@@ -1138,12 +2069,9 @@ private fun SubtitleAppearanceDialog(
     if (child != SubDialog.NONE) {
         val close = { child = SubDialog.NONE }
             when (child) {
-                SubDialog.SIZE -> PickerDialog(
-                title = stringResource(R.string.settings_subtitle_size),
-                options = SUB_SIZES.map { it.first.toString() to stringResource(it.second) },
-                selected = nearestSubSize(scale).first.toString(),
-                onSelect = { onScale(it.toFloat()); close() },
-                    onDismiss = close,
+                SubDialog.SIZE -> SubtitleSizeDialog(
+                    scaleExo = scaleExo, scaleMpv = scaleMpv, font = font, color = color,
+                    bgOpacity = bgOpacity, onScaleExo = onScaleExo, onScaleMpv = onScaleMpv, onDismiss = close,
                 )
                 SubDialog.FONT -> PickerDialog(
                     title = stringResource(R.string.settings_subtitle_font),
@@ -1159,7 +2087,7 @@ private fun SubtitleAppearanceDialog(
                 SubDialog.COLOR -> SubtitleColorDialog(color = color, onColor = onColor, onDismiss = close)
             SubDialog.POSITION -> SubtitlePositionDialog(position = position, onSelect = onPosition, onDismiss = close)
                 SubDialog.TRANSPARENCY -> SubtitleTransparencyDialog(
-                    scale = scale, font = font, color = color, position = position,
+                    scale = scaleExo, font = font, color = color, position = position,
                 bgOpacity = bgOpacity, onSet = onBgOpacity, onDismiss = close,
             )
             SubDialog.NONE -> Unit
@@ -1185,7 +2113,7 @@ private fun SubtitleAppearanceDialog(
 
                 // The overview sits above every row, including the master toggle, so the effect of a
                 // change is judged against a picture instead of guessed from a chip.
-        SubtitlePreview(enabled = enabled, scale = scale, font = font, color = color, position = position, bgOpacity = bgOpacity)
+        SubtitlePreview(enabled = enabled, scale = scaleExo, font = font, color = color, position = position, bgOpacity = bgOpacity)
                 Spacer(Modifier.height(16.dp))
 
                 Row2(
@@ -1205,7 +2133,9 @@ private fun SubtitleAppearanceDialog(
                 icon = OwnTVIcon.SUBTITLE,
                 title = stringResource(R.string.settings_subtitle_size),
                         desc = stringResource(R.string.settings_subtitle_size_description),
-                        chip = subSizeName(scale), primaryChip = SubtitleStyle.hasScale(scale), chevron = true,
+                        chip = subSizePairName(scaleExo, scaleMpv),
+                        primaryChip = SubtitleStyle.hasScale(scaleExo) || SubtitleStyle.hasScale(scaleMpv),
+                        chevron = true,
                         modifier = Modifier.focusRequester(rowFocus.getValue(SubDialog.SIZE)),
                 onClick = { open(SubDialog.SIZE) },
             )
@@ -1251,7 +2181,8 @@ private fun SubtitleAppearanceDialog(
                     Spacer(Modifier.weight(1f))
                     if (enabled) {
                         OwnTVButton(stringResource(R.string.settings_subtitle_reset_all), style = OwnTVButtonStyle.SECONDARY, onClick = {
-                        onScale(SubtitleStyle.SCALE_DEFAULT)
+                        onScaleExo(SubtitleStyle.SCALE_DEFAULT)
+                        onScaleMpv(SubtitleStyle.SCALE_DEFAULT)
                         onFont(null)
                         onColor(SubtitleStyle.COLOR_DEFAULT)
                             onPosition(SubtitleStyle.Position.DEFAULT)
@@ -1498,6 +2429,110 @@ private fun PositionCell(
 }
 
 /**
+ * Subtitle size — one row per engine, because mpv and Media3's SubtitleView draw the same multiplier
+ * at visibly different sizes. There is no conversion between them worth guessing at, so the user gets
+ * a control for each and sets them once against a preview that shows both at the same time.
+ *
+ * OK cycles a row through the four sizes in place rather than opening a picker: a third popup on top
+ * of a popup on top of a dialog is two extra Back presses, and with a live preview a four-value
+ * control reads better as a cycle. Same pattern as the transparency popup below.
+ */
+@Composable
+private fun SubtitleSizeDialog(
+    scaleExo: Float,
+    scaleMpv: Float,
+    font: AppFontFamily?,
+    color: String,
+    bgOpacity: Int,
+    onScaleExo: (Float) -> Unit,
+    onScaleMpv: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = OwnTVTheme.colors
+    val firstRow = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstRow.requestFocus() } }
+    BackHandler { onDismiss() }
+    tv.own.owntv.ui.theme.PopupFontTheme {
+        Box(
+            modifier = Modifier.fillMaxSize().modalScrim()
+                .trapAllFocusExit().focusGroup(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(modifier = Modifier.dialogPanel(width = 520.dp, corner = 16.dp, padding = 18.dp, scroll = false)) {
+                Text(stringResource(R.string.settings_subtitle_size), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.settings_subtitle_size_description),
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                SubtitleSizePreview(
+                    scaleExo = scaleExo, scaleMpv = scaleMpv, font = font, color = color, bgOpacity = bgOpacity,
+                )
+                Spacer(Modifier.height(14.dp))
+                Row2(
+                    icon = OwnTVIcon.SUBTITLE,
+                    title = stringResource(R.string.settings_player_exoplayer),
+                    chip = subSizeName(scaleExo), primaryChip = SubtitleStyle.hasScale(scaleExo),
+                    modifier = Modifier.focusRequester(firstRow),
+                    onClick = { onScaleExo(nextSubSize(scaleExo)) },
+                )
+                Row2(
+                    icon = OwnTVIcon.SUBTITLE,
+                    title = stringResource(R.string.settings_player_mpv),
+                    chip = subSizeName(scaleMpv), primaryChip = SubtitleStyle.hasScale(scaleMpv),
+                    onClick = { onScaleMpv(nextSubSize(scaleMpv)) },
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    OwnTVButton(stringResource(R.string.common_done), onClick = onDismiss)
+                }
+            }
+        }
+    }
+}
+
+/** Both engines' sizes on one stand-in frame — the whole point of the setting is seeing the difference. */
+@Composable
+private fun SubtitleSizePreview(
+    scaleExo: Float,
+    scaleMpv: Float,
+    font: AppFontFamily?,
+    color: String,
+    bgOpacity: Int,
+) {
+    val textColor = if (SubtitleStyle.hasColor(color)) Color(SubtitleStyle.colorArgb(color)) else Color.White
+    val boxColor = if (SubtitleStyle.hasOpacity(bgOpacity)) {
+        Color(SubtitleStyle.backgroundArgb(bgOpacity))
+    } else {
+        Color.Black.copy(alpha = 0.45f)
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SUB_PREVIEW_BRUSH)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(
+            stringResource(R.string.settings_player_exoplayer) to scaleExo,
+            stringResource(R.string.settings_player_mpv) to scaleMpv,
+        ).forEach { (engine, scale) ->
+            Text(engine, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f))
+            Text(
+                stringResource(R.string.settings_subtitle_preview_sample),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * scale,
+                    fontFamily = font?.asComposeFamily() ?: MaterialTheme.typography.bodyLarge.fontFamily,
+                ),
+                color = textColor,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(boxColor)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+/**
  * Background transparency — a ±10% stepper. "Default" is its own state rather than a value in the
  * range: it means the box is left to the renderer (and, on Live TV, to the broadcaster).
  */
@@ -1599,12 +2634,7 @@ private fun SubtitlePreview(
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(12.dp))
-            // A busy-ish backdrop: a flat panel would make even a solid box look harmless.
-            .background(
-                androidx.compose.ui.graphics.Brush.linearGradient(
-                    listOf(Color(0xFF2E4A6B), Color(0xFF7A5C3E), Color(0xFF3B6B4A)),
-                ),
-            ),
+            .background(SUB_PREVIEW_BRUSH),
         contentAlignment = anchor.alignment(),
     ) {
         Text(
@@ -1632,7 +2662,7 @@ private fun SubtitlePreview(
 }
 
 @Composable
-private fun StepBtn(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun StepBtn(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = OwnTVTheme.colors
     FocusableSurface(
         onClick = onClick,

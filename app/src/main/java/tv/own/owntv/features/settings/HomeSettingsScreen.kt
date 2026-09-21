@@ -33,9 +33,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import tv.own.owntv.features.home.HeroKind
-import tv.own.owntv.features.home.HomeLiveRowMode
-import tv.own.owntv.features.home.HomeRow
+import tv.own.owntv.core.model.HeroKind
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
 import tv.own.owntv.features.home.displayTitle
 import tv.own.owntv.features.home.displayLabel
 import tv.own.owntv.features.home.settingsDescription
@@ -55,6 +55,7 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val config by vm.config.collectAsStateWithLifecycle()
     val trendingAvailability by vm.trendingAvailability.collectAsStateWithLifecycle()
     val devRebuild by vm.devRebuild.collectAsStateWithLifecycle()
+    val heroPreviewEnabled by vm.heroPreviewEnabled.collectAsStateWithLifecycle()
     val androidTvHomeEnabled by settingsVm.androidTvHomeEnabled.collectAsStateWithLifecycle()
     val tvHomeRefresh by settingsVm.tvHomeRefresh.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
@@ -199,6 +200,16 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     onClick = { vm.setHeroInclude(HeroKind.SERIES, !config.heroIncludeSeries) },
                 )
             }
+            item {
+                Row2(
+                    icon = OwnTVIcon.PLAY,
+                    title = stringResource(R.string.settings_hero_preview),
+                    desc = stringResource(R.string.settings_hero_preview_description),
+                    chip = if (heroPreviewEnabled) stringResource(R.string.common_on) else stringResource(R.string.common_off),
+                    primaryChip = heroPreviewEnabled,
+                    onClick = { vm.setHeroPreviewEnabled(!heroPreviewEnabled) },
+                )
+            }
 
             item {
                 Spacer(Modifier.height(6.dp))
@@ -217,7 +228,7 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             if (androidTvHomeEnabled) {
                 item {
                     Row2(
-                        icon = OwnTVIcon.SHARE,
+                        icon = OwnTVIcon.REFRESH,
                         title = stringResource(R.string.settings_refresh_now),
                         desc = stringResource(R.string.settings_refresh_description),
                         chip = when (tvHomeRefresh) {

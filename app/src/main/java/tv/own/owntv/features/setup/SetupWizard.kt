@@ -57,6 +57,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.database.entity.SourceEntity
+import tv.own.owntv.core.setup.SourceImporter
 import tv.own.owntv.core.sync.importProgressDisplay
 import tv.own.owntv.features.profiles.ProfileEditorDialog
 import tv.own.owntv.features.settings.FirstRunLanguageSelector
@@ -161,7 +162,6 @@ fun Onboarding(firstRun: Boolean, onDone: (Long?) -> Unit, onCancel: () -> Unit,
                 remotePayload = vm.remotePayload,
                 onRemotePayloadConsumed = { vm.consumeRemotePayload() },
                 onBack = { step = Step.ADD_SOURCE_CHOOSER },
-                initial = vm.lastFailedSource, // pre-fill on retry after failed import
                 showDefaultToggle = false, // first playlist in setup: nothing to be "default" over yet
             )
             Step.IMPORTING -> ImportProgressScreen(
@@ -458,17 +458,17 @@ private fun ExistingSourcesScreen(sources: List<SourceEntity>, onAdd: (Set<Long>
 
 @Composable
 private fun ImportBackupScreen(
-    state: SetupViewModel.ImportState,
+    state: SourceImporter.ImportState,
     onPick: (java.io.File) -> Unit,
     onPassword: (java.io.File, String?) -> Unit,
     onBack: () -> Unit,
 ) {
     when (state) {
-        SetupViewModel.ImportState.Running -> Centered {
+        SourceImporter.ImportState.Running -> Centered {
             OwnTVSpinner(sizeDp = 56); Spacer(Modifier.height(16.dp))
             Text(stringResource(R.string.setup_restoring), style = MaterialTheme.typography.titleMedium, color = OwnTVTheme.colors.onSurface)
         }
-        is SetupViewModel.ImportState.NeedPassword -> Centered {
+        is SourceImporter.ImportState.NeedPassword -> Centered {
             var password by remember { mutableStateOf("") }
             val firstFocus = remember { FocusRequester() }
             LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
@@ -506,7 +506,7 @@ private fun ImportBackupScreen(
                 OwnTVButton(stringResource(R.string.setup_restore), onClick = { onPassword(state.file, password) }, enabled = password.isNotBlank())
             }
         }
-        is SetupViewModel.ImportState.Failed -> Centered {
+        is SourceImporter.ImportState.Failed -> Centered {
             Text(stringResource(R.string.setup_restore_failed), style = MaterialTheme.typography.headlineLarge, color = OwnTVTheme.colors.onSurface)
             Spacer(Modifier.height(8.dp))
             Text(state.failure.displayText(), style = MaterialTheme.typography.bodyMedium, color = OwnTVTheme.colors.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp))
@@ -574,7 +574,7 @@ private fun ChoiceCard(icon: OwnTVIcon, title: String, desc: String, modifier: M
 
 @Composable
 private fun ImportProgressScreen(
-    state: SetupViewModel.ImportState,
+    state: SourceImporter.ImportState,
     progress: tv.own.owntv.core.sync.ImportStage?,
     onContinue: () -> Unit,
     onRetry: () -> Unit,
@@ -586,13 +586,13 @@ private fun ImportProgressScreen(
     val bgFr = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { bgFr.requestFocus() } }
     LaunchedEffect(state) {
-        if (state is SetupViewModel.ImportState.Success || state is SetupViewModel.ImportState.Failed) runCatching { fr.requestFocus() }
+        if (state is SourceImporter.ImportState.Success || state is SourceImporter.ImportState.Failed) runCatching { fr.requestFocus() }
     }
-    BackHandler(enabled = state is SetupViewModel.ImportState.Running || state is SetupViewModel.ImportState.Idle) { onCancel() }
+    BackHandler(enabled = state is SourceImporter.ImportState.Running || state is SourceImporter.ImportState.Idle) { onCancel() }
     Centered {
         when (state) {
-            SetupViewModel.ImportState.Running, SetupViewModel.ImportState.Idle,
-            is SetupViewModel.ImportState.NeedPassword -> {
+            SourceImporter.ImportState.Running, SourceImporter.ImportState.Idle,
+            is SourceImporter.ImportState.NeedPassword -> {
                 val display = progress?.importProgressDisplay()
                 OwnTVSpinner(sizeDp = 56)
                 Spacer(Modifier.height(20.dp))
@@ -623,7 +623,7 @@ private fun ImportProgressScreen(
                     color = colors.onSurfaceVariant,
                 )
             }
-            is SetupViewModel.ImportState.Success -> {
+            is SourceImporter.ImportState.Success -> {
                 Text(stringResource(R.string.setup_all_set), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
                 Spacer(Modifier.height(10.dp))
                 state.counts?.let { counts ->
@@ -650,7 +650,7 @@ private fun ImportProgressScreen(
                 Spacer(Modifier.height(28.dp))
                 OwnTVButton(stringResource(R.string.setup_continue), onClick = onContinue, icon = OwnTVIcon.PLAY, modifier = Modifier.focusRequester(fr))
             }
-            is SetupViewModel.ImportState.Failed -> {
+            is SourceImporter.ImportState.Failed -> {
                 Text(stringResource(R.string.setup_import_failed), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
                 Spacer(Modifier.height(10.dp))
                 Text(state.failure.displayText(), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp))

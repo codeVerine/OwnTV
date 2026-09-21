@@ -48,7 +48,9 @@ import androidx.tv.material3.Text
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.options.IFramePlayerOptions
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+import tv.own.owntv.BuildConfig
 import tv.own.owntv.R
 import tv.own.owntv.ui.theme.OwnTVTheme
 
@@ -71,6 +73,7 @@ fun TrailerPlayerScreen(videoKey: String, onExit: () -> Unit) {
     var durationSec by remember { mutableFloatStateOf(0f) }
     var failed by remember { mutableStateOf(false) }
     var player by remember { mutableStateOf<YouTubePlayer?>(null) }
+    var reportedPlaybackQuality by remember { mutableStateOf<PlayerConstants.PlaybackQuality?>(null) }
 
     val exitFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { exitFocus.requestFocus() } }
@@ -102,6 +105,16 @@ fun TrailerPlayerScreen(videoKey: String, onExit: () -> Unit) {
         if (failed) { openInYouTube(context, videoKey); onExit() }
     }
 
+    val playerOptions = remember(context) {
+        IFramePlayerOptions.Builder(context)
+            .controls(0)
+            .fullscreen(0)
+            .rel(0)
+            .ivLoadPolicy(3)
+            .ccLoadPolicy(0)
+            .build()
+    }
+
     DisposableEffect(Unit) {
         val listener = object : AbstractYouTubePlayerListener() {
             override fun onReady(youTubePlayer: YouTubePlayer) {
@@ -110,7 +123,10 @@ fun TrailerPlayerScreen(videoKey: String, onExit: () -> Unit) {
             }
 
             override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
-                currentSec = second
+                // The IFrame bridge reports every 100 ms. A TV progress label only needs whole seconds;
+                // avoiding ten Compose state writes/layouts per second leaves more UI budget for WebView video.
+                val wholeSecond = second.toInt().coerceAtLeast(0)
+                if (currentSec.toInt() != wholeSecond) currentSec = wholeSecond.toFloat()
             }
 
             override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
@@ -121,12 +137,19 @@ fun TrailerPlayerScreen(videoKey: String, onExit: () -> Unit) {
                 failed = true
             }
 
+            override fun onPlaybackQualityChange(
+                youTubePlayer: YouTubePlayer,
+                playbackQuality: PlayerConstants.PlaybackQuality,
+            ) {
+                reportedPlaybackQuality = playbackQuality
+            }
+
             override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
                 if (state == PlayerConstants.PlayerState.ENDED) onExit()
             }
         }
-        // Default IFrame options already hide YouTube's own chrome (controls=0) — our overlay is the only UI.
-        runCatching { playerView.initialize(listener) }.onFailure { failed = true }
+        // OwnTV supplies the TV-safe D-pad controls; do not make WebView render a second control layer.
+        runCatching { playerView.initialize(listener, playerOptions) }.onFailure { failed = true }
         onDispose { player = null; runCatching { playerView.release() } }
     }
 
@@ -208,6 +231,15 @@ fun TrailerPlayerScreen(videoKey: String, onExit: () -> Unit) {
                     color = Color.White,
                     modifier = Modifier.width(120.dp),
                 )
+                if (BuildConfig.DEV_TOOLS) {
+                    reportedPlaybackQuality?.let { quality ->
+                        Text(
+                            text = quality.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White,
+                        )
+                    }
+                }
             }
         }
     }

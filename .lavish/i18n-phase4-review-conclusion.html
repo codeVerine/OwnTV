@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OwnTV i18n Phase 4 — review explained, decisions to conclude</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #040e0b;
+      --surface: #0e1513;
+      --surface-low: #161d1b;
+      --surface-high: #252b29;
+      --surface-highest: #303634;
+      --text: #dee4e1;
+      --muted: #bfc9c4;
+      --dim: #8b9791;
+      --outline: #3f4945;
+      --accent: #52dbc8;
+      --accent-dark: #004f46;
+      --accent-ink: #062e29;
+      --error: #ffb4ab;
+      --error-bg: #4b1717;
+      --warning: #ffd29c;
+      --warning-bg: #432b0e;
+      --info: #c5e7ff;
+      --info-bg: #173545;
+      --success: #b8f1d3;
+      --success-bg: #113a2b;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .28);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: var(--bg); }
+    body {
+      margin: 0;
+      min-width: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 85% 0%, rgba(82, 219, 200, .12), transparent 26rem),
+        linear-gradient(180deg, #071310 0, var(--bg) 28rem);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.58;
+    }
+
+    a { color: var(--accent); }
+    code {
+      color: #aef7ec;
+      background: rgba(82, 219, 200, .09);
+      border: 1px solid rgba(82, 219, 200, .17);
+      border-radius: .42rem;
+      padding: .08rem .35rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .9em;
+      overflow-wrap: anywhere;
+    }
+
+    .page { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 5rem; }
+
+    .eyebrow { color: var(--accent); font-weight: 800; font-size: .76rem; letter-spacing: .15em; text-transform: uppercase; }
+    h1, h2, h3 { line-height: 1.14; margin: 0; }
+    h1 { max-width: 900px; margin-top: .65rem; font-size: clamp(2rem, 4.6vw, 4rem); letter-spacing: -.045em; }
+    h2 { font-size: clamp(1.55rem, 3vw, 2.25rem); letter-spacing: -.025em; }
+    h3 { font-size: 1.08rem; }
+    p { margin: 0; }
+
+    .hero {
+      min-width: 0;
+      border: 1px solid var(--outline);
+      border-radius: 1.5rem;
+      padding: clamp(1.4rem, 4vw, 3.4rem);
+      background: rgba(14, 21, 19, .88);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .hero-copy { max-width: 900px; margin-top: 1.15rem; color: var(--muted); font-size: clamp(1rem, 2vw, 1.2rem); }
+    .hero-copy strong { color: var(--text); }
+
+    .decision {
+      margin-top: 1.5rem;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: .9rem;
+      padding: 1rem 1.1rem;
+      border-radius: 1rem;
+      background: rgba(82, 219, 200, .1);
+      border: 1px solid rgba(82, 219, 200, .3);
+    }
+
+    .decision .icon { color: var(--accent); font-size: 1.2rem; }
+    .decision strong { color: #bffcf3; }
+
+    .quick-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; margin-top: 1.35rem; }
+    .stat { min-width: 0; border-radius: 1rem; padding: 1rem; background: var(--surface-low); border: 1px solid var(--outline); }
+    .stat-number { font-size: 1.65rem; font-weight: 850; color: var(--accent); }
+    .stat-label { color: var(--muted); font-size: .86rem; }
+
+    .nav {
+      position: sticky;
+      top: .7rem;
+      z-index: 10;
+      display: flex;
+      gap: .45rem;
+      margin: 1rem 0 2.2rem;
+      padding: .55rem;
+      border: 1px solid var(--outline);
+      border-radius: 1rem;
+      background: rgba(14, 21, 19, .92);
+      backdrop-filter: blur(16px);
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .nav a { flex: 0 0 auto; padding: .48rem .76rem; border-radius: .65rem; color: var(--muted); text-decoration: none; font-size: .84rem; font-weight: 700; }
+    .nav a:hover, .nav a:focus-visible { color: var(--text); background: var(--surface-high); outline: none; }
+
+    section { scroll-margin-top: 5.2rem; margin-top: 3.2rem; }
+    .section-head { display: grid; gap: .55rem; margin-bottom: 1.2rem; }
+    .section-head p { max-width: 840px; color: var(--muted); }
+
+    /* ---------- table ---------- */
+    .table-wrap { min-width: 0; border: 1px solid var(--outline); border-radius: 1.2rem; background: var(--surface); overflow: hidden; }
+    .table-scroll { overflow-x: auto; }
+    table.review-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    .review-table th, .review-table td { text-align: left; vertical-align: top; padding: .8rem .9rem; border-top: 1px solid var(--outline); }
+    .review-table thead th { border-top: 0; color: var(--dim); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+    .review-table tbody tr:hover { background: rgba(82, 219, 200, .045); }
+    .review-table .num { color: var(--dim); font: 700 .78rem ui-monospace, SFMono-Regular, monospace; white-space: nowrap; }
+    .review-table .what { min-width: 0; font-weight: 800; }
+    .review-table .prob, .review-table .fix { min-width: 0; color: var(--muted); font-size: .9rem; }
+    .review-table .fix { color: var(--text); }
+    .review-table .fix code, .review-table .prob code { font-size: .84em; }
+
+    .severity { display: inline-flex; width: fit-content; border-radius: 999px; padding: .18rem .5rem; font-size: .68rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
+    .blocking .severity { color: var(--error); background: var(--error-bg); }
+    .major .severity { color: var(--warning); background: var(--warning-bg); }
+
+    /* ---------- decision board ---------- */
+    .decision-board { display: grid; gap: .9rem; }
+    .decision-card {
+      min-width: 0;
+      border: 1px solid var(--outline);
+      border-radius: 1.1rem;
+      background: var(--surface);
+      padding: 1.15rem 1.25rem;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: .9rem 1.2rem;
+      align-items: start;
+    }
+    .decision-card h3 { font-size: 1.02rem; }
+    .decision-card .d-label { color: var(--dim); font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; margin-bottom: .3rem; }
+    .decision-card .d-sub { color: var(--muted); font-size: .9rem; margin-top: .35rem; max-width: 66ch; }
+
+    .choice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .6rem; align-items: start; padding: .6rem .7rem; border-radius: .7rem; border: 1px solid transparent; cursor: pointer; }
+    .choice:hover { background: var(--surface-high); }
+    .choice:has(input:checked) { background: rgba(82, 219, 200, .08); border-color: rgba(82, 219, 200, .35); }
+    .choice input { margin-top: .28rem; accent-color: var(--accent); }
+    .choice .opt-label { font-weight: 700; font-size: .92rem; }
+    .choice .opt-label .rec { color: var(--success); font-size: .68rem; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; margin-left: .4rem; }
+    .choice .opt-desc { color: var(--muted); font-size: .86rem; margin-top: .15rem; }
+    .choice code { font-size: .84em; }
+
+    .decision-actions { grid-column: 1 / -1; display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+    .queue-btn {
+      appearance: none;
+      border: 1px solid rgba(82, 219, 200, .5);
+      background: var(--accent-dark);
+      color: #bffcf3;
+      font-weight: 800;
+      font-size: .85rem;
+      padding: .55rem 1rem;
+      border-radius: .7rem;
+      cursor: pointer;
+    }
+    .queue-btn:hover { background: rgba(0, 79, 70, .8); }
+    .queued-note { color: var(--success); font-size: .85rem; font-weight: 700; }
+
+    .notes-area { width: 100%; min-height: 5.5rem; background: var(--surface-low); color: var(--text); border: 1px solid var(--outline); border-radius: .7rem; padding: .7rem; font: inherit; resize: vertical; }
+    .notes-area:focus { outline: 1px solid var(--accent); }
+
+    /* ---------- finding details ---------- */
+    .concern-group { display: grid; gap: .8rem; }
+    details.concern { min-width: 0; border: 1px solid var(--outline); border-radius: 1rem; background: var(--surface); overflow: clip; }
+    details.concern[open] { background: var(--surface-low); }
+    details.concern.blocking { border-left: 4px solid var(--error); }
+    details.concern.major { border-left: 4px solid var(--warning); }
+
+    summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: .8rem; align-items: center; min-width: 0; padding: 1rem 1.1rem; cursor: pointer; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; color: var(--muted); font-size: 1.4rem; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    .number { color: var(--muted); font: 700 .8rem ui-monospace, SFMono-Regular, monospace; }
+    .summary-title { min-width: 0; font-weight: 800; overflow-wrap: anywhere; }
+
+    .concern-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; padding: 0 1.1rem 1.1rem; }
+    .explain { min-width: 0; padding: .9rem; border-radius: .8rem; background: rgba(4, 14, 11, .62); border: 1px solid rgba(137, 147, 143, .2); }
+    .explain h4 { margin: 0 0 .4rem; color: var(--accent); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; }
+    .explain p { color: var(--muted); font-size: .9rem; }
+    .explain strong { color: var(--text); }
+    .explain ul { margin: .45rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .9rem; }
+    .explain li + li { margin-top: .35rem; }
+    .verified { color: var(--success); font-weight: 800; }
+
+    .decision-chip {
+      display: inline-flex;
+      width: fit-content;
+      border-radius: 999px;
+      padding: .14rem .5rem;
+      font-size: .68rem;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--info);
+      background: var(--info-bg);
+      border: 1px solid rgba(197, 231, 255, .25);
+      white-space: nowrap;
+    }
+
+    .flow-card, .comparison, .evidence { min-width: 0; padding: clamp(1rem, 3vw, 1.6rem); border: 1px solid var(--outline); border-radius: 1.2rem; background: var(--surface); overflow: hidden; }
+    .mermaid { min-width: 0; overflow-x: auto; }
+    .caption { margin-top: 1rem; color: var(--muted); font-size: .88rem; }
+
+    .keep-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+    .keep { min-width: 0; padding: 1rem; border-radius: .9rem; background: var(--success-bg); border: 1px solid rgba(184, 241, 211, .25); }
+    .keep strong { display: block; color: var(--success); margin-bottom: .3rem; }
+    .keep p { color: var(--muted); font-size: .9rem; }
+
+    .recommendation { display: grid; gap: 1rem; padding: clamp(1.2rem, 3vw, 2rem); border-radius: 1.2rem; border: 1px solid rgba(82, 219, 200, .45); background: linear-gradient(135deg, rgba(0, 79, 70, .55), rgba(14, 21, 19, .92)); }
+    .steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+    .step { min-width: 0; padding: .9rem; border-radius: .8rem; background: rgba(4, 14, 11, .62); border: 1px solid rgba(82, 219, 200, .2); }
+    .step b { color: var(--accent); margin-right: .35rem; }
+    .step span { color: var(--muted); }
+
+    .evidence-list { display: grid; gap: .75rem; margin-top: 1rem; }
+    .evidence-row { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .8rem; padding-top: .75rem; border-top: 1px solid var(--outline); }
+    .evidence-row:first-child { border-top: 0; padding-top: 0; }
+    .evidence-row strong { color: var(--text); }
+    .evidence-row div { min-width: 0; color: var(--muted); }
+
+    .footnote { margin-top: 2rem; color: #89938f; font-size: .82rem; text-align: center; }
+
+    @media (max-width: 860px) {
+      .quick-stats, .concern-body { grid-template-columns: 1fr; }
+      .keep-grid, .steps { grid-template-columns: 1fr; }
+      .evidence-row { grid-template-columns: 1fr; gap: .25rem; }
+      summary { grid-template-columns: auto minmax(0, 1fr) auto; }
+      .summary-title { grid-column: 2; }
+      .severity { grid-column: 2; grid-row: 2; }
+      .decision-card { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 480px) {
+      .page { width: min(100% - 1rem, 1180px); padding-top: .5rem; }
+      .hero { border-radius: 1rem; }
+      .decision { grid-template-columns: 1fr; }
+      .nav { top: .25rem; border-radius: .8rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero" id="top">
+      <div class="eyebrow">OwnTV · i18n Phase 4 · follow-up review</div>
+      <h1>The plan survives. Three decisions settle the rest.</h1>
+      <p class="hero-copy">
+        The reviewer found <strong>10 issues: 3 blocking, 7 major</strong>. The core direction — one-off Claude
+        batch seed, then Weblate, catalogue-driven packaging — is confirmed sound, including the model choice
+        and batch pricing. But the release gate as proposed <strong>does not actually gate</strong>, the translation-status
+        snapshot has <strong>no writer or provenance</strong>, and four plan details contain hard factual errors
+        (batch arithmetic, ID format, XML escaping order, alias count). Every repo-side claim in this review was
+        verified against the codebase before being shown to you.
+      </p>
+      <div class="decision">
+        <div class="icon" aria-hidden="true">→</div>
+        <p><strong>To reach a conclusion:</strong> skim the at-a-glance table, lock the five decisions below it
+          (each has a recommended option), and use the detailed findings underneath if you want the reasoning.
+          Queue each decision with its button — that becomes the conclusion.</p>
+      </div>
+      <div class="quick-stats" aria-label="Review summary">
+        <div class="stat"><div class="stat-number">3</div><div class="stat-label">blocking findings</div></div>
+        <div class="stat"><div class="stat-number">7</div><div class="stat-label">major revisions</div></div>
+        <div class="stat"><div class="stat-number">10/10</div><div class="stat-label">repo-side claims verified</div></div>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="Page sections">
+      <a href="#at-a-glance">At a glance</a>
+      <a href="#decisions">Lock decisions</a>
+      <a href="#gate">Gate (1–2)</a>
+      <a href="#seed">Seed pipeline (3–5, 7)</a>
+      <a href="#pilot">Pilot &amp; measurement (6, 10)</a>
+      <a href="#infra">Consolidation (8–9)</a>
+      <a href="#keep">Confirmed correct</a>
+      <a href="#order">Execution order</a>
+      <a href="#evidence">Evidence</a>
+    </nav>
+
+    <section id="at-a-glance">
+      <div class="section-head">
+        <div class="eyebrow">The whole review, one screen</div>
+        <h2>Ten findings at a glance</h2>
+        <p>Everything in this table was checked against the repository (file:line evidence in the appendix). The
+          “Blocking” tag means the release would ship with the wrong language behaviour or the gate would be fake;
+          “Major” means the plan would drift, mis-measure, or fail only later.</p>
+      </div>
+      <div class="table-wrap">
+        <div class="table-scroll">
+          <table class="review-table">
+            <thead>
+              <tr><th>#</th><th>Severity</th><th>Finding</th><th>Why it matters</th><th>Required change</th></tr>
+            </thead>
+            <tbody>
+              <tr class="blocking">
+                <td class="num">1</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">Tag trigger would not gate a release</td>
+                <td class="prob"><code>push.tags: ['v*']</code> on i18n.yml starts a parallel workflow; android.yml waits only for its own <code>check</code> job, then publishes. A failed i18n run can coexist with a published APK.</td>
+                <td class="fix">Run <code>validate_strings.py --release</code> + <code>gen_supported_locales.py check</code> inside android.yml's <code>check</code> job → <code>build.needs: check</code> becomes a real gate.</td>
+              </tr>
+              <tr class="blocking">
+                <td class="num">2</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">translation_status has no writer or provenance</td>
+                <td class="prob">Snapshot accepts <code>key → translated/approved</code> only; editing source or translation never invalidates it. Android XML can't carry Weblate's review state, so nothing refreshes it.</td>
+                <td class="fix">Either hash-bind source + translation with a defined Weblate export, or drop it from the release path and gate on key presence + structural validity.</td>
+              </tr>
+              <tr class="blocking">
+                <td class="num">3</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">safe_literals as a glossary corrupts translations</td>
+                <td class="prob"><code>protocol</code> category has 1,129 path-scoped entries incl. <code>name</code>, <code>on</code>, <code>one</code>. Wholesale “never translate these” leaves normal UI untranslated.</td>
+                <td class="fix">Small human-curated immutable-token glossary only; frozen per-locale terminology table injected into every chunk.</td>
+              </tr>
+              <tr class="blocking">
+                <td class="num">4</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">Batch request shape is invalid</td>
+                <td class="prob"><code>&lt;languageTag&gt;|&lt;file&gt;|&lt;chunk&gt;</code> — <code>|</code> isn't allowed in IDs; key-enumerated union schema can exceed the 16-union limit and kills prompt caching per chunk.</td>
+                <td class="fix">Sanitized IDs (<code>de-strings-settings-0001</code>) mapped in a persisted manifest; stable small array schema, fixed string vs plural schemas; handle <code>stop_reason</code>.</td>
+              </tr>
+              <tr class="blocking">
+                <td class="num">5</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">XML write order destroys &lt;xliff:g&gt;</td>
+                <td class="prob">“Reinsert elements, then escape &lt;” turns <code>&lt;xliff:g&gt;</code> into displayed text; <code>\n</code> / <code>\uXXXX</code> escapes (real paragraph breaks at strings_settings.xml:885, strings_player.xml:356) aren't protected.</td>
+                <td class="fix">Escape text nodes first, then insert XLIFF nodes / serialize a mixed-content tree. Protect Android escapes, never the completed body.</td>
+              </tr>
+              <tr class="blocking">
+                <td class="num">6</td>
+                <td><span class="severity">Blocking</span></td>
+                <td class="what">Pilot can't be walked on-device</td>
+                <td class="prob">de/ar/ja are <code>packaged: false</code>; Gradle packages only <code>packaged == true</code> qualifiers (app/build.gradle.kts:143); picker hides them.</td>
+                <td class="fix">Debug-only Gradle property adding pilot qualifiers, or a local uncommitted flip reverted after QA. Inspect the pilot APK for the three locales first.</td>
+              </tr>
+              <tr class="major">
+                <td class="num">7</td>
+                <td><span class="severity">Major</span></td>
+                <td class="what">Batch arithmetic is wrong</td>
+                <td class="prob">Six files give 41 chunks/locale (95→3, 119→3, 188→5, 204→6, 260→7, 671→17), ~820 requests for 20 locales — not 31 chunks / 620.</td>
+                <td class="fix">Persisted run manifest (batch ID, hashes, requests, results, retry lineage); resumable; stage whole locale, publish only when all six files validate.</td>
+              </tr>
+              <tr class="major">
+                <td class="num">8</td>
+                <td><span class="severity">Major</span></td>
+                <td class="what">Coverage can still drift</td>
+                <td class="prob">Validator and generator keep separate parsers/key-sets (validate_strings.py:80, gen_supported_locales.py:35); a third “identical” calc in <code>--report</code> permits drift.</td>
+                <td class="fix">One shared resource-inventory + coverage module used by both tools; define report schema, rounding, stdout, exit behaviour.</td>
+              </tr>
+              <tr class="major">
+                <td class="num">9</td>
+                <td><span class="severity">Major</span></td>
+                <td class="what">Weblate generator contract incomplete</td>
+                <td class="prob">Eight qualifier/code mismatches under the discovery regex (incl. <code>pt-rPT → pt_PT</code>); “exactly seven aliases” isn't derivable. No named checked-in output for <code>gen_weblate_config.py check</code>.</td>
+                <td class="fix">Explicit normalization rule + tests; name the generated artifact; use Weblate's GitHub App flow (no separate webhook); format check is built-in, not an addon.</td>
+              </tr>
+              <tr class="major">
+                <td class="num">10</td>
+                <td><span class="severity">Major</span></td>
+                <td class="what">APK measurement comes too late</td>
+                <td class="prob">Execution step 8 can't measure “before” after step 5 flipped the catalogue; the existing baseline is an older Phase 0 measurement (docs/i18n-apk-size-baseline.md:30).</td>
+                <td class="fix">Pre-flip release immediately before the flip; post-flip after; same commit, toolchain, signing, clean build.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="decisions">
+      <div class="section-head">
+        <div class="eyebrow">Where the conclusion gets made</div>
+        <h2>Five decisions, one recommended option each</h2>
+        <p>These are the only real choices the review leaves open. The recommended options together form the
+          conclusion; the detailed findings below are the reasoning. Pick each, then queue it — or annotate
+          anything you disagree with directly on this page.</p>
+      </div>
+
+      <div class="decision-board">
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Decision D1 · Release gate</div>
+            <h3>Where does translation validation actually gate releases?</h3>
+            <p class="d-sub">The proposed tag trigger on i18n.yml runs in parallel and never blocks android.yml's publish. The gate must live where the release already waits.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="d1" onsubmit="return queueDecision(this)">
+              <label class="choice">
+                <input type="radio" name="d1" value="A" checked
+                  data-label="D1 · Release gate → Option A (recommended): real gate in android.yml — run validate_strings.py --release and gen_supported_locales.py check inside the existing check job, so build.needs: check gates the release; i18n.yml stays PR-only (a tag trigger, if any, is reporting only).">
+                <span>
+                  <span class="opt-label">Real gate inside android.yml<span class="rec">Recommended</span></span>
+                  <span class="opt-desc">Run <code>validate_strings.py --release</code> and <code>gen_supported_locales.py check</code> in the existing <code>check</code> job. The already-present <code>build.needs: check</code> then genuinely gates. Tag-triggered i18n.yml, if kept, is reporting only.</span>
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="d1" value="B"
+                  data-label="D1 · Release gate → Option B: keep the tag trigger and accept it is reporting-only; no changes to android.yml check job.">
+                <span>
+                  <span class="opt-label">Tag trigger, reporting only</span>
+                  <span class="opt-desc">Accept that i18n.yml on <code>v*</code> tags is a health report, not a gate; android.yml stays untouched.</span>
+                </span>
+              </label>
+              <button type="submit" class="queue-btn">Queue this decision</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Decision D2 · translation_status.json</div>
+            <h3>What happens to the checked-in status snapshot?</h3>
+            <p class="d-sub">The snapshot has no writer, no hashes, and no Weblate path. Making it trustworthy is a real project; removing it from the release path is one line of policy.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="d2" onsubmit="return queueDecision(this)">
+              <label class="choice">
+                <input type="radio" name="d2" value="A" checked
+                  data-label="D2 · translation_status → Option A (recommended): drop it from the release path — gate on key presence plus structural validation (malformed fails, missing passes); Weblate owns editorial state; split or archive the snapshot, do not let it block.">
+                <span>
+                  <span class="opt-label">Drop from the release path<span class="rec">Recommended</span></span>
+                  <span class="opt-desc">Gate on key presence + structural validity only (malformed fails, missing passes — the policy you already agreed). Weblate owns editorial state. Split or archive the snapshot for readability; it stops being a blocker.</span>
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="d2" value="B"
+                  data-label="D2 · translation_status → Option B: keep it and make it self-invalidating — add source and translation hashes, a defined Weblate export writer, per-file schema, legacy migration, and an acceptance test that a source-text edit fails until status refreshes.">
+                <span>
+                  <span class="opt-label">Keep it, make it self-invalidating</span>
+                  <span class="opt-desc">Source + translation hashes, a defined Weblate export writer, per-file schema, migration, and the acceptance test the reviewer describes. More work, keeps the “unfinished = release-unsafe” concept alive.</span>
+                </span>
+              </label>
+              <button type="submit" class="queue-btn">Queue this decision</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Decision D3 · Seed glossary</div>
+            <h3>How do we keep protocol tokens untranslated without corrupting UI text?</h3>
+            <p class="d-sub">safe_literals.txt is occurrence- and path-scoped — its protocol category is full of ordinary words. And “translate consistently” can't be enforced across independent batch requests.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="d3" onsubmit="return queueDecision(this)">
+              <label class="choice">
+                <input type="radio" name="d3" value="A" checked
+                  data-label="D3 · Seed glossary → Option A (recommended): curated glossary only — a small human-reviewed list of immutable product/protocol tokens, never derived wholesale from safe_literals.txt; add a per-locale terminology pre-pass that freezes target terms once and injects the same frozen table into every chunk.">
+                <span>
+                  <span class="opt-label">Curated glossary + frozen terminology pass<span class="rec">Recommended</span></span>
+                  <span class="opt-desc">A small human-reviewed list of immutable tokens (product names, protocol constants) — never derived wholesale from <code>safe_literals.txt</code>. A per-locale pre-pass chooses target terms once, then injects the same frozen table into every chunk for that locale.</span>
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="d3" value="B"
+                  data-label="D3 · Seed glossary → Option B: ship the pilot without a glossary; add terminology handling only if seed output quality demands it.">
+                <span>
+                  <span class="opt-label">No glossary in the pilot</span>
+                  <span class="opt-desc">Defer terminology handling entirely; add it only if pilot output quality demands it.</span>
+                </span>
+              </label>
+              <button type="submit" class="queue-btn">Queue this decision</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Decision D4 · Pilot packaging</div>
+            <h3>How do de/ar/ja get into the pilot APK at all?</h3>
+            <p class="d-sub">They're <code>packaged: false</code> today, so Gradle strips them and the picker hides them. The pilot needs an explicit QA mechanism that doesn't change release policy.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="d4" onsubmit="return queueDecision(this)">
+              <label class="choice">
+                <input type="radio" name="d4" value="A" checked
+                  data-label="D4 · Pilot packaging → Option A (recommended): debug-only Gradle property — add the pilot qualifiers for debug variants only, release policy untouched; verify the pilot APK actually contains de/ar/ja before device testing.">
+                <span>
+                  <span class="opt-label">Debug-only Gradle property<span class="rec">Recommended</span></span>
+                  <span class="opt-desc">A debug-only Gradle property adds pilot qualifiers without touching release policy. Prove the three locales are in the pilot APK before device testing begins.</span>
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="d4" value="B"
+                  data-label="D4 · Pilot packaging → Option B: local uncommitted catalogue flip — flip de/ar/ja to packaged=true locally for QA and revert before the real flip.">
+                <span>
+                  <span class="opt-label">Local uncommitted flip</span>
+                  <span class="opt-desc">Temporarily flip de/ar/ja to <code>packaged: true</code> in your working tree, QA, and revert before the real flip. Riskier: easy to forget to revert.</span>
+                </span>
+              </label>
+              <button type="submit" class="queue-btn">Queue this decision</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Decision D5 · Execution order</div>
+            <h3>Adopt the review's 8-step execution order?</h3>
+            <p class="d-sub">The review reorders the plan so the gate, shared infrastructure, and a resumable seed runner land before any locale is flipped or measured.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="d5" onsubmit="return queueDecision(this)">
+              <label class="choice">
+                <input type="radio" name="d5" value="A" checked
+                  data-label="D5 · Execution order → Option A (recommended): adopt the review's 8-step order verbatim (shared infra → real gate → safe seed runner → pilot → remaining locales → Weblate → atomic flip+measure → verification).">
+                <span>
+                  <span class="opt-label">Adopt verbatim<span class="rec">Recommended</span></span>
+                  <span class="opt-desc">Shared infra → real gate → safe seed runner → three-locale pilot → remaining locales → Weblate setup → atomic flip + measurement → verification with negative gate tests.</span>
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="d5" value="B"
+                  data-label="D5 · Execution order → Option B: adopt with changes (describe them in the notes box).">
+                <span>
+                  <span class="opt-label">Adopt with changes</span>
+                  <span class="opt-desc">Keep the shape but adjust steps — describe the changes in the notes box.</span>
+                </span>
+              </label>
+              <button type="submit" class="queue-btn">Queue this decision</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+
+        <div class="decision-card">
+          <div>
+            <div class="d-label">Open notes</div>
+            <h3>Anything else to fold into the conclusion?</h3>
+            <p class="d-sub">Optional: budget, retry cap, acceptance criteria wording, or a different recommended option you want recorded.</p>
+          </div>
+          <div class="decision-actions">
+            <form class="decision-form" data-decision="notes" onsubmit="return queueNotes(this)">
+              <textarea class="notes-area" name="notes" placeholder="e.g. cap the seed budget at $X; D2 Option B but only with the acceptance test…"></textarea>
+              <button type="submit" class="queue-btn">Queue notes</button>
+              <span class="queued-note" hidden>✓ queued</span>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gate">
+      <div class="section-head">
+        <div class="eyebrow">Group A · findings 1–2 · blocking</div>
+        <h2>The release gate must be real</h2>
+        <p>Both blocking findings here are about trust: a gate that doesn't gate, and a status file nothing ever refreshes. Together they decide what “release-safe” means in this plan.</p>
+      </div>
+
+      <div class="flow-card">
+        <div class="mermaid">
+flowchart LR
+  T["Tag v1.2.3 pushed"]
+  T --> I["i18n.yml (separate workflow)"] --> R["reports translation health"]
+  T --> A["android.yml"]
+  A --> C["check job"]
+  C -->|"needs: check"| B["build job"]
+  B --> P["Publish GitHub Release"]
+  R -.->|"failure here does NOT stop this path"| P
+  A -->|"fix: run validators here"| C
+        </div>
+        <p class="caption">The dashed line is the gap: the tag-triggered i18n workflow runs in parallel and its failure never blocks publishing. The release waits only on android.yml's own <code>check</code> job.</p>
+      </div>
+
+      <div class="concern-group" style="margin-top:1rem;">
+        <details class="concern blocking" open>
+          <summary><span class="number">01</span><span class="summary-title">The proposed tag trigger would not gate a release</span><span class="severity">Blocking</span><span class="decision-chip">→ D1</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>Adding <code>push.tags: ['v*']</code> to i18n.yml starts a <strong>second workflow</strong> that runs in parallel with android.yml. Workflows don't wait for each other. The review's proposed gate therefore gates nothing.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> i18n.yml's trigger block is at line 15 (<code>on:</code> → <code>pull_request</code> + <code>workflow_dispatch</code> only; no tags today).</p><ul><li><code>android.yml:68</code> — <code>build: needs: check</code>: the release only waits for its own check job.</li><li><code>android.yml:226–227</code> — Publish step gated on the tag alone.</li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Run at least <code>validate_strings.py --release</code> and <code>gen_supported_locales.py check</code> inside android.yml's <code>check</code> job. Then the existing <code>build.needs: check</code> is a real gate. Keep a tag-triggered i18n.yml only if you want a parallel report; it is not a substitute.</p></div>
+          </div>
+        </details>
+
+        <details class="concern blocking" open>
+          <summary><span class="number">02</span><span class="summary-title">translation_status has no ongoing writer or provenance</span><span class="severity">Blocking</span><span class="decision-chip">→ D2</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>The snapshot says “this key is approved” but nothing checks whether the English text or the translation changed after that approval. And because Android XML drops Weblate's richer review state, Weblate can't refresh the snapshot through its normal commits. The file would age into stale metadata.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> <code>validate_strings.py:285</code> <code>_load_translation_status()</code> reads <code>key → state</code>; line 324 rejects any state outside <code>{translated, approved}</code>. No source or translation hash is stored.</p><ul><li><span class="verified">✓</span> Status keys are only checked against known source keys — not against the text they approve.</li><li><span class="verified">✓</span> Today the file covers only <code>en-GB</code> (the regional override), so this is inert — until the seed grows it to 20 locales × ~1,500 keys with no writer.</li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Pick one: (a) drop it from the release path — gate on key presence + structural validity (the policy already agreed: malformed fails, missing passes); or (b) keep it with source + translation hashes, a defined Weblate export path, per-file schema, legacy migration, and an acceptance test proving a source-text edit fails until status refreshes. Splitting the file fixes reviewability, not correctness.</p></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="seed">
+      <div class="section-head">
+        <div class="eyebrow">Group B · findings 3–5, 7 · blocking + major</div>
+        <h2>The seed pipeline needs mechanical fixes</h2>
+        <p>The one-off Claude batch is where translations are actually produced. These findings are about the batch request shape, the glossary, XML escaping, and the money math — all verifiable, all fixable before a single request is sent.</p>
+      </div>
+
+      <div class="flow-card">
+        <div class="mermaid">
+flowchart LR
+  S["values/*.xml · 6 files · 1,537 resources"] --> CH["41 chunks per locale · 40 keys each"]
+  CH --> B["One batch · ~820 requests for 20 locales"]
+  B --> M["Run manifest: batch ID ↔ sanitized request IDs"]
+  M --> ST["Stage whole locale in temp dir"]
+  ST --> V{"All six files validate?"}
+  V -->|"yes"| PUB["Publish locale files atomically"]
+  V -->|"no"| RET["Retry from manifest · resumable, no re-buy"]
+        </div>
+        <p class="caption">The corrected pipeline: per-file chunking yields 41 chunks per locale (not 31), a persisted manifest makes collection resumable, and a locale is published only after every one of its six files validates.</p>
+      </div>
+
+      <div class="concern-group" style="margin-top:1rem;">
+        <details class="concern blocking" open>
+          <summary><span class="number">03</span><span class="summary-title">The proposed protocol glossary would corrupt translations</span><span class="severity">Blocking</span><span class="decision-chip">→ D3</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p><code>safe_literals.txt</code> is a record of <em>where a literal appears</em>, not a dictionary of words that must never be translated. Its <code>protocol</code> category alone has <strong>1,129 entries</strong> — including <code>name</code>, <code>on</code>, <code>one</code>, <code>tr</code>, <code>turkey</code>, <code>three</code>. Treating those as global exclusions leaves ordinary UI sentences half-English.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> <code>tools/i18n/safe_literals.txt</code> — 3,769 lines; header (line 1) documents the <code>&lt;count&gt;\t&lt;category&gt;\t&lt;path&gt;\t&lt;literal&gt;</code> schema; path-scoped by design.</p><ul><li><span class="verified">✓</span> <code>name</code>, <code>on</code> at lines 249–251 (CompanionHttpProtocol.kt); <code>one</code> at line 1201 (EpgMatcher.kt); <code>tr</code>/<code>turkey</code> at 1233–1234.</li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Seed the glossary from <strong>explicitly reviewed immutable tokens only</strong> — product/brand and protocol constants. And because “translate consistently” is not enforceable across independent batch requests, add a per-locale terminology pre-pass that chooses target terms once and injects that frozen table into every chunk for that locale.</p></div>
+          </div>
+        </details>
+
+        <details class="concern blocking" open>
+          <summary><span class="number">04</span><span class="summary-title">The documented Batch API request shape contains an invalid ID and an underspecified schema</span><span class="severity">Blocking</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p><code>custom_id = "&lt;languageTag&gt;|&lt;file&gt;|&lt;chunk-index&gt;"</code> is rejected out of the box: batch IDs permit only alphanumerics, <code>_</code>, and <code>-</code>, max 64 chars. Separately, a per-chunk schema that enumerates ~40 keys as properties (some plural unions) can exceed Anthropic's 16-union structured-output limit, and any per-chunk schema change invalidates prompt caching.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> The <code>|</code>-separated ID is invalid per Anthropic's batch docs (alphanumerics / <code>_</code> / <code>-</code>, ≤64 chars).</p><ul><li><span class="verified">✓</span> The 16-union structured-output limit and schema-change cache invalidation are documented in Anthropic's structured-output docs.</li><li><span class="verified">✓</span> Structured outputs can still be incomplete on <code>max_tokens</code> or nonconforming on refusal.</li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Sanitized IDs like <code>de-strings-settings-0001</code>, with the exact ID→input mapping persisted in the run manifest. Use a stable, small array schema — separate fixed schemas for strings and plurals — and validate keys, counts, quantities, and ordering locally. Handle <code>stop_reason</code>, not only <code>result.type</code>.</p></div>
+          </div>
+        </details>
+
+        <details class="concern blocking" open>
+          <summary><span class="number">05</span><span class="summary-title">The XML write order would destroy &lt;xliff:g&gt; markup</span><span class="severity">Blocking</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>“Reinsert the original elements, then escape <code>&lt;</code> to <code>&amp;lt;</code>” applied literally turns <code>&lt;xliff:g&gt;</code> into <em>visible text</em>. The tokens the whole pipeline exists to protect become the thing users see.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> The source carries meaningful paragraph breaks and Android escapes that a text-only pass can silently convert, drop, or double:</p><ul><li><span class="verified">✓</span> <code>strings_settings.xml:885</code> — <code>settings_low_zoom_warning</code>: <code>…\n\nPress OK…</code> plus two <code>&lt;xliff:g&gt;</code> elements.</li><li><span class="verified">✓</span> <code>strings_player.xml:356</code> — <code>player_subtitles_account_needed</code>: <code>\n\n</code> and <code>\u2192</code>.</li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Escape translated <em>text nodes</em> first, then insert protected XLIFF nodes — or serialize a mixed-content XML tree. Never globally escape the completed element body. The token layer must protect <code>\n</code> and <code>\uXXXX</code> escapes, not only format specifiers; self-validation alone will not catch these.</p></div>
+          </div>
+        </details>
+
+        <details class="concern major" open>
+          <summary><span class="number">07</span><span class="summary-title">The batch arithmetic is wrong</span><span class="severity">Major</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>At 40 entries per file-scoped chunk, the six live files produce <strong>41 chunks per locale</strong>, not 31 — about <strong>820 requests for 20 locales</strong>. The pilot plus full rollout also means at least two batch submissions, not one, before retries.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> Counted translatable resources per file (strings + plurals + arrays):</p><ul><li><code>strings.xml</code> 95 → 3 chunks</li><li><code>strings_setup.xml</code> 119 → 3</li><li><code>strings_settings.xml</code> 188 → 5</li><li><code>strings_player.xml</code> 204 → 6</li><li><code>strings_content.xml</code> 260 → 7</li><li><code>strings_features.xml</code> 671 → 17</li><li>Total 1,537 resources · 41 chunks · ×20 = <strong>820</strong></li></ul></div>
+            <div class="explain"><h4>Required change</h4><p>Persist a run manifest: batch ID, model, source hash, prompt hash, requests, results, retry lineage. Collection must be resumable without paying for another submission. Stage a whole locale in a temporary directory and publish only after all six files validate.</p></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="pilot">
+      <div class="section-head">
+        <div class="eyebrow">Group C · findings 6, 10 · blocking + major</div>
+        <h2>You can't pilot or measure as written</h2>
+        <p>Two execution-order problems: the pilot languages never reach the APK, and the “before” APK measurement is scheduled after the state it should measure has already changed.</p>
+      </div>
+
+      <div class="concern-group">
+        <details class="concern blocking" open>
+          <summary><span class="number">06</span><span class="summary-title">The pilot cannot be walked on-device while its locales remain unpackaged</span><span class="severity">Blocking</span><span class="decision-chip">→ D4</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>German, Arabic, and Japanese are <code>packaged: false</code> in the catalogue. Gradle's <code>localeFilters</code> only keeps <code>packaged == true</code> qualifiers, and the picker only shows packaged + visible locales. Build the pilot APK and de/ar/ja simply aren't in it — there is nothing to walk.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><ul>
+              <li><span class="verified">✓</span> <code>locales.json</code> — <code>de</code>, <code>ar</code>, <code>ja</code> all <code>packaged: false</code>, <code>pickerVisible: false</code>.</li>
+              <li><span class="verified">✓</span> <code>app/build.gradle.kts:143</code> — <code>localeFilters.addAll(packagedLocaleQualifiers)</code>.</li>
+              <li><span class="verified">✓</span> Phase 2 doc — picker shows only <code>packaged AND pickerVisible</code> rows.</li>
+            </ul></div>
+            <div class="explain"><h4>Required change</h4><p>An explicit pilot QA mechanism: a <strong>debug-only Gradle property</strong> adding pilot qualifiers (recommended — release policy untouched), or a local uncommitted catalogue flip reverted after QA. Either way, inspect the pilot APK to prove all three locale configurations are present <em>before</em> device testing starts.</p></div>
+          </div>
+        </details>
+
+        <details class="concern major" open>
+          <summary><span class="number">10</span><span class="summary-title">APK measurement occurs too late</span><span class="severity">Major</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>Execution step 8 can't produce a clean “before flip” measurement after step 5 already flipped the catalogue. And the existing baseline is an <em>older Phase 0</em> measurement — useful history, but not a same-branch before/after pair.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><ul>
+              <li><span class="verified">✓</span> <code>docs/i18n-apk-size-baseline.md:30</code> — “Phase 0 baseline (standard release, unsigned)”, an earlier filtered build.</li>
+              <li><span class="verified">✓</span> The plan's step 5 flips the catalogue before step 8 measures both sides.</li>
+            </ul></div>
+            <div class="explain"><h4>Required change</h4><p>Capture the pre-flip release <strong>immediately before</strong> the catalogue change, then the post-flip release after it — same commit context, toolchain, signing mode, and clean-build conditions. Otherwise unrelated code and signing differences contaminate the delta.</p></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="infra">
+      <div class="section-head">
+        <div class="eyebrow">Group D · findings 8–9 · major</div>
+        <h2>Shared infrastructure before the flip</h2>
+        <p>Two consolidation findings: one coverage calculator for everyone, and a Weblate generator contract that is actually derivable and checkable.</p>
+      </div>
+
+      <div class="concern-group">
+        <details class="concern major" open>
+          <summary><span class="number">08</span><span class="summary-title">Coverage still would not be “structurally the same number”</span><span class="severity">Major</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>The validator and the generator each keep their own parser and key-set implementation. The generator's own docstring says it “must match validate_strings.py's suffix scheme exactly” — that's a drift risk already. Adding a third “identical” calculation to <code>--report</code> multiplies the places where a future change can split the numbers.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><ul>
+              <li><span class="verified">✓</span> <code>validate_strings.py:80</code> — <code>_parse_dir()</code> (suffixed keys, its own entry model).</li>
+              <li><span class="verified">✓</span> <code>gen_supported_locales.py:35</code> — <code>_string_keys()</code>, a separate implementation with a comment demanding they stay in sync.</li>
+            </ul></div>
+            <div class="explain"><h4>Required change</h4><p>Extract shared resource inventory and coverage functions into one module used by both tools (and the seed runner). Define the JSON report schema, rounding, stdout behaviour, and exit behaviour on invalid resources once, in that module.</p></div>
+          </div>
+        </details>
+
+        <details class="concern major" open>
+          <summary><span class="number">09</span><span class="summary-title">The Weblate generator contract is incomplete and “exactly seven aliases” is not derivable</span><span class="severity">Major</span></summary>
+          <div class="concern-body">
+            <div class="explain"><h4>In plain English</h4><p>Under the discovery regex (which captures the directory segment after <code>values-</code>), the catalogue has <strong>eight</strong> qualifier/code mismatches, including <code>pt-rPT → pt_PT</code> — and the proposed seven omit exactly that pair. Android-style codes may be recognized natively, but then the generator needs an explicit normalization rule and tests, not an unexplained exception. The plan also never names what <code>gen_weblate_config.py check</code> compares against.</p></div>
+            <div class="explain"><h4>Evidence · verified</h4><p><span class="verified">✓</span> Captured segment vs <code>weblateCode</code> mismatches in locales.json:</p><ul>
+              <li><code>en-rGB → en_GB</code>, <code>pt-rPT → pt_PT</code>, <code>pt → pt_BR</code>, <code>zh-rCN → zh_Hans</code>, <code>zh-rTW → zh_Hant</code>, <code>nb → nb_NO</code>, <code>es-rUS → es_419</code>, <code>es → es_ES</code></li>
+              <li><span class="verified">✓</span> Hosted Weblate's recommended GitHub App flow already handles notifications and PR access — normally no separate manually-configured webhook. The Android format's Java-format checking is a format-provided quality check, not an addon to install.</li>
+            </ul></div>
+            <div class="explain"><h4>Required change</h4><p>Define an explicit normalization rule with tests for all eight pairs. Name the checked-in generated output that <code>check</code> compares — a dedicated generated config file or generated markers inside the setup document. Follow Weblate's GitHub App guidance in the checklist.</p></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="keep">
+      <div class="section-head">
+        <div class="eyebrow">What the reviewer confirmed</div>
+        <h2>These parts are already right</h2>
+        <p>Each was verified against the repository (or is current per the cited Anthropic documentation). Don't change them.</p>
+      </div>
+      <div class="keep-grid">
+        <div class="keep"><strong>Source inventory <span class="verified">✓</span></strong><p>95 / 119 / 188 / 204 / 260 / 671 translatable resources across the six files — exactly the reviewer's numbers.</p></div>
+        <div class="keep"><strong>Inert packaged-Tier-1 gate <span class="verified">✓</span></strong><p><code>validate_strings.py --release</code> passes today because only en/en-rGB are packaged; the 100% gate can't fire until locales are packaged.</p></div>
+        <div class="keep"><strong>One-row picker <span class="verified">✓</span></strong><p>Only English + System default are visible in Phase 2; the other 20 rows are <code>pickerVisible: false</code>.</p></div>
+        <div class="keep"><strong>Gradle catalogue-driven filters <span class="verified">✓</span></strong><p><code>localeFilters</code> derives from <code>locales.json</code> packaging flags — one source of truth.</p></div>
+        <div class="keep"><strong>en-GB exception <span class="verified">✓</span></strong><p><code>values-en-rGB</code> is a packaged regional override, not a separate Tier 1 translation target.</p></div>
+        <div class="keep"><strong>claude-opus-4-8 + 50% batch pricing <span class="verified">✓</span></strong><p>Current per the cited Anthropic model and batch-pricing documentation (not locally verifiable).</p></div>
+      </div>
+    </section>
+
+    <section id="order">
+      <div class="section-head">
+        <div class="eyebrow">The conclusion, sequenced</div>
+        <h2>Recommended execution order</h2>
+        <p>Adopting the five decisions above (recommended options) makes this the plan of record. Gate and infrastructure land before any locale is flipped or measured.</p>
+      </div>
+      <div class="recommendation">
+        <div class="steps">
+          <div class="step"><b>1.</b><span>Shared resource/coverage module; split + hash-bind (or drop) translation status; define the empty allowlist; add <code>--report</code>; test all migrations.</span></div>
+          <div class="step"><b>2.</b><span>Wire the real release gate into android.yml's check job.</span></div>
+          <div class="step"><b>3.</b><span>Implement the safe curated glossary and the resumable, atomic seed runner with stable schemas and persisted manifest.</span></div>
+          <div class="step"><b>4.</b><span>Run the three-locale pilot (de/ar/ja) with an explicit debug packaging procedure; verify the APK contains them first.</span></div>
+          <div class="step"><b>5.</b><span>Run the remaining locales.</span></div>
+          <div class="step"><b>6.</b><span>Generate Weblate configuration, complete the hosted setup (GitHub App flow), and verify a no-surprise repository round trip.</span></div>
+          <div class="step"><b>7.</b><span>Measure the pre-flip APK, then atomically land statuses, catalogue flips, generated Kotlin, and the post-flip APK measurement.</span></div>
+          <div class="step"><b>8.</b><span>Run the listed automated and device verification, including negative gate tests.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="section-head">
+        <div class="eyebrow">How this review was checked</div>
+        <h2>Evidence appendix</h2>
+        <p>Every repo-side claim in this artifact was verified against the working tree before it was shown. API-documentation claims (batch ID charset, 16-union limit, cache invalidation, model and pricing) are per the Anthropic documentation the reviewer cited.</p>
+      </div>
+      <div class="evidence">
+        <div class="evidence-list">
+          <div class="evidence-row"><strong>Tag trigger</strong><div><span class="verified">✓</span> <code>.github/workflows/i18n.yml:15–17</code> — <code>on:</code> block is PR + workflow_dispatch only; no tags today. <code>android.yml:68</code> <code>needs: check</code>; <code>android.yml:226–227</code> publish gated on tag.</div></div>
+          <div class="evidence-row"><strong>Status snapshot</strong><div><span class="verified">✓</span> <code>tools/i18n/validate_strings.py:285</code> loader, <code>:324</code> state check, <code>:46</code> approved states; no source/translation hashes anywhere in the file; current snapshot covers only en-GB.</div></div>
+          <div class="evidence-row"><strong>Glossary risk</strong><div><span class="verified">✓</span> <code>tools/i18n/safe_literals.txt</code> — 3,769 lines; 1,129 <code>protocol</code> entries; <code>name</code>/<code>on</code> ~lines 249–251, <code>one</code> line 1201, <code>tr</code>/<code>turkey</code> lines 1233–1234.</div></div>
+          <div class="evidence-row"><strong>Batch arithmetic</strong><div><span class="verified">✓</span> Counted per-file translatable resources with the validator's own parser semantics: 95/119/188/204/260/671 → 41 chunks/locale → 820 requests for 20 locales.</div></div>
+          <div class="evidence-row"><strong>Escapes in source</strong><div><span class="verified">✓</span> <code>app/src/main/res/values/strings_settings.xml:885</code> (<code>\n\n</code> + two <code>&lt;xliff:g&gt;</code>); <code>strings_player.xml:356</code> (<code>\n\n</code> + <code>\u2192</code>).</div></div>
+          <div class="evidence-row"><strong>Pilot packaging</strong><div><span class="verified">✓</span> <code>tools/i18n/locales.json</code> — de/ar/ja <code>packaged: false</code>; <code>app/build.gradle.kts:143</code> <code>localeFilters</code>; Phase 2 doc: picker filters packaged + visible.</div></div>
+          <div class="evidence-row"><strong>Separate parsers</strong><div><span class="verified">✓</span> <code>validate_strings.py:80</code> <code>_parse_dir()</code> vs <code>gen_supported_locales.py:35</code> <code>_string_keys()</code> — the generator's own comment demands the suffix schemes stay in sync.</div></div>
+          <div class="evidence-row"><strong>Alias mismatches</strong><div><span class="verified">✓</span> <code>tools/i18n/locales.json</code> — eight captured-segment vs <code>weblateCode</code> mismatches, incl. <code>pt-rPT → pt_PT</code> (lines 62–64 of the pt-PT entry).</div></div>
+          <div class="evidence-row"><strong>APK baseline</strong><div><span class="verified">✓</span> <code>docs/i18n-apk-size-baseline.md:30</code> — “Phase 0 baseline (standard release, unsigned)”, an older filtered measurement.</div></div>
+          <div class="evidence-row"><strong>External docs</strong><div>Anthropic batch processing (ID contract, 50% pricing), structured outputs (16-union limit, cache invalidation, <code>stop_reason</code>), Claude 4.8 model ID, Weblate Android format and GitHub App hosting guidance — as cited by the reviewer.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <p class="footnote">Review artifact only — no workflows, tools, resources, or builds were changed while preparing this explanation.</p>
+  </main>
+
+  <script>
+    function queueDecision(form) {
+      const d = form.dataset.decision;
+      const sel = form.querySelector('input[type="radio"]:checked');
+      const label = sel ? sel.dataset.label : '';
+      const text = label || ("Decision " + d.toUpperCase() + " queued");
+      if (window.lavish) {
+        window.lavish.queuePrompt(text, { tag: "decision", text: text, data: { decision: d, answer: sel ? sel.value : null } });
+      }
+      const note = form.querySelector(".queued-note");
+      if (note) note.hidden = false;
+      return false;
+    }
+
+    function queueNotes(form) {
+      const raw = form.querySelector(".notes-area").value.trim();
+      const text = raw ? "Decision notes: " + raw : "Decision notes: (empty)";
+      if (window.lavish) {
+        window.lavish.queuePrompt(text, { tag: "notes", text: text, data: { decision: "notes", answer: raw } });
+      }
+      const note = form.querySelector(".queued-note");
+      if (note) note.hidden = false;
+      return false;
+    }
+  </script>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+
+    const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const paint = document.createElement("canvas").getContext("2d");
+
+    function toRgba(color) {
+      paint.clearRect(0, 0, 1, 1);
+      paint.fillStyle = "#000";
+      paint.fillStyle = color;
+      paint.fillRect(0, 0, 1, 1);
+      return paint.getImageData(0, 0, 1, 1).data;
+    }
+
+    function compositeRgba(fg, bg) {
+      const fa = fg[3] / 255, ba = bg[3] / 255;
+      const a = fa + ba * (1 - fa);
+      if (a === 0) return [0, 0, 0, 0];
+      return [
+        (fg[0] * fa + bg[0] * ba * (1 - fa)) / a,
+        (fg[1] * fa + bg[1] * ba * (1 - fa)) / a,
+        (fg[2] * fa + bg[2] * ba * (1 - fa)) / a,
+        a * 255,
+      ];
+    }
+
+    function pageIsDark() {
+      const root = document.documentElement;
+      const rb = toRgba(getComputedStyle(root).backgroundColor);
+      const bb = document.body ? toRgba(getComputedStyle(document.body).backgroundColor) : [0, 0, 0, 0];
+      const [r, g, b, a] = compositeRgba(bb, rb);
+      if (a > 0) return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
+      return darkQuery.matches;
+    }
+
+    const diagrams = [...document.querySelectorAll(".mermaid")].map((el) => ({ el, src: el.textContent }));
+    let applied, rendering = false, queued = false;
+
+    function queueRender() { queued = true; if (!rendering) void render(); }
+
+    async function render() {
+      rendering = true;
+      try {
+        while (queued) {
+          queued = false;
+          const theme = pageIsDark() ? "dark" : "default";
+          if (theme === applied) continue;
+          mermaid.initialize({
+            startOnLoad: false,
+            theme,
+            securityLevel: "strict",
+            themeVariables: theme === "dark" ? {
+              primaryColor: "#004f46",
+              primaryTextColor: "#dee4e1",
+              primaryBorderColor: "#52dbc8",
+              lineColor: "#89938f",
+              secondaryColor: "#173545",
+              tertiaryColor: "#252b29"
+            } : undefined,
+            flowchart: { htmlLabels: true, curve: "basis" }
+          });
+          for (const { el, src } of diagrams) {
+            el.removeAttribute("data-processed");
+            el.textContent = src;
+          }
+          try {
+            await mermaid.run({ nodes: diagrams.map((d) => d.el) });
+          } catch (error) {
+            console.error("Mermaid diagram render failed:", error);
+            return;
+          }
+          applied = theme;
+        }
+      } finally {
+        rendering = false;
+        if (queued) queueRender();
+      }
+    }
+
+    if (document.readyState === "complete") queueRender();
+    else window.addEventListener("load", queueRender, { once: true });
+    darkQuery.addEventListener("change", queueRender);
+  </script>
+</body>
+</html>

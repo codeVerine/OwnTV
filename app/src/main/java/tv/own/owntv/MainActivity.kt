@@ -40,6 +40,7 @@ import org.koin.android.ext.android.get
 import org.koin.android.ext.android.inject
 import org.koin.androidx.compose.koinViewModel
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import tv.own.owntv.core.util.Perf
 import tv.own.owntv.core.launcher.LauncherDeepLink
 import tv.own.owntv.features.profiles.ProfileGate
 import tv.own.owntv.features.profiles.ProfileGateSessionViewModel
@@ -49,15 +50,15 @@ import tv.own.owntv.features.shell.OwnTVShell
 import tv.own.owntv.features.shell.ShellViewModel
 import tv.own.owntv.ui.theme.BlurredBackdrop
 import tv.own.owntv.ui.theme.BackdropLuminanceMap
-import tv.own.owntv.ui.theme.GlassConfig
+import tv.own.owntv.core.theme.GlassConfig
 import tv.own.owntv.ui.theme.GlassMotionState
 import tv.own.owntv.ui.theme.LocalBlurredBackdrop
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.LocalGlassMotion
 import tv.own.owntv.ui.theme.LocalUiFontScaleFactor
 import tv.own.owntv.ui.theme.OwnTVTheme
-import tv.own.owntv.ui.theme.UiFontScale
-import tv.own.owntv.ui.theme.UiZoom
+import tv.own.owntv.core.theme.UiFontScale
+import tv.own.owntv.core.theme.UiZoom
 import tv.own.owntv.ui.theme.stackBlur
 import tv.own.owntv.ui.theme.supportsBackdropBlur
 import kotlin.math.abs
@@ -225,6 +226,7 @@ class MainActivity : ComponentActivity() {
             val bgImagePath by viewModel.bgImagePath.collectAsStateWithLifecycle()
             val glassConfig by viewModel.glassConfig.collectAsStateWithLifecycle()
             val avatarId by viewModel.avatarId.collectAsStateWithLifecycle()
+            val showProfileAvatars by viewModel.showProfileAvatars.collectAsStateWithLifecycle()
             val profileName by viewModel.profileName.collectAsStateWithLifecycle()
             val sourceSummary by viewModel.sourceSummary.collectAsStateWithLifecycle()
             val playlists by viewModel.playlists.collectAsStateWithLifecycle()
@@ -308,6 +310,8 @@ class MainActivity : ComponentActivity() {
                 animationLevel = animationLevel,
                 mainFontFamily = fontCustomization.mainFamily,
                 popupFontFamily = fontCustomization.popupFamily,
+                popupFontSizePercent = fontCustomization.popupFontSizePercent,
+                popupSizePercent = fontCustomization.popupSizePercent,
             ) {
                 val base = LocalDensity.current
                 // Glass is "always on" (Option B): panels go translucent whenever at least one surface is
@@ -328,7 +332,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(glassActive, effectiveGlass.depthEffects, animationLevel) {
                     glassMotion.setEnabled(
                         glassActive && effectiveGlass.depthEffects &&
-                            animationLevel == tv.own.owntv.ui.theme.AnimationLevel.FULL,
+                            animationLevel == tv.own.owntv.core.theme.AnimationLevel.FULL,
                     )
                 }
                 // Phase 4 — real backdrop blur. Load+blur the background once (cached) when glass is on,
@@ -424,6 +428,7 @@ class MainActivity : ComponentActivity() {
                                 fontCustomization = fontCustomization,
                                 onSetFontCustomization = viewModel::setFontCustomization,
                                 avatarId = avatarId,
+                                showProfileAvatars = showProfileAvatars,
                                 onSetAvatar = viewModel::setAvatar,
                                 profileName = profileName,
                                 sourceSummary = sourceSummary,

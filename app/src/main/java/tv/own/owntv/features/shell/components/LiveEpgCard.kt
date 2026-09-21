@@ -32,9 +32,9 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import tv.own.owntv.R
 import tv.own.owntv.core.parser.XtEpgEntry
-import tv.own.owntv.features.live.EpgNowNext
 import tv.own.owntv.ui.format.rememberSystemTimeFormatter
 import tv.own.owntv.ui.theme.OwnTVTheme
+import tv.own.owntv.core.live.EpgNowNext
 
 /** Which pair of slots a [LiveEpgCard] is describing: what is on air now, or what was on air
  *  at the moment being replayed out of the archive. */

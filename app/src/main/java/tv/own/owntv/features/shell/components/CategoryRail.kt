@@ -50,13 +50,14 @@ import androidx.tv.material3.Text
 import tv.own.owntv.ui.components.ChannelGenre
 import tv.own.owntv.ui.components.NavAccentBar
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.ui.components.ProviderChip
 import tv.own.owntv.ui.components.rememberNavLadderColors
 import tv.own.owntv.ui.components.SearchBar
 import tv.own.owntv.ui.components.trapVerticalFocusExit
 import tv.own.owntv.ui.components.RailPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
@@ -75,6 +76,7 @@ data class RailCategory(
     // Whether to show the genre hint dot. False for synthetic aggregates ("All Channels/Movies/Series")
     // that combine every provider category — those aren't a real provider genre, so no dot.
     val showGenreDot: Boolean = true,
+    val providerName: String? = null,
 )
 
 /**
@@ -313,7 +315,12 @@ private fun RailPill(
                     fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                category.providerName?.let {
+                    Spacer(Modifier.width(6.dp))
+                    ProviderChip(name = it, maxWidth = 78.dp, compact = true)
+                }
             }
         }
     }

@@ -27,11 +27,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tv.own.owntv.core.database.dao.ProfileDao
 import tv.own.owntv.player.AudioOutputPolicy
-import tv.own.owntv.player.SurroundMode
+import tv.own.owntv.core.player.SurroundMode
 import tv.own.owntv.core.database.dao.SourceDao
 import tv.own.owntv.core.database.entity.SourceEntity
 import tv.own.owntv.core.network.ConnectivityObserver
 import tv.own.owntv.core.repository.SourceRepository
+import tv.own.owntv.core.repository.SourceTestResult
 import tv.own.owntv.core.sync.ImportStage
 import tv.own.owntv.core.sync.SyncContentTypes
 import tv.own.owntv.core.sync.SyncResult
@@ -46,16 +47,17 @@ import tv.own.owntv.core.sync.work.CatalogSyncScheduler
 import tv.own.owntv.core.util.throttleLatest
 import tv.own.owntv.core.database.dao.resolveExistingProfileId
 import tv.own.owntv.core.launcher.LauncherIntegrationRepository
-import tv.own.owntv.features.settings.data.ChNavLimits
-import tv.own.owntv.features.settings.data.EpgAutoRefresh
-import tv.own.owntv.features.settings.data.PanelSection
-import tv.own.owntv.features.settings.data.PanelShares
-import tv.own.owntv.features.settings.data.PlaylistAutoRefresh
-import tv.own.owntv.features.settings.data.SettingsRepository
-import tv.own.owntv.features.settings.data.SubtitleStyle
-import tv.own.owntv.ui.theme.AccentColor
-import tv.own.owntv.ui.theme.ThemeMode
-import tv.own.owntv.ui.theme.UiZoom
+import tv.own.owntv.core.settings.ChNavLimits
+import tv.own.owntv.core.settings.EpgAutoRefresh
+import tv.own.owntv.core.settings.PanelSection
+import tv.own.owntv.core.settings.PanelShares
+import tv.own.owntv.core.settings.GuideWidthShares
+import tv.own.owntv.core.settings.PlaylistRefresh
+import tv.own.owntv.core.settings.SettingsRepository
+import tv.own.owntv.core.settings.SubtitleStyle
+import tv.own.owntv.core.theme.AccentColor
+import tv.own.owntv.core.theme.ThemeMode
+import tv.own.owntv.core.theme.UiZoom
 
 /** Phase 13 — manage IPTV sources (list / add / re-sync / delete) for the active profile. */
 class SettingsViewModel(
@@ -69,8 +71,7 @@ class SettingsViewModel(
     private val channelDao: tv.own.owntv.core.database.dao.ChannelDao,
     private val categoryDao: tv.own.owntv.core.database.dao.CategoryDao,
     private val customizationStore: tv.own.owntv.core.customize.CustomizationStore,
-    private val movieDao: tv.own.owntv.core.database.dao.MovieDao,
-    private val seriesDao: tv.own.owntv.core.database.dao.SeriesDao,
+    private val navVisibility: tv.own.owntv.core.nav.NavVisibility,
     private val historyDao: tv.own.owntv.core.database.dao.HistoryDao,
     private val progressDao: tv.own.owntv.core.database.dao.ProgressDao,
     private val epgRepository: tv.own.owntv.core.repository.EpgRepository,
@@ -84,6 +85,7 @@ class SettingsViewModel(
     private val stalkerAuth: tv.own.owntv.core.stalker.StalkerAuthManager,
     private val stalkerClient: tv.own.owntv.core.stalker.StalkerClient,
     private val xtreamClient: tv.own.owntv.core.parser.XtreamClient,
+    private val sourceTester: tv.own.owntv.core.repository.SourceTester,
     private val companion: tv.own.owntv.core.companion.CompanionController,
     private val vodEngineStore: tv.own.owntv.core.player.VodEngineStore,
     private val playbackPrefs: tv.own.owntv.core.player.PlaybackPrefsStore,
@@ -199,7 +201,7 @@ class SettingsViewModel(
     /**
      * Subscription expiry per source id — the "Expires …" note in the Manage-sources row (Phase F).
      * Xtream reads `user_info.exp_date` from the panel; Stalker reads `account_info`/`get_profile`
-     * (see [stalkerExpiryOf]). M3U is a plain playlist file with no account concept — never listed.
+     * (see core's `stalkerExpiryOf`). M3U is a plain playlist file with no account concept — never listed.
      * Fetched once per source per ViewModel lifetime (in-memory cache; only while the screen is
      * subscribed); any failure simply leaves the line off the row.
      */
@@ -230,7 +232,8 @@ class SettingsViewModel(
                         val info = runCatching {
                             stalkerClient.getAccountInfo(session.apiBase, mac, session.token, creds.userAgent)
                         }.getOrDefault(emptyMap())
-                        stalkerExpiryOf(info) ?: stalkerExpiryOf(session.profile)
+                        tv.own.owntv.core.stalker.stalkerExpiryOf(info)
+                            ?: tv.own.owntv.core.stalker.stalkerExpiryOf(session.profile)
                     }
                 }
             else -> null
@@ -394,15 +397,15 @@ class SettingsViewModel(
     val hwDecoding: StateFlow<Boolean> = settings.hwDecoding.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
     fun setHwDecoding(enabled: Boolean) { viewModelScope.launch { settings.setHwDecoding(enabled) } }
 
-    val vodEnginePreference: StateFlow<tv.own.owntv.player.EnginePreference> = settings.vodEnginePreference
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.player.EnginePreference.MPV_FIRST)
-    fun setVodEnginePreference(preference: tv.own.owntv.player.EnginePreference) {
+    val vodEnginePreference: StateFlow<tv.own.owntv.core.player.EnginePreference> = settings.vodEnginePreference
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.player.EnginePreference.MPV_FIRST)
+    fun setVodEnginePreference(preference: tv.own.owntv.core.player.EnginePreference) {
         viewModelScope.launch { settings.setVodEnginePreference(preference) }
     }
 
-    val liveEnginePreference: StateFlow<tv.own.owntv.player.EnginePreference> = settings.liveEnginePreference
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.player.EnginePreference.EXO_FIRST)
-    fun setLiveEnginePreference(preference: tv.own.owntv.player.EnginePreference) {
+    val liveEnginePreference: StateFlow<tv.own.owntv.core.player.EnginePreference> = settings.liveEnginePreference
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.player.EnginePreference.EXO_FIRST)
+    fun setLiveEnginePreference(preference: tv.own.owntv.core.player.EnginePreference) {
         viewModelScope.launch { settings.setLiveEnginePreference(preference) }
     }
 
@@ -435,13 +438,19 @@ class SettingsViewModel(
 
     fun clearSavedVolume() { viewModelScope.launch { playbackPrefs.clearVolume() } }
 
+    /** Same again for the per-item A/V-sync offsets (DB v35). */
+    val savedAudioDelayCount: StateFlow<Int> =
+        playbackPrefs.observeAudioDelayCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun clearSavedAudioDelay() { viewModelScope.launch { playbackPrefs.clearAudioDelay() } }
+
     /** Rewind/forward step in a movie or episode, and the separate one for a live archive. */
     val seekStepSec: StateFlow<Int> = settings.seekStepSec
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.SeekSteps.DEFAULT_SEEK_STEP_SEC)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.SeekSteps.DEFAULT_SEEK_STEP_SEC)
     fun setSeekStepSec(seconds: Int) { viewModelScope.launch { settings.setSeekStepSec(seconds) } }
 
     val liveRewindStepSec: StateFlow<Int> = settings.liveRewindStepSec
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.SeekSteps.DEFAULT_LIVE_REWIND_STEP_SEC)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.SeekSteps.DEFAULT_LIVE_REWIND_STEP_SEC)
     fun setLiveRewindStepSec(seconds: Int) { viewModelScope.launch { settings.setLiveRewindStepSec(seconds) } }
 
     val deinterlace: StateFlow<Boolean> = settings.deinterlace.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -470,21 +479,32 @@ class SettingsViewModel(
         settings.updateCheckOnStart.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
     fun setUpdateCheckOnStart(enabled: Boolean) { viewModelScope.launch { settings.setUpdateCheckOnStart(enabled) } }
 
+    /** The Settings rows pinned to the Quick group, in display order. */
+    val quickPinnedKeys: StateFlow<List<String>> =
+        settings.quickPinnedKeys.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    fun setQuickPinnedKeys(keys: List<String>) { viewModelScope.launch { settings.setQuickPinnedKeys(keys) } }
+
+    /** The saved order of one long-press content menu; empty = the order the app ships with. */
+    fun menuOrder(menu: tv.own.owntv.core.model.ContentMenu) = settings.menuOrder(menu.name.lowercase())
+    fun setMenuOrder(menu: tv.own.owntv.core.model.ContentMenu, keys: List<String>) {
+        viewModelScope.launch { settings.setMenuOrder(menu.name.lowercase(), keys) }
+    }
+
     val resumeLastChannel: StateFlow<Boolean> =
         settings.resumeLastChannel.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     fun setResumeLastChannel(enabled: Boolean) { viewModelScope.launch { settings.setResumeLastChannel(enabled) } }
 
     // Per-profile startup landing (v4.0.0): Home / Last channel / Live·Favorites.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val startupMode: StateFlow<tv.own.owntv.features.settings.data.StartupMode> =
+    val startupMode: StateFlow<tv.own.owntv.core.settings.StartupMode> =
         settings.activeProfileId
             .flatMapLatest { settings.startupMode(it) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.StartupMode.HOME)
-    fun setStartupMode(mode: tv.own.owntv.features.settings.data.StartupMode) {
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.StartupMode.HOME)
+    fun setStartupMode(mode: tv.own.owntv.core.settings.StartupMode) {
         viewModelScope.launch { settings.setStartupMode(settings.activeProfileId.first(), mode) }
     }
 
-    val startupChannel: StateFlow<tv.own.owntv.features.settings.data.StartupChannelRef?> =
+    val startupChannel: StateFlow<tv.own.owntv.core.settings.StartupChannelRef?> =
         settings.activeProfileId
             .flatMapLatest { profileId ->
                 if (profileId < 0L) flowOf(null) else settings.startupChannel(profileId)
@@ -515,7 +535,7 @@ class SettingsViewModel(
             if (profileId < 0L) return@launch
             settings.setSpecificStartupChannel(
                 profileId,
-                tv.own.owntv.features.settings.data.StartupChannelRef(
+                tv.own.owntv.core.settings.StartupChannelRef(
                     sourceId = channel.sourceId,
                     remoteId = channel.remoteId,
                     name = channel.name,
@@ -569,12 +589,16 @@ class SettingsViewModel(
     val subtitleStyleEnabled: StateFlow<Boolean> = settings.subtitleStyleEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     fun setSubtitleStyleEnabled(enabled: Boolean) { viewModelScope.launch { settings.setSubtitleStyleEnabled(enabled) } }
 
-    val subtitleScale: StateFlow<Float> = settings.subtitleScale.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SubtitleStyle.SCALE_DEFAULT)
-    fun setSubtitleScale(scale: Float) { viewModelScope.launch { settings.setSubtitleScale(scale) } }
+    // One size per engine: the same multiplier reads much larger on ExoPlayer than on mpv.
+    val subtitleScaleExo: StateFlow<Float> = settings.subtitleScaleExo.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SubtitleStyle.SCALE_DEFAULT)
+    fun setSubtitleScaleExo(scale: Float) { viewModelScope.launch { settings.setSubtitleScaleExo(scale) } }
 
-    val subtitleFont: StateFlow<tv.own.owntv.ui.theme.AppFontFamily?> = settings.subtitleFont
+    val subtitleScaleMpv: StateFlow<Float> = settings.subtitleScaleMpv.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SubtitleStyle.SCALE_DEFAULT)
+    fun setSubtitleScaleMpv(scale: Float) { viewModelScope.launch { settings.setSubtitleScaleMpv(scale) } }
+
+    val subtitleFont: StateFlow<tv.own.owntv.core.theme.AppFontFamily?> = settings.subtitleFont
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    fun setSubtitleFont(font: tv.own.owntv.ui.theme.AppFontFamily?) { viewModelScope.launch { settings.setSubtitleFont(font) } }
+    fun setSubtitleFont(font: tv.own.owntv.core.theme.AppFontFamily?) { viewModelScope.launch { settings.setSubtitleFont(font) } }
 
     val subtitleColor: StateFlow<String> = settings.subtitleColor.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SubtitleStyle.COLOR_DEFAULT)
     fun setSubtitleColor(hex: String) { viewModelScope.launch { settings.setSubtitleColor(hex) } }
@@ -595,6 +619,19 @@ class SettingsViewModel(
     fun setChNavUpSkip(n: Int) { viewModelScope.launch { settings.setChNavUpSkip(n) } }
     val chNavDownSkip: StateFlow<Int> = settings.chNavDownSkip.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChNavLimits.DEFAULT_SKIP)
     fun setChNavDownSkip(n: Int) { viewModelScope.launch { settings.setChNavDownSkip(n) } }
+    val remoteShortcutBindings: StateFlow<List<tv.own.owntv.core.settings.RemoteShortcutBinding>> =
+        settings.remoteShortcutBindings.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            tv.own.owntv.core.settings.RemoteShortcutBindings.defaults,
+        )
+    fun setRemoteShortcutBinding(binding: tv.own.owntv.core.settings.RemoteShortcutBinding) {
+        viewModelScope.launch { settings.setRemoteShortcutBinding(binding) }
+    }
+    fun removeRemoteShortcutBinding(keyCode: Int, press: tv.own.owntv.core.settings.RemoteShortcutPress) {
+        viewModelScope.launch { settings.removeRemoteShortcutBinding(keyCode, press) }
+    }
+    fun resetRemoteShortcutBindings() { viewModelScope.launch { settings.resetRemoteShortcutBindings() } }
 
     // --- Manual panel widths: one StateFlow per section, so Live/Movies/Series each read their own ---
     private fun <T> panelFlows(source: (PanelSection) -> kotlinx.coroutines.flow.Flow<T>, initial: T): Map<PanelSection, StateFlow<T>> =
@@ -607,6 +644,14 @@ class SettingsViewModel(
 
     fun setPanelWidths(s: PanelSection, enabled: Boolean, shares: PanelShares) {
         viewModelScope.launch { settings.setPanelWidths(s, enabled, shares) }
+    }
+
+    val guideWidthEnabled: StateFlow<Boolean> = settings.guideWidthEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val guideWidthShares: StateFlow<GuideWidthShares?> = settings.guideWidthShares
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    fun setGuideWidths(enabled: Boolean, shares: GuideWidthShares) {
+        viewModelScope.launch { settings.setGuideWidths(enabled, shares) }
     }
 
     val preferredAudioLang: StateFlow<String> = settings.preferredAudioLang.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -643,10 +688,10 @@ class SettingsViewModel(
 
     // --- Glass effect: background image + per-surface translucency ---
     val bgImagePath: StateFlow<String> = settings.bgImagePath.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
-    val glassConfig: StateFlow<tv.own.owntv.ui.theme.GlassConfig> = settings.glassConfig.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.ui.theme.GlassConfig())
+    val glassConfig: StateFlow<tv.own.owntv.core.theme.GlassConfig> = settings.glassConfig.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.theme.GlassConfig())
     fun setBgImagePath(path: String) { viewModelScope.launch { settings.setBgImagePath(path) } }
     fun setGlassScopeBitmask(bits: Int) { viewModelScope.launch { settings.setGlassScopeBitmask(bits) } }
-    fun setGlassPreset(preset: tv.own.owntv.ui.theme.GlassPreset) { viewModelScope.launch { settings.setGlassPreset(preset) } }
+    fun setGlassPreset(preset: tv.own.owntv.core.theme.GlassPreset) { viewModelScope.launch { settings.setGlassPreset(preset) } }
     fun setGlassAlphaPercent(pct: Int, currentBlurPct: Int) {
         viewModelScope.launch { settings.setGlassAlphaPercent(pct, currentBlurPct) }
     }
@@ -663,17 +708,17 @@ class SettingsViewModel(
 
     // --- Nav menu customization (v4.3.0) ---
     /** STATIC (default): user picks which icons to hide. DYNAMIC: icons adapt to the active playlist. */
-    val navMenuMode: StateFlow<tv.own.owntv.features.settings.data.SettingsRepository.NavMenuMode> =
-        settings.navMenuMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.SettingsRepository.NavMenuMode.STATIC)
-    fun setNavMenuMode(mode: tv.own.owntv.features.settings.data.SettingsRepository.NavMenuMode) {
+    val navMenuMode: StateFlow<tv.own.owntv.core.settings.SettingsRepository.NavMenuMode> =
+        settings.navMenuMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.SettingsRepository.NavMenuMode.STATIC)
+    fun setNavMenuMode(mode: tv.own.owntv.core.settings.SettingsRepository.NavMenuMode) {
         viewModelScope.launch { settings.setNavMenuMode(mode) }
     }
 
     /** Browse sections the user has hidden (STATIC mode only). */
-    val navMenuHidden: StateFlow<Set<tv.own.owntv.features.shell.MainSection>> = settings.navMenuHidden
-        .map { raw -> raw.mapNotNull { name -> runCatching { tv.own.owntv.features.shell.MainSection.valueOf(name) }.getOrNull() }.toSet() }
+    val navMenuHidden: StateFlow<Set<tv.own.owntv.core.nav.MainSection>> = settings.navMenuHidden
+        .map { raw -> raw.mapNotNull { name -> runCatching { tv.own.owntv.core.nav.MainSection.valueOf(name) }.getOrNull() }.toSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
-    fun setNavSectionHidden(section: tv.own.owntv.features.shell.MainSection, hidden: Boolean) {
+    fun setNavSectionHidden(section: tv.own.owntv.core.nav.MainSection, hidden: Boolean) {
         viewModelScope.launch {
             val current = navMenuHidden.first()
             val next = if (hidden) current + section else current - section
@@ -686,73 +731,59 @@ class SettingsViewModel(
      * computation so the Nav menu settings screen's read-only DYNAMIC rows report the same state the rail
      * reflects. Re-emits automatically as content arrives (Room invalidates the count flows on every write).
      */
-    val dynamicCaps: StateFlow<Set<tv.own.owntv.features.shell.MainSection>> = settings.activeProfileId
-        .flatMapLatest { pid ->
-            if (pid < 0) flowOf(tv.own.owntv.features.shell.MainSection.allBrowse)
-            else sourceRepository.observeSources(pid)
-                .flatMapLatest { sources -> settings.defaultSourceId.flatMapLatest { defaultId -> capsFlow(sources, defaultId) } }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.shell.MainSection.allBrowse)
-
-    private fun capsFlow(
-        sources: List<SourceEntity>,
-        defaultId: Long,
-    ): kotlinx.coroutines.flow.Flow<Set<tv.own.owntv.features.shell.MainSection>> {
-        val scoped = if (defaultId > 0) sources.filter { it.id == defaultId } else sources
-        if (scoped.isEmpty()) return flowOf(setOf(tv.own.owntv.features.shell.MainSection.HOME))
-        val liveIds = scoped.filter { it.syncLive }.map { it.id }
-        val movieIds = scoped.filter { it.syncMovies }.map { it.id }
-        val seriesIds = scoped.filter { it.syncSeries }.map { it.id }
-        val empty = listOf(-1L)
-        return combine(
-            channelDao.countAll(liveIds.ifEmpty { empty }),
-            movieDao.countAll(movieIds.ifEmpty { empty }),
-            seriesDao.countAll(seriesIds.ifEmpty { empty }),
-        ) { channels, movies, series ->
-            tv.own.owntv.features.shell.MainSection.dynamicVisible(
-                hasLive = liveIds.isNotEmpty() && channels > 0,
-                hasMovies = movieIds.isNotEmpty() && movies > 0,
-                hasSeries = seriesIds.isNotEmpty() && series > 0,
-            )
-        }
-    }
+    val dynamicCaps: StateFlow<Set<tv.own.owntv.core.nav.MainSection>> = navVisibility.dynamicCaps()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.nav.MainSection.allBrowse)
 
     val uiZoomPercent: StateFlow<Int> = settings.uiZoomPercent.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiZoom.DEFAULT)
     fun setUiZoom(percent: Int) { viewModelScope.launch { settings.setUiZoomPercent(UiZoom.clamp(percent)) } }
 
     // Docked mini-player: size (% of screen width) and screen position.
     val miniPlayerSizePct: StateFlow<Int> =
-        settings.miniPlayerSizePct.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.player.MiniPlayerSize.DEFAULT)
+        settings.miniPlayerSizePct.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.player.MiniPlayerSize.DEFAULT)
     fun setMiniPlayerSize(percent: Int) { viewModelScope.launch { settings.setMiniPlayerSizePct(percent) } }
 
-    val miniPlayerPosition: StateFlow<tv.own.owntv.player.MiniPlayerPosition> =
+    val miniPlayerPosition: StateFlow<tv.own.owntv.core.player.MiniPlayerPosition> =
         settings.miniPlayerPosition
-            .map { tv.own.owntv.player.MiniPlayerPosition.fromName(it) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.player.MiniPlayerPosition.DEFAULT)
-    fun setMiniPlayerPosition(position: tv.own.owntv.player.MiniPlayerPosition) {
+            .map { tv.own.owntv.core.player.MiniPlayerPosition.fromName(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.player.MiniPlayerPosition.DEFAULT)
+    fun setMiniPlayerPosition(position: tv.own.owntv.core.player.MiniPlayerPosition) {
         viewModelScope.launch { settings.setMiniPlayerPosition(position.name) }
     }
 
     // Live TV latency (#72): preset + custom seconds.
-    val liveLatencyMode: StateFlow<tv.own.owntv.features.settings.data.LiveLatency> =
+    val liveLatencyMode: StateFlow<tv.own.owntv.core.settings.LiveLatency> =
         settings.liveLatencyMode
-            .map { tv.own.owntv.features.settings.data.LiveLatency.fromName(it) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.LiveLatency.DEFAULT)
-    fun setLiveLatencyMode(mode: tv.own.owntv.features.settings.data.LiveLatency) {
+            .map { tv.own.owntv.core.settings.LiveLatency.fromName(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.LiveLatency.DEFAULT)
+    fun setLiveLatencyMode(mode: tv.own.owntv.core.settings.LiveLatency) {
         viewModelScope.launch { settings.setLiveLatencyMode(mode.name) }
     }
 
     val liveLatencyCustomSecs: StateFlow<Int> =
-        settings.liveLatencyCustomSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.LiveBuffer.CUSTOM_DEFAULT)
+        settings.liveLatencyCustomSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.LiveBuffer.CUSTOM_DEFAULT)
     fun setLiveLatencyCustomSecs(secs: Int) {
         viewModelScope.launch { settings.setLiveLatencyCustomSecs(secs) }
     }
 
+    /** Live: D-pad Up/Down keep zapping channels even while the player bar is up. */
+    val zapWithDpadAlways: StateFlow<Boolean> =
+        settings.zapWithDpadAlways.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    fun setZapWithDpadAlways(enabled: Boolean) {
+        viewModelScope.launch { settings.setZapWithDpadAlways(enabled) }
+    }
+
     /** "Pre-buffer" (F07): the global choice, in seconds (0 = Off). */
     val livePrerollSecs: StateFlow<Int> =
-        settings.livePrerollSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.features.settings.data.LiveBuffer.PREROLL_OFF)
+        settings.livePrerollSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.settings.LiveBuffer.PREROLL_OFF)
     fun setLivePrerollSecs(secs: Int) {
         viewModelScope.launch { settings.setLivePrerollSecs(secs) }
+    }
+
+    /** "Give up on a channel after": the whole-tune budget in seconds (0 = Never). */
+    val liveTuneTimeoutSecs: StateFlow<Int> =
+        settings.liveTuneTimeoutSecs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.player.LiveLadder.DEFAULT_BUDGET_SECS)
+    fun setLiveTuneTimeoutSecs(secs: Int) {
+        viewModelScope.launch { settings.setLiveTuneTimeoutSecs(secs) }
     }
 
     /** Per-playlist override of the above. `-1` = follow the global value. */
@@ -760,13 +791,28 @@ class SettingsViewModel(
         viewModelScope.launch { sourceDao.updateLivePreroll(sourceId, secs) }
     }
 
-    val animationLevel: StateFlow<tv.own.owntv.ui.theme.AnimationLevel> =
-        settings.animationLevel.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.ui.theme.AnimationLevel.FULL)
-    fun setAnimationLevel(level: tv.own.owntv.ui.theme.AnimationLevel) { viewModelScope.launch { settings.setAnimationLevel(level) } }
+    /** Per-playlist Live TV engine override; `null` = follow the global setting. */
+    fun setSourceLiveEngine(sourceId: Long, preference: String?) {
+        viewModelScope.launch { sourceDao.updateLiveEnginePreference(sourceId, preference) }
+    }
+
+    /** Per-playlist Live latency override; `null` mode = follow the global setting. */
+    fun setSourceLiveLatency(sourceId: Long, mode: String?, customSecs: Int) {
+        viewModelScope.launch { sourceDao.updateLiveLatency(sourceId, mode, customSecs) }
+    }
+
+    val animationLevel: StateFlow<tv.own.owntv.core.theme.AnimationLevel> =
+        settings.animationLevel.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.theme.AnimationLevel.FULL)
+    fun setAnimationLevel(level: tv.own.owntv.core.theme.AnimationLevel) { viewModelScope.launch { settings.setAnimationLevel(level) } }
 
     val ambientGlowEnabled: StateFlow<Boolean> =
         settings.ambientGlowEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     fun setAmbientGlowEnabled(enabled: Boolean) { viewModelScope.launch { settings.setAmbientGlowEnabled(enabled) } }
+
+    /** Appearance: themed profile-avatar tile on/off (off renders a neutral silhouette). */
+    val showProfileAvatars: StateFlow<Boolean> =
+        settings.showProfileAvatars.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    fun setShowProfileAvatars(enabled: Boolean) { viewModelScope.launch { settings.setShowProfileAvatars(enabled) } }
 
     val ambientGlowPulse: StateFlow<Boolean> =
         settings.ambientGlowPulse.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -818,14 +864,14 @@ class SettingsViewModel(
     fun setRememberLastSeries(enabled: Boolean) { viewModelScope.launch { settings.setRememberLastSeries(enabled) } }
 
     /** Per-source playlist auto-refresh selection (Off / Startup / staleness threshold). */
-    val playlistAutoRefresh: StateFlow<Map<Long, PlaylistAutoRefresh>> = settings.playlistAutoRefresh
+    val playlistAutoRefresh: StateFlow<Map<Long, PlaylistRefresh>> = settings.playlistAutoRefresh
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     /** Per-source EPG auto-refresh selection (Off / Startup / staleness threshold). */
     val epgAutoRefresh: StateFlow<Map<Long, EpgAutoRefresh>> = settings.epgAutoRefresh
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    fun setPlaylistAutoRefresh(sourceId: Long, mode: PlaylistAutoRefresh) {
+    fun setPlaylistAutoRefresh(sourceId: Long, mode: PlaylistRefresh) {
         viewModelScope.launch { settings.setPlaylistAutoRefresh(sourceId, mode) }
     }
 
@@ -846,7 +892,7 @@ class SettingsViewModel(
         pass: String,
         userAgent: String,
         epgUrl: String,
-        autoRefresh: PlaylistAutoRefresh,
+        autoRefresh: PlaylistRefresh,
         isDefault: Boolean = false,
         mac: String = "",
         stalkerSerialNumber: String = "",
@@ -936,7 +982,7 @@ class SettingsViewModel(
         pass: String,
         userAgent: String = "",
         epgUrl: String = "",
-        autoRefresh: PlaylistAutoRefresh = PlaylistAutoRefresh.OFF,
+        autoRefresh: PlaylistRefresh = PlaylistRefresh.OFF,
         live: SyncScopeChoice = SyncScopeChoice.Now,
         movies: SyncScopeChoice = SyncScopeChoice.Now,
         series: SyncScopeChoice = SyncScopeChoice.Now,
@@ -959,71 +1005,26 @@ class SettingsViewModel(
         }
     }
 
-    // ---- Stalker portal (plan Phase B) ----
+    // ---- "Test" on a saved playlist row ----
 
-    sealed interface StalkerTestState {
-        data object Idle : StalkerTestState
-        data object Testing : StalkerTestState
-        data class Ok(val endpoint: String, val profileFields: Int, val expiry: String?) : StalkerTestState
-        data class Failed(val failure: FriendlySyncFailure) : StalkerTestState
-    }
+    /** Null while no test is on screen; [SourceTestUi.Running] while the call is in flight. */
+    private val _sourceTest = MutableStateFlow<SourceTestUi?>(null)
+    val sourceTest: StateFlow<SourceTestUi?> = _sourceTest.asStateFlow()
 
-    private val _stalkerTest = MutableStateFlow<StalkerTestState>(StalkerTestState.Idle)
-    val stalkerTest: StateFlow<StalkerTestState> = _stalkerTest.asStateFlow()
-
-    fun resetStalkerTest() {
-        _stalkerTest.value = StalkerTestState.Idle
-    }
-
-    /** "Test connection": portal handshake + get_profile with the form's values, no source saved. */
-    fun testStalker(
-        portalUrl: String, mac: String, serialNumber: String = "", deviceId: String = "",
-        deviceId2: String = "", signature: String = "", userAgent: String = "",
-    ) {
-        val canonicalMac = tv.own.owntv.core.stalker.StalkerClient.canonicalizeMac(mac)
-        if (canonicalMac == null) {
-            _stalkerTest.value = StalkerTestState.Failed(FriendlySyncFailure.InvalidMac)
-            return
-        }
+    fun testSource(source: SourceEntity) {
         viewModelScope.launch {
-            _stalkerTest.value = StalkerTestState.Testing
-            _stalkerTest.value = try {
-                if (!connectivity.isOnlineNow()) {
-                    StalkerTestState.Failed(classifySyncFailure(null, online = false))
-                } else {
-                    val session = stalkerAuth.testConnection(
-                        tv.own.owntv.core.stalker.StalkerCredentials(
-                            sourceId = STALKER_TEST_SOURCE_ID,
-                            portalUrl = portalUrl.trim(),
-                            mac = canonicalMac,
-                            userAgent = userAgent.trim().takeIf { it.isNotBlank() },
-                            deviceIdentity = tv.own.owntv.core.stalker.StalkerDeviceIdentity(
-                                serialNumber = serialNumber.trim().takeIf { it.isNotBlank() },
-                                deviceId = deviceId.trim().takeIf { it.isNotBlank() },
-                                deviceId2 = deviceId2.trim().takeIf { it.isNotBlank() },
-                                signature = signature.trim().takeIf { it.isNotBlank() },
-                            ),
-                        ),
-                    )
-                    val endpoint = session.apiBase.substringAfter("://").substringAfter('/', "portal")
-                    // Subscription expiry line (Phase F, §1.2): optional account_info call. Portals
-                    // surface expiry under varying keys (sometimes even `phone`) — best effort only.
-                    val expiry = runCatching {
-                        val info = stalkerClient.getAccountInfo(
-                            session.apiBase, canonicalMac, session.token,
-                            userAgent.trim().takeIf { it.isNotBlank() },
-                        )
-                        stalkerExpiryOf(info) ?: stalkerExpiryOf(session.profile)
-                    }.getOrNull()
-                    StalkerTestState.Ok(endpoint, session.profile.size, expiry)
-                }
-            } catch (c: CancellationException) {
-                throw c
-            } catch (e: Exception) {
-                StalkerTestState.Failed(stalkerFailure(e))
-            }
+            _sourceTest.value = SourceTestUi.Running(source.name)
+            val result = sourceTester.test(source)
+            // Back may have closed the popup while the request was still running; don't re-open it.
+            if (_sourceTest.value != null) _sourceTest.value = SourceTestUi.Done(source.name, result)
         }
     }
+
+    fun dismissSourceTest() {
+        _sourceTest.value = null
+    }
+
+    // ---- Stalker portal (plan Phase B) ----
 
     /**
      * Save a Stalker source. Verifies the portal handshake first (same as Test connection) so a
@@ -1041,7 +1042,7 @@ class SettingsViewModel(
         deviceId2: String = "",
         signature: String = "",
         userAgent: String = "",
-        autoRefresh: PlaylistAutoRefresh = PlaylistAutoRefresh.OFF,
+        autoRefresh: PlaylistRefresh = PlaylistRefresh.OFF,
         isDefault: Boolean = false,
         live: SyncScopeChoice = SyncScopeChoice.Now,
         movies: SyncScopeChoice = SyncScopeChoice.Later,
@@ -1084,28 +1085,7 @@ class SettingsViewModel(
         }
     }
 
-    /**
-     * Pull a subscription end date out of a Stalker `account_info`/`get_profile` map. Portals are
-     * inconsistent: proper `end_date`/`exp_date` keys, or a date-looking string stuffed into `phone`
-     * (§1.2). Values like "0000-00-00", "null" or empty are ignored.
-     */
-    private fun stalkerExpiryOf(fields: Map<String, String>): String? {
-        val direct = listOf("end_date", "exp_date", "expire_date", "expire_billing_date", "tariff_expired_date")
-            .firstNotNullOfOrNull { key -> fields[key]?.trim()?.takeIf { it.looksLikeExpiryValue() } }
-        if (direct != null) return direct
-        // Some portals put the expiry text in `phone` — accept it only when it actually contains a date.
-        return fields["phone"]?.trim()?.takeIf { it.looksLikeExpiryValue() && it.contains(Regex("\\d{4}|\\d{1,2}[./-]\\d{1,2}")) }
-    }
-
-    private fun String.looksLikeExpiryValue(): Boolean =
-        isNotEmpty() && !equals("null", true) && !startsWith("0000") && this != "0"
-
-    private fun stalkerFailure(e: Exception): FriendlySyncFailure = when {
-        e is tv.own.owntv.core.stalker.StalkerClient.StalkerAuthException -> FriendlySyncFailure.MacNotAuthorised
-        else -> classifySyncFailure(e.message, connectivity.isOnlineNow())
-    }
-
-    fun addM3u(name: String, url: String, userAgent: String = "", epgUrl: String = "", autoRefresh: PlaylistAutoRefresh = PlaylistAutoRefresh.OFF, isDefault: Boolean = false) = runImport(
+    fun addM3u(name: String, url: String, userAgent: String = "", epgUrl: String = "", autoRefresh: PlaylistRefresh = PlaylistRefresh.OFF, isDefault: Boolean = false) = runImport(
         autoRefresh,
         requiresNetwork = !url.isLocalPlaylistPath(),
         makeDefault = isDefault,
@@ -1118,7 +1098,7 @@ class SettingsViewModel(
     }
 
     private fun runImport(
-        autoRefresh: PlaylistAutoRefresh = PlaylistAutoRefresh.OFF,
+        autoRefresh: PlaylistRefresh = PlaylistRefresh.OFF,
         contentTypes: SyncContentTypes = SyncContentTypes(),
         enabledScope: SyncContentTypes = SyncContentTypes(),
         enqueueRemainder: Boolean = false,
@@ -1285,7 +1265,7 @@ class SettingsViewModel(
         withContext(NonCancellable) {
             catalogSyncScheduler.cancelSync(source.id)
             runCatching { sourceRepository.deleteSource(source) }
-            runCatching { settings.setPlaylistAutoRefresh(source.id, PlaylistAutoRefresh.OFF) }
+            runCatching { settings.setPlaylistAutoRefresh(source.id, PlaylistRefresh.OFF) }
         }
     }
 
@@ -1588,4 +1568,12 @@ class SettingsViewModel(
         is java.net.ConnectException -> ProxyFailure.ConnectionFailed
         else -> ProxyFailure.Unknown(t.message?.takeIf { it.isNotBlank() })
     }
+}
+
+/** What the source-test popup is showing. */
+sealed interface SourceTestUi {
+    val sourceName: String
+
+    data class Running(override val sourceName: String) : SourceTestUi
+    data class Done(override val sourceName: String, val result: SourceTestResult) : SourceTestUi
 }

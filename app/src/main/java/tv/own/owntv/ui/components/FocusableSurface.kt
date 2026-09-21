@@ -37,7 +37,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.GlassInteraction
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.LocalGlassMotion
@@ -74,6 +74,11 @@ fun FocusableSurface(
     // When false, this surface never draws the built-in focus/selected outline, so the caller can
     // manage its own border (e.g. the nav ladder, which outlines only the focused-unselected cursor).
     showFocusBorder: Boolean = true,
+    // Focus drawn as light rather than as a tonal plate: a 1.6 dp rim in this colour, a 22% fill of it,
+    // and a soft bloom of it behind the control. Used by the player dock, whose accent has to read over
+    // moving video where the theme's surface tones have nothing to sit on. Reduce animations drops the
+    // bloom and keeps the rim. Null = the standard ladder, unchanged for every existing caller.
+    focusLight: Color? = null,
     // Keep selected semantics/click behaviour but let custom content own the complete selected
     // appearance. This prevents a second material plate behind controls such as the nav beacon.
     renderSelectionContainer: Boolean = true,
@@ -114,7 +119,8 @@ fun FocusableSurface(
     // controls share the same M3 tonal focus ladder instead of inheriting dozens of unrelated fills.
     val solidBrandAnchor = unfocusedContainerColor == colors.primary &&
         focusedContainerColor == colors.primary
-    val useSolidTonalLadder = !glassy && showFocusBorder && !solidBrandAnchor
+    val lit = focusLight != null && !glassy
+    val useSolidTonalLadder = !glassy && showFocusBorder && !solidBrandAnchor && !lit
     val solidTonalBase = if (unfocusedContainerColor.alpha > 0f) {
         unfocusedContainerColor
     } else {
@@ -161,6 +167,7 @@ fun FocusableSurface(
     )
     val container by animateColorAsState(
         when {
+            focused && lit -> focusLight.copy(alpha = 0.22f)
             focused && useSolidTonalLadder -> solidFocusedContainer
             visuallySelected && useSolidTonalLadder -> solidSelectedContainer
             focused -> focusedContainerColor
@@ -204,7 +211,15 @@ fun FocusableSurface(
                 // while bringIntoView scrolls its parent, which reads as a moving black bar in light
                 // mode. The tonal fill + accent boundary are the compact-row focus signal; reserve
                 // the depth shadow for larger cards that do not exhibit the scrolling trail.
-                if (focused && !glassy && !compactFocusableRow) Modifier.shadow(
+                if (focused && lit && animationsOn) Modifier.shadow(
+                    // The bloom IS the animation here: at reduced level it goes and the rim carries
+                    // the focus on its own.
+                    elevation = (10 * glowScale).dp,
+                    shape = shape,
+                    clip = false,
+                    ambientColor = focusLight,
+                    spotColor = focusLight,
+                ) else if (focused && !glassy && !compactFocusableRow) Modifier.shadow(
                     elevation = (glowElevation * glowScale).dp,
                     shape = shape,
                     clip = false,
@@ -236,6 +251,7 @@ fun FocusableSurface(
             )
             .then(
                 when {
+                    showBorder && focused && lit -> Modifier.border(1.6.dp, focusLight, shape)
                     showBorder && focused && !glassy -> Modifier.border(
                         focusBorderWidth,
                         borderColor,

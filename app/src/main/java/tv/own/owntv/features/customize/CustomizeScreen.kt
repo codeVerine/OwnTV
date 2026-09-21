@@ -53,7 +53,7 @@ import tv.own.owntv.core.util.Pin
 import tv.own.owntv.features.profiles.PinDialog
 import tv.own.owntv.features.settings.PickerDialog
 import tv.own.owntv.features.settings.SettingsViewModel
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.ui.components.chNavPaging
 import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.jumpLazyListTo
@@ -66,9 +66,13 @@ import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.trapVerticalFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.ui.components.InAppToast
+import tv.own.owntv.ui.components.rememberInAppToast
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalActionSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.SpanSelector
 
 /**
  * Settings → Customize Categories & Items: hide / rename / reorder categories per section, and unhide
@@ -84,6 +88,7 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val hiddenChannels by vm.hiddenChannels.collectAsStateWithLifecycle()
     val hideNewCategories by vm.hideNewCategories.collectAsStateWithLifecycle()
     val currentSort by vm.currentSort.collectAsStateWithLifecycle()
+    val visibilityFilter by vm.visibilityFilter.collectAsStateWithLifecycle()
     val rangeAnchorKey by vm.rangeAnchorKey.collectAsStateWithLifecycle()
     val rangeMode by vm.rangeMode.collectAsStateWithLifecycle()
     val rangeEndKey by vm.rangeEndKey.collectAsStateWithLifecycle()
@@ -94,6 +99,19 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     var renaming by remember { mutableStateOf<CustomizeCatRow?>(null) }
     var showNewCatPicker by remember { mutableStateOf(false) }
     var showSortPicker by remember { mutableStateOf(false) }
+    var showFilterPicker by remember { mutableStateOf(false) }
+    val invertToast = rememberInAppToast()
+    // Invert-count toast: the store callback lands off-composition, so park the count in state and
+    // resolve the message here, in composition — stringResource keeps it locale-aware (unlike
+    // LocalContext.getString captured in a callback, which lint rightly rejects).
+    var invertedCount by remember { mutableStateOf<Int?>(null) }
+    if (invertedCount != null) {
+        val invertedMessage = stringResource(R.string.settings_customize_invert_done, invertedCount ?: 0)
+        LaunchedEffect(invertedCount, invertedMessage) {
+            invertToast.show(invertedMessage)
+            invertedCount = null
+        }
+    }
     // The category whose Hide button was clicked to close a range — opens the Show/Hide/Cancel prompt.
     var rangeEnd by remember { mutableStateOf<CustomizeCatRow?>(null) }
     // ＋ New category (issue #87): name prompt, then the empty combined category appears in the list.
@@ -110,6 +128,7 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     var pinMismatch by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
     val sortFocus = remember { FocusRequester() }
+    val filterFocus = remember { FocusRequester() }
     val newCategoriesFocus = remember { FocusRequester() }
     val newCatPillFocus = remember { FocusRequester() } // "＋ New category" pill — restore target after its name prompt
     val pinFocus = remember { FocusRequester() }
@@ -118,7 +137,7 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // Opener row for whichever dialog (new-category picker, rename) is open — restored on close so
     // focus doesn't always jump back to the Live TV section chip.
     var dialogReturn by tv.own.owntv.ui.components.rememberDialogFocusRestore(
-        anyDialogOpen = showNewCatPicker || showSortPicker || renaming != null || creatingCategory ||
+        anyDialogOpen = showNewCatPicker || showSortPicker || showFilterPicker || renaming != null || creatingCategory ||
             deletingCategory != null || rangeEnd != null || editingPin != null,
     )
 
@@ -131,6 +150,10 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var listPaneFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(section) {
+        listState.scrollToItem(0)
+    }
     // Index (within `rows`) of the category row that currently holds focus — the paging anchor.
     var focusedCatIndex by remember { mutableIntStateOf(0) }
     // One FocusRequester per category row, so a jump can land focus on the target row.
@@ -172,7 +195,11 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         return
     }
 
-    LaunchedEffect(Unit) { kotlinx.coroutines.delay(60); runCatching { firstFocus.requestFocus() } }
+    LaunchedEffect(Unit) {
+        vm.setVisibilityFilter(CustomizeVisibilityFilter.ALL)
+        kotlinx.coroutines.delay(60)
+        runCatching { firstFocus.requestFocus() }
+    }
     // Restore focus to the row that opened a dialog (new-category picker / rename / new-category
     // prompt / delete confirm) when it closes — previously closing either always landed on the Live
     // TV section chip (firstFocus).
@@ -204,8 +231,9 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // Action pills on this panel frost with CARDS (the surface the panel rows use), not the DIALOGS
     // default. Covers the chip/move/unhide buttons; trailing Popups don't inherit this anyway.
     CompositionLocalProvider(LocalActionSurface provides GlassSurface.CARDS) {
+    Box(modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .roundedPanel()
             // Spatial D-pad entry from the sidebar would land mid-list — route it to the first chip.
@@ -244,6 +272,32 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 onClick = { dialogReturn = sortFocus; showSortPicker = true },
                 style = OwnTVButtonStyle.SECONDARY,
                 modifier = Modifier.focusRequester(sortFocus),
+            )
+            Spacer(Modifier.width(10.dp))
+            OwnTVButton(
+                label = stringResource(
+                    R.string.settings_customize_filter_button,
+                    stringResource(
+                        when (visibilityFilter) {
+                            CustomizeVisibilityFilter.ALL -> R.string.settings_customize_filter_all
+                            CustomizeVisibilityFilter.VISIBLE -> R.string.settings_customize_filter_visible
+                            CustomizeVisibilityFilter.HIDDEN -> R.string.settings_customize_filter_hidden
+                        },
+                    ),
+                ),
+                onClick = { dialogReturn = filterFocus; showFilterPicker = true },
+                style = OwnTVButtonStyle.SECONDARY,
+                modifier = Modifier.focusRequester(filterFocus),
+            )
+            Spacer(Modifier.width(10.dp))
+            // Invert pill — flips Show/Hide for every category in the current filtered list in one
+            // atomic edit. Self-undoing: pressing it again restores the previous state.
+            OwnTVButton(
+                label = stringResource(R.string.settings_customize_invert),
+                onClick = {
+                    vm.invertHidden { count -> invertedCount = count }
+                },
+                style = OwnTVButtonStyle.SECONDARY,
             )
             Spacer(Modifier.width(10.dp))
             // New categories pill — same setting as the old Row2, now compact.
@@ -496,6 +550,25 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         )
     }
 
+    if (showFilterPicker) {
+        PickerDialog(
+            title = stringResource(R.string.settings_customize_filter_title),
+            options = listOf(
+                CustomizeVisibilityFilter.ALL.name to stringResource(R.string.settings_customize_filter_all),
+                CustomizeVisibilityFilter.VISIBLE.name to stringResource(R.string.settings_customize_filter_visible),
+                CustomizeVisibilityFilter.HIDDEN.name to stringResource(R.string.settings_customize_filter_hidden),
+            ),
+            selected = visibilityFilter.name,
+            onSelect = { value ->
+                CustomizeVisibilityFilter.entries.firstOrNull { it.name == value }
+                    ?.let(vm::setVisibilityFilter)
+                scope.launch { listState.scrollToItem(0) }
+                showFilterPicker = false
+            },
+            onDismiss = { showFilterPicker = false },
+        )
+    }
+
     // Custom category pending deletion (opened from the rename dialog's Delete) — confirmed first,
     // plan §3.5: "It must never touch content."
     deletingCategory?.let { row ->
@@ -596,6 +669,9 @@ fun CustomizeScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             }
         }
     }
+    // Transient confirmation for the Invert action (self-undoing bulk flip).
+    InAppToast(invertToast)
+    } // Box
     } // CompositionLocalProvider
     } // else (selectedCategory == null)
 }

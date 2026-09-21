@@ -45,7 +45,8 @@ import tv.own.owntv.ui.components.ContentPanelFill
 import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.OwnTVIcon
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.ui.components.ProviderChip
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 /**
@@ -65,6 +66,7 @@ fun ChannelListOverlay(
     title: String? = null,
     alignEnd: Boolean = false,
     showNumbers: Boolean = true,
+    providerNames: Map<Long, String> = emptyMap(),
     onOpenCategories: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -118,6 +120,7 @@ fun ChannelListOverlay(
                         isCurrent = isCurrent,
                         nowTitle = nowPlaying[ch.id],
                         showNumber = showNumbers,
+                        providerName = providerNames[ch.sourceId],
                         onClick = { onSelect(ch) },
                         modifier = if (ch.id == channels.getOrNull(currentIndex)?.id) Modifier.focusRequester(focusCurrent) else Modifier,
                     )
@@ -134,6 +137,7 @@ private fun ChannelRow(
     onClick: () -> Unit,
     nowTitle: String? = null,
     showNumber: Boolean = true,
+    providerName: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = OwnTVTheme.colors
@@ -191,6 +195,7 @@ private fun ChannelRow(
                     )
                 }
             }
+            providerName?.let { ProviderChip(name = it, maxWidth = 104.dp, compact = true) }
         }
     }
 }

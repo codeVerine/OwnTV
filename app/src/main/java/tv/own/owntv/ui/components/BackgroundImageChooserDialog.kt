@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -146,7 +147,7 @@ fun RemoteBackgroundDialog(
                     Spacer(Modifier.height(12.dp))
                     state.qr?.let { qr ->
                         androidx.compose.foundation.Image(
-                            bitmap = qr,
+                            bitmap = qr.asImageBitmap(),
                             contentDescription = stringResource(R.string.common_qr_code_companion_url),
                             // White backing panel like the backup screens — a QR on a dark/glass panel may not scan.
                             modifier = Modifier.size(160.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp),

@@ -1,6 +1,9 @@
 package tv.own.owntv.features.home
 
 import android.content.Context
+import tv.own.owntv.core.home.GuideSliceState
+import tv.own.owntv.core.home.HeroItem
+import tv.own.owntv.core.home.TrendingHomeItem
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -90,6 +93,8 @@ import tv.own.owntv.core.database.entity.MetadataCacheEntity
 import tv.own.owntv.core.database.dao.TrendingDao
 import tv.own.owntv.core.launcher.LauncherContinuationItem
 import tv.own.owntv.core.launcher.LauncherWatchNextType
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
 import tv.own.owntv.player.HeroPreviewEngine
 import tv.own.owntv.ui.components.BrandLockup
 import tv.own.owntv.ui.components.FocusableSurface
@@ -105,7 +110,7 @@ import tv.own.owntv.ui.components.ContentPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.format.formatSystemTime
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
 import tv.own.owntv.features.shell.components.MediaDetailsScreen
@@ -115,7 +120,6 @@ import tv.own.owntv.core.trending.ProviderVariantParser
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.foundation.layout.widthIn
-import tv.own.owntv.ui.theme.PopupFontTheme
 import java.util.Calendar
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -646,12 +650,13 @@ private fun TrendingHeroSection(
         }
     val displaySignals = ProviderVariantParser.displaySignals(snapshot.providerRawName)
     val typeLabel = if (item is TrendingHomeItem.Movie) movieLabel else seriesLabel
+    val providerLanguage = snapshot.providerLanguage
     val languageBadge = when {
-        snapshot.providerLanguage == preferredLanguage ->
+        providerLanguage == preferredLanguage ->
             stringResource(R.string.home_trending_language_choice, preferredLanguage)
-        snapshot.providerLanguage == "EN" -> stringResource(R.string.home_trending_english_fallback)
-        snapshot.providerLanguage == null -> stringResource(R.string.home_trending_untagged_fallback)
-        else -> stringResource(R.string.home_trending_other_fallback, snapshot.providerLanguage)
+        providerLanguage == "EN" -> stringResource(R.string.home_trending_english_fallback)
+        providerLanguage == null -> stringResource(R.string.home_trending_untagged_fallback)
+        else -> stringResource(R.string.home_trending_other_fallback, providerLanguage)
     }
     val reasonTitle = stringResource(R.string.home_trending_reason_title, snapshot.trendingRank, typeLabel)
     val reasonCopy = when {
@@ -665,8 +670,7 @@ private fun TrendingHeroSection(
     }
     val seasonCount = (item as? TrendingHomeItem.Series)?.let { seasonCounts[it.series.id] }
 
-    PopupFontTheme {
-      Column(
+    Column(
           modifier = modifier
               .height(538.dp)
               .clip(RoundedCornerShape(18.dp))
@@ -895,7 +899,6 @@ private fun TrendingHeroSection(
                 modifier = Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(colors.primary),
             )
         }
-      }
     }
 }
 

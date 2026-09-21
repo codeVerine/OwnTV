@@ -9,6 +9,107 @@
 > (e.g. `(community PR #40 by @codeVerine)`). Issue numbers that are part of a title (e.g. `(#57)`) are
 > fine; explanatory parentheticals are not. Descriptions belong in CHANGELOG.md, never here.
 
+## v4.2.5 — unreleased
+
+### ✨ New features
+
+- **🧪 Test a playlist before you trust it**
+- **🔄 Auto refresh: choose your own number of days**
+- **🪟 A new Glass Effect look: Aurora**
+
+### 🐛 Fixes
+
+- **Live TV's catch-up list now reaches back a full week**
+- **The guide line under a channel's name no longer goes blank after updating the app**
+- **Guide auto-match now works for non-Latin channel names** (community PR by @Sekator778)
+- **⚡ Guide auto-match finishes in seconds instead of minutes**
+- **Blank poster tiles now show the poster OwnTV already found**
+
+## v4.2.4 — 2026-08-27
+
+### ✨ New features
+
+- **🩺 A crash now leaves a report you can send**
+- **⚡ Playlists import and refresh faster**
+- **🚀 OwnTV opens faster**
+
+### 🐛 Fixes
+
+- **Live TV no longer crashes in full screen with Animations turned off**
+- **The long-press menu editor can be scrolled**
+- **An absurd catch-up length no longer breaks tuning**
+- **Stopping a stream during a retry no longer crashes the player**
+- **A refusing media session no longer takes playback with it**
+- **Long-press menu Settings shows the saved order**
+- **Home resume no longer trips working Auto surround into stereo or mpv**
+
+## v4.2.3 — 2026-08-26
+
+### ✨ New features
+
+- **🏷️ Every merged library says which provider an item came from**
+- **🔎 Customize can show All, Visible or Hidden entries**
+- **🎛️ Spare remote buttons can do exactly what you choose**
+- **🕰️ The Guide keeps the present in view**
+- **↔️ Choose how much of Guide belongs to channels and programmes**
+- **🪟 Popup boxes and popup text finally size independently**
+- **✨ Glass Effect is now a complete settings screen**
+- **🪟 The corner player carries one floating strip of buttons**
+- **🎵 The music bar opens up when you move to it**
+- **✨ Focus that reads like light, and icons that stop sharing**
+- **🗂️ Settings is a spine and a sheet, with your quick switches at the top of it**
+- **🔀 Arrange the long-press menus yourself**
+- **▶️ The player's transport buttons sit in one pill**
+- **🪟 You can reach the docked mini player again**
+- **💬 A separate subtitle size for each of the two players**
+- **⏱️ A dead channel says so, instead of leaving you with a black screen**
+- **🎛️ Every playback setting in one place**
+- **🎚️ Per-playlist Live TV player and Live latency**
+- **🎧 Remember the audio sync for one channel or one film**
+- **🏠 Turn off the video on the Home screen's big card**
+- **⏭️ Catch-up plays on to the next programme**
+- **🪟 Mini player is one popup instead of three screens**
+- **🏷️ The player's buttons tell you what they are**
+- **🎨 The player follows your accent colour**
+- **⚡ Settings opens faster, and catch-up stops redrawing the screen**
+- **🗂️ Settings is two columns, and grouped the way you'd look for things**
+- **🎨 Icons that match what they do**
+
+### 🐛 Fixes
+
+- **Entering a Guide programme row keeps the current time in place**
+- **Embedded TMDB trailers run with less interface overhead**
+- **Backup & Restore preserves every Settings arrangement and global player choice**
+- **CH+ / CH− always changes the channel while the Live TV or catch-up player is open**
+- **Focus returns directly to the Settings row you left**
+- **Home Trending no longer follows popup size and popup font controls**
+- **Two settings put the highlight in the wrong place afterwards**
+- **Back now goes back one level in Settings, not two**
+- **Every series re-sync used to leave a dead resume position behind, for ever**
+- **Removing a series from Continue watching now removes it from the Home screen too**
+- **The "watch next episode" box no longer pops up for the wrong episode**
+- **A deleted profile's favorites can no longer surface in someone else's account**
+- **Rewinding a channel with no recording available now returns to live**
+- **Choosing a category right after typing a channel number sticks**
+- **Your audio sync survives a stream reconnecting**
+- **The offline warning reads the connection you are actually using**
+- **Nothing from the previous channel or film can survive into the next one**
+- **Auto frame rate now respects your TV's own "Match content frame rate" setting**
+- **Live latency now admits what a 4K channel can actually buffer**
+- **A film with picture-based subtitles is less likely to be given up on early**
+- **ExoPlayer no longer drops a working movie or episode into mpv after switching surround to stereo**
+- **"App not installed" when updating from inside OwnTV**
+- **An update that the system refuses now says why**
+- **The first-run "Add a playlist" screen no longer hides Stalker**
+- **Fast-forward and rewind from a Bluetooth remote or the system media notification now use your Seek step**
+- **A frozen live channel moves to the other player about twice as fast**
+- **The offline warning now appears when the internet is actually unreachable**
+- **Online subtitle searching now filters correctly for seven more languages**
+- **Track menus stop hunting for tracks that will never arrive**
+- **The in-player channel list no longer mislabels itself**
+- **One less timer running while you watch a recording**
+- **Less background work during playback, and less of it on weaker TVs**
+
 ## v4.2.2 — 2026-08-19
 
 ### ✨ New features

@@ -48,7 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
@@ -80,6 +80,8 @@ fun OwnTVTextField(
     isPassword: Boolean = false,
     focusRequester: FocusRequester? = null,
     surface: GlassSurface? = GlassSurface.CARDS,
+    /** Corner radius of the field; a pill reads better where the field sits inline in a header. */
+    corner: androidx.compose.ui.unit.Dp = 12.dp,
 ) {
     val colors = OwnTVTheme.colors
     val interaction = remember { MutableInteractionSource() }
@@ -91,7 +93,7 @@ fun OwnTVTextField(
     val keyboard = LocalSoftwareKeyboardController.current
     val tvImeWatcher = LocalTvImeWatcher.current
     val tvImeMetrics = LocalTvImeMetrics.current
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(corner)
     val focused = fieldFocused || editing
     var showPassword by remember { mutableStateOf(false) }
     val eyeInteraction = remember { MutableInteractionSource() }
@@ -130,8 +132,12 @@ fun OwnTVTextField(
         }
     }
     Column(modifier = modifier) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-        Spacer(Modifier.height(6.dp))
+        // A blank label means the field is captioned by where it sits (an inline header), and an
+        // empty caption line would just make that header two rows tall.
+        if (label.isNotBlank()) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier

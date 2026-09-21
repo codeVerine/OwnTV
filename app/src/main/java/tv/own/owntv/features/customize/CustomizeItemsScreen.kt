@@ -48,6 +48,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.model.MediaType
+import tv.own.owntv.features.settings.PickerDialog
 import tv.own.owntv.features.settings.SettingsViewModel
 import tv.own.owntv.ui.components.chNavPaging
 import tv.own.owntv.ui.components.FocusableSurface
@@ -60,10 +61,12 @@ import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.trapVerticalFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalActionSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.PopupFontTheme
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.SpanSelector
 
 /**
  * Category items screen — shows every item (channel/movie/series) in a category, including hidden
@@ -85,6 +88,7 @@ fun CustomizeItemsScreen(
     val rangeMode by vm.rangeMode.collectAsStateWithLifecycle()
     val rangeEndKey by vm.rangeEndKey.collectAsStateWithLifecycle()
     val rangeSelectedKeys by vm.rangeSelectedKeys.collectAsStateWithLifecycle()
+    val visibilityFilter by vm.visibilityFilter.collectAsStateWithLifecycle()
 
     // Propagate the category info from the parent ViewModel into the items ViewModel.
     val ctx = parentVm.ctxForItems()
@@ -117,6 +121,7 @@ fun CustomizeItemsScreen(
     var listPaneFocused by remember { mutableStateOf(false) }
     var focusedItemIndex by remember { mutableIntStateOf(0) }
     var renaming by remember { mutableStateOf<CustomizeItemRow?>(null) }
+    var showFilterPicker by remember { mutableStateOf(false) }
     // The item whose Hide button was clicked to close a range — opens the Show/Hide/Cancel prompt.
     var rangeEnd by remember { mutableStateOf<CustomizeItemRow?>(null) }
     // The item the "Move to…" dialog is moving (issue #87); creatingCategory swaps the dialog for the
@@ -124,6 +129,7 @@ fun CustomizeItemsScreen(
     var movingItem by remember { mutableStateOf<CustomizeItemRow?>(null) }
     var creatingCategory by remember { mutableStateOf(false) }
     val backFocus = remember { FocusRequester() }
+    val filterFocus = remember { FocusRequester() }
     val renameItemsFocus = remember { FocusRequester() }
     val autoCleanupFocus = remember { FocusRequester() }
     // One FocusRequester per visible row, so a CH+/CH- jump lands focus on the target row's name.
@@ -131,7 +137,7 @@ fun CustomizeItemsScreen(
     // Focus the row that opened a dialog (rename / move) when it closes (a dialog close can land
     // focus on the screen's first focusable otherwise).
     var dialogReturn by tv.own.owntv.ui.components.rememberDialogFocusRestore(
-        anyDialogOpen = renaming != null || rangeEnd != null || movingItem != null || creatingCategory,
+        anyDialogOpen = showFilterPicker || renaming != null || rangeEnd != null || movingItem != null || creatingCategory,
     )
     // Focus the first row once the screen opens (rows arrive via paging, so wait for them).
     var firstLanding by remember { mutableStateOf(true) }
@@ -177,7 +183,23 @@ fun CustomizeItemsScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
+            Spacer(Modifier.width(16.dp))
+            OwnTVButton(
+                label = stringResource(
+                    R.string.settings_customize_filter_button,
+                    stringResource(
+                        when (visibilityFilter) {
+                            CustomizeVisibilityFilter.ALL -> R.string.settings_customize_filter_all
+                            CustomizeVisibilityFilter.VISIBLE -> R.string.settings_customize_filter_visible
+                            CustomizeVisibilityFilter.HIDDEN -> R.string.settings_customize_filter_hidden
+                        },
+                    ),
+                ),
+                onClick = { dialogReturn = filterFocus; showFilterPicker = true },
+                style = OwnTVButtonStyle.SECONDARY,
+                modifier = Modifier.focusRequester(filterFocus),
+            )
+            }
         Spacer(Modifier.height(4.dp))
         Text(
             when (section) {
@@ -318,6 +340,25 @@ fun CustomizeItemsScreen(
                 )
             }
         }
+    }
+
+    if (showFilterPicker) {
+        PickerDialog(
+            title = stringResource(R.string.settings_customize_filter_title),
+            options = listOf(
+                CustomizeVisibilityFilter.ALL.name to stringResource(R.string.settings_customize_filter_all),
+                CustomizeVisibilityFilter.VISIBLE.name to stringResource(R.string.settings_customize_filter_visible),
+                CustomizeVisibilityFilter.HIDDEN.name to stringResource(R.string.settings_customize_filter_hidden),
+            ),
+            selected = visibilityFilter.name,
+            onSelect = { value ->
+                CustomizeVisibilityFilter.entries.firstOrNull { it.name == value }
+                    ?.let(vm::setVisibilityFilter)
+                scope.launch { listState.scrollToItem(0) }
+                showFilterPicker = false
+            },
+            onDismiss = { showFilterPicker = false },
+        )
     }
 
     renaming?.let { row ->

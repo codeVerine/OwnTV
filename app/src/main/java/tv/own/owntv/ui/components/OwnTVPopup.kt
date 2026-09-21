@@ -106,8 +106,8 @@ fun OwnTVPopup(
         val availableHeightDp = with(baseDensity) { availableHeightPx.toDp() }
 
         val popupScale = 0.70f
-        // Shrink dp geometry while compensating fontScale; PopupFontTheme applies exactly the same
-        // 30% reduction to sp typography instead of accidentally scaling text twice.
+        // The host owns the fixed TV-safe base scale. PopupFontTheme applies the user's independent
+        // popup geometry and font controls for both hosted and legacy inline popup content.
         val popupDensity = Density(
             density = baseDensity.density * popupScale,
             fontScale = baseDensity.fontScale / popupScale,
@@ -128,7 +128,7 @@ fun OwnTVPopup(
                     LocalTvImeWatcher provides watcher,
                     LocalTvImeMetrics provides metrics,
                 ) {
-                PopupFontTheme(fontScale = fontScale) {
+                    PopupFontTheme(fontScale = fontScale) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             content()
                         }

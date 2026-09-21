@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import tv.own.owntv.R
 import tv.own.owntv.core.database.dao.LinkedSubtitle
 import tv.own.owntv.ui.components.OwnTVButton
+import tv.own.owntv.ui.components.rememberDialogFocusRestore
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.roundedPanel
@@ -61,11 +62,17 @@ fun DeleteSubtitlesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
     BackHandler { onBack() }
 
+    // "Delete all" sits above the Movies/Series toggle that owns [firstFocus], so without this the
+    // confirmation closing dropped focus onto the toggle instead of the button that opened it.
+    val scrollState = rememberScrollState()
+    val dialogFocus = rememberDialogFocusRestore(showDeleteAll, scrollState)
+    val deleteAllFocus = remember { FocusRequester() }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .roundedPanel()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 40.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -73,7 +80,12 @@ fun DeleteSubtitlesScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) { Header(stringResource(R.string.settings_delete_subtitles), onBack) }
             if (movieCount + seriesCount > 0) {
-                OwnTVButton(stringResource(R.string.settings_delete_all), onClick = { showDeleteAll = true }, style = OwnTVButtonStyle.SECONDARY)
+                OwnTVButton(
+                    stringResource(R.string.settings_delete_all),
+                    onClick = { dialogFocus.value = deleteAllFocus; showDeleteAll = true },
+                    style = OwnTVButtonStyle.SECONDARY,
+                    modifier = Modifier.focusRequester(deleteAllFocus),
+                )
             }
         }
         Spacer(Modifier.height(12.dp))

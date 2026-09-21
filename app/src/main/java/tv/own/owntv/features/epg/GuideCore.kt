@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.drawText
@@ -50,7 +51,7 @@ import tv.own.owntv.R
 import tv.own.owntv.core.database.entity.EpgProgrammeEntity
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.dialogPanel
@@ -61,7 +62,7 @@ import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.longPressMenuGuard
 import tv.own.owntv.ui.format.rememberSystemTimeFormatter
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.PopupFontTheme
 import tv.own.owntv.ui.theme.glass
@@ -132,7 +133,7 @@ internal fun ProgrammeStripCanvas(
         }
     }
     // Vertical "now" marker + catch-up glyph — measured once, reused each frame.
-    val nowColor = Color(0xFFFF5C5C)
+    val nowColor = Color(0xFFFFC857)
     val nowLinePx = with(density) { 2.dp.toPx() }
     val catchupStyle = MaterialTheme.typography.labelSmall.copy(
         color = colors.primary,
@@ -187,7 +188,16 @@ internal fun ProgrammeStripCanvas(
         if (now in windowStart..windowEnd) {
             val nowX = ((now - windowStart) / 60_000f) * pxPerMin - scrollPx
             if (nowX in 0f..viewW) {
-                drawLine(color = nowColor, start = Offset(nowX, 0f), end = Offset(nowX, h), strokeWidth = nowLinePx)
+                drawLine(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(nowColor, nowColor.copy(alpha = 0.72f), nowColor.copy(alpha = 0.08f)),
+                        startY = 0f,
+                        endY = h,
+                    ),
+                    start = Offset(nowX, 0f),
+                    end = Offset(nowX, h),
+                    strokeWidth = nowLinePx,
+                )
             }
         }
     }

@@ -4,6 +4,9 @@ import javax.inject.Inject
 import org.gradle.process.ExecOperations
 
 // Packaged locale qualifiers are read from tools/i18n/locales.json entries where packaged = true.
+// That catalogue is owned by the core repo (ahXN00/OwnTV_Core), which holds the strings; the copy
+// here exists only because Gradle needs the list before any dependency is resolved. Change it there
+// first, then copy it across, or the app will package a locale set core does not translate.
 // The build consumes the ``resourceQualifier`` field specifically (NOT languageTag, NOT weblateCode): a
 // runtime BCP-47 tag fed straight into localeFilters is the bug this schema exists to prevent.
 // Parsing uses groovy.json.JsonSlurper, available on every Gradle build script classpath.
@@ -29,9 +32,7 @@ plugins {
 android {
     namespace = "tv.own.owntv"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version = release(37)
     }
 
     // Signing credentials AND local-only build switches, kept in a standalone properties file OUTSIDE
@@ -225,8 +226,6 @@ android {
         }
     }
 
-    sourceSets["androidTest"].assets.directories.add("$projectDir/schemas")
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -252,10 +251,6 @@ androidComponents {
 // the `standard` arm APK.
 baselineProfile {
     mergeIntoMain = true
-}
-
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 // --- hardcoded-literal gate ----------------------------------------------------------------
@@ -330,6 +325,8 @@ abstract class VerifyI18nLiterals : DefaultTask() {
 val verifyI18nLiterals = tasks.register<VerifyI18nLiterals>("verifyI18nLiterals") {
     group = "verification"
     description = "Fails the build on user-visible text left hardcoded in Kotlin."
+    // Only :app lives in this repo now. Core's own Kotlin is gated by the identical task in the
+    // core repo, so a literal cannot escape by moving between the two.
     kotlinSources.from(fileTree("src/main/java") { include("**/*.kt") })
     toolInputs.from(
         rootProject.file("tools/i18n/check_hardcoded_strings.py"),
@@ -345,6 +342,15 @@ val verifyI18nLiterals = tasks.register<VerifyI18nLiterals>("verifyI18nLiterals"
 tasks.named("preBuild") { dependsOn(verifyI18nLiterals) }
 
 dependencies {
+    // The shared data/settings/sync module. It lives in its own repository now — see
+    // https://github.com/ahXN00/OwnTV_Core. Set owntv.corePath in ~/.gradle/gradle.properties to
+    // build against its source instead of this pinned version.
+    implementation(libs.owntv.core)
+
+    // The shared playback engine. The TV HUD in app/player/** drives it; it renders nothing itself,
+    // so the mobile shell drives the same engine. Always on the same version as core.
+    implementation(libs.owntv.player.core)
+
     // Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

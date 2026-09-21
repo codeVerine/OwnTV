@@ -2,6 +2,7 @@ package tv.own.owntv.features.shell.components
 
 import android.text.format.DateFormat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -46,7 +47,7 @@ import tv.own.owntv.R
 import tv.own.owntv.core.weather.WeatherInfo
 import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.OwnTVIcon
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.Dimens
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
@@ -76,6 +77,8 @@ fun TopBar(
     // Audio Mode (plan §8): the now-playing bar, shown left of the weather chip while PlayerMode.AUDIO
     // is active. Null = not in Audio Mode.
     audioBar: (@Composable () -> Unit)? = null,
+    /** The audio capsule has taken focus and grown; the strip grows with it so content is pushed, not covered. */
+    audioBarExpanded: Boolean = false,
     // The shell reserves this width for its navigation rail. Extending into that reservation lets
     // the top bar own the complete top strip while the rail itself begins below it.
     leadingExtension: Dp = 0.dp,
@@ -85,7 +88,16 @@ fun TopBar(
     // Audio Mode can expand into a two-line now-playing card and 36 dp transport control. Preserve the
     // existing 48 dp strip for it; ordinary pills need only 40 dp, reclaiming 4 dp above and below.
     val hasAudioBar = audioBar != null
-    val barHeight = if (hasAudioBar) Dimens.TopBarHeight else Dimens.TopBarCompactHeight
+    val barHeight by animateDpAsState(
+        when {
+            hasAudioBar && audioBarExpanded -> Dimens.TopBarAudioExpandedHeight
+            hasAudioBar -> Dimens.TopBarHeight
+            else -> Dimens.TopBarCompactHeight
+        },
+        // ownTvTween, so Reduce animations snaps between the two heights instead of sliding.
+        animationSpec = tv.own.owntv.ui.theme.ownTvTween(180),
+        label = "topBarHeight",
+    )
     val verticalInset = if (hasAudioBar) 4.dp else 2.dp
     Row(
         modifier = modifier

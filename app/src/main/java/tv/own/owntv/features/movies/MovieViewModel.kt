@@ -60,15 +60,15 @@ import tv.own.owntv.core.model.MediaType
 import tv.own.owntv.core.util.throttleLatest
 import tv.own.owntv.features.customize.MoveTarget
 import tv.own.owntv.features.live.LiveRailItem
-import tv.own.owntv.features.live.LiveKey
-import tv.own.owntv.features.live.parseLiveKey
-import tv.own.owntv.features.live.serialize
 import tv.own.owntv.core.download.DownloadManager
 import tv.own.owntv.core.storage.StorageAccess
 import tv.own.owntv.core.repository.activeProfileSources
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.player.OwnTVPlayer
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.core.live.LiveKey
+import tv.own.owntv.core.live.parseLiveKey
+import tv.own.owntv.core.live.serialize
 
 class MovieViewModel(
     private val movieDao: MovieDao,
@@ -95,13 +95,24 @@ class MovieViewModel(
     private val _moveState = MutableStateFlow<MovieMoveState?>(null)
     val moveState: StateFlow<MovieMoveState?> = _moveState.asStateFlow()
 
-    private data class Ctx(val profileId: Long, val sourceIds: List<Long>)
+    private data class Ctx(
+        val profileId: Long,
+        val sourceIds: List<Long>,
+        val sourceNames: Map<Long, String>,
+    )
     // Observe the active profile's sources reactively so adding/removing a playlist refreshes Movies
     // immediately (was read once at startup, so a new playlist showed nothing until app restart).
     private val ctx: StateFlow<Ctx> = activeProfileSources(settings, sourceDao)
-        .map { aps -> Ctx(aps.profileId, aps.movieSourceIds) }
+        .map { aps ->
+            val ids = aps.movieSourceIds
+            Ctx(aps.profileId, ids, aps.sources.filter { it.id in ids }.associate { it.id to it.name })
+        }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList(), emptyMap()))
+
+    val providerNames: StateFlow<Map<Long, String>> = ctx
+        .map { c -> c.sourceNames.takeIf { it.size > 1 } ?: emptyMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     private val folderContextKeys: StateFlow<Map<Long, String>> = ctx
         .flatMapLatest { c ->
@@ -279,6 +290,20 @@ class MovieViewModel(
      *  different card during the debounce window. [cache] is null while resolving or on no match. */
     data class MovieMeta(val movieId: Long, val cache: tv.own.owntv.core.database.entity.MetadataCacheEntity?)
 
+    /**
+     * Poster fallback for grid/list tiles the provider gave no artwork for. Those show a placeholder
+     * even once the detail pane has resolved and cached a TMDB poster for the same title — most
+     * visibly under Date added, which puts a whole freshly-imported batch at the front.
+     *
+     * The screen reports the on-screen posterless items and gets back whatever the cache already
+     * holds. Cache-only by design: a DB read, never a TMDB call, so scrolling costs no quota.
+     */
+    private val _posterProbe = MutableStateFlow<List<MovieEntity>>(emptyList())
+    private val _cachedPosters = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val cachedPosters: StateFlow<Map<Long, String>> = _cachedPosters.asStateFlow()
+
+    fun onPosterlessVisible(movies: List<MovieEntity>) { _posterProbe.value = movies }
+
     /** Source mode (plan §4.1) — the detail pane uses it to flip provider/TMDB field precedence. */
     val metadataMode: StateFlow<tv.own.owntv.core.metadata.MetadataMode> = settings.metadataMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.metadata.MetadataMode.PROVIDER_PLUS_TMDB)
@@ -318,6 +343,22 @@ class MovieViewModel(
                 wasPlaying = playing
             }
         }
+        // Resolve the poster fallback for what is on screen. Debounced so a fast scroll issues one
+        // query when it settles; keyed on the refresh tick too, so a "Refetch TMDB details" that
+        // dropped an entry re-reads it instead of leaving the tile blank.
+        viewModelScope.launch {
+            combine(_posterProbe, _metaRefreshTick) { probe, _ -> probe }
+                .debounce(250)
+                .collectLatest { probe ->
+                    val wanted = probe.filterNot { it.id in _cachedPosters.value }
+                    if (wanted.isEmpty()) return@collectLatest
+                    val found = runCatching { metadata.cachedMoviePosters(wanted) }.getOrDefault(emptyMap())
+                    if (found.isEmpty()) return@collectLatest
+                    // Bounded: a session spent browsing a 170k catalog would otherwise grow this forever.
+                    val base = if (_cachedPosters.value.size > 500) emptyMap() else _cachedPosters.value
+                    _cachedPosters.value = base + found
+                }
+        }
     }
 
     val railItems: StateFlow<List<LiveRailItem>> = ctx
@@ -336,10 +377,16 @@ class MovieViewModel(
                 val visibleCats = if (kids) cats.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cats
                 val visibleCustoms = if (kids) cust.customCategories.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cust.customCategories
                 val folders = visibleCats.applyCustomizationsWithCustoms(cust, visibleCustoms, alphaRest = sort == SettingsRepository.SortMode.ALPHA)
+                val multiSourceNames = c.sourceNames.takeIf { it.size > 1 }.orEmpty()
+                val categoriesById = visibleCats.associateBy { it.id }
                 defaultRail + folders.map { e ->
                     LiveRailItem(
                         key = e.categoryId?.let { LiveKey.Folder(it) } ?: LiveKey.Custom(e.customId!!),
                         title = e.displayName,
+                        providerName = e.categoryId
+                            ?.let(categoriesById::get)
+                            ?.sourceId
+                            ?.let(multiSourceNames::get),
                     )
                 }
             }
@@ -412,6 +459,7 @@ class MovieViewModel(
     fun refetchMovieMeta(movie: MovieEntity) {
         viewModelScope.launch {
             runCatching { metadata.clearMovie(movie) }
+            _cachedPosters.value = _cachedPosters.value - movie.id
             _metaRefreshTick.value++
         }
     }
