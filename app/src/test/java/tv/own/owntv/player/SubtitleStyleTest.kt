@@ -4,8 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import tv.own.owntv.features.settings.data.SubtitleStyle
-import tv.own.owntv.features.settings.data.SubtitleStyle.Position
+import tv.own.owntv.core.settings.SubtitleStyle
+import tv.own.owntv.core.settings.SubtitleStyle.Position
 
 /**
  * The subtitle-anchor mapping the three renderers agree on — mpv's own OSD, Media3's `SubtitleView`

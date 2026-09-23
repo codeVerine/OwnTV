@@ -1,9 +1,11 @@
 package tv.own.owntv.player
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.TextureView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
@@ -17,8 +19,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import tv.own.owntv.features.settings.data.SettingsRepository
-import tv.own.owntv.features.settings.data.SubtitleStyle
+import tv.own.owntv.core.settings.SettingsRepository
+import tv.own.owntv.core.settings.SubtitleStyle
 import tv.own.owntv.ui.theme.asAndroidTypeface
 
 private class MpvSurfaceView(context: Context, private val player: OwnTVPlayer) :
@@ -148,6 +150,21 @@ fun ExoPreviewSurface(
     modifier: Modifier = Modifier,
     keepAwake: Boolean = false,
     autoFrameRate: Boolean = false,
+    /**
+     * Draw through a [TextureView] instead of a [SurfaceView].
+     *
+     * A SurfaceView is a hole punched in the app's window that the display hardware fills directly.
+     * It is the right thing for one full-screen picture — it is what keeps 4K and HDR on their
+     * hardware path — but a television has only so many of those hardware video planes, and several
+     * have exactly one. A second SurfaceView asking for a plane that does not exist gets no picture,
+     * while its audio, which needs no plane at all, carries on. That is precisely the Multiview
+     * symptom: one tile with sound and no image.
+     *
+     * A TextureView is an ordinary view composited by the GPU, so any number of them can draw at
+     * once. It costs some GPU and gives up the hardware-overlay path, which is a fair trade for a
+     * quarter-screen tile and a bad one for full screen — hence a parameter rather than a change.
+     */
+    useTextureView: Boolean = false,
 ) {
     // Only the full-screen live player passes autoFrameRate = true — the in-pane preview must never
     // reconfigure the display while the user is just scrolling the channel list.
@@ -166,19 +183,48 @@ fun ExoPreviewSurface(
         val surfaceGeneration by engine.surfaceGeneration.collectAsStateWithLifecycle()
         val viewModifier = Modifier.videoZoom(zoom, aspect, videoSize, maxWidth, maxHeight)
         key(surfaceGeneration) {
-            AndroidView(
-                modifier = viewModifier,
-                factory = { ctx ->
-                    SurfaceView(ctx).apply {
-                        holder.addCallback(object : SurfaceHolder.Callback {
-                            override fun surfaceCreated(holder: SurfaceHolder) = engine.setSurface(holder.surface)
-                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-                            override fun surfaceDestroyed(holder: SurfaceHolder) = engine.detachSurface(holder.surface)
-                        })
-                    }
-                },
-                update = { it.keepScreenOn = keepAwake },
-            )
+            if (useTextureView) {
+                AndroidView(
+                    modifier = viewModifier,
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            // The Surface is ours to make and ours to release: a TextureView hands out
+                            // a SurfaceTexture, not a Surface, and leaking one keeps a decoder alive.
+                            var surface: Surface? = null
+                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                                    surface = Surface(texture).also { engine.setSurface(it) }
+                                }
+
+                                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
+                                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                                    surface?.let { engine.detachSurface(it); it.release() }
+                                    surface = null
+                                    return true
+                                }
+
+                                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                            }
+                        }
+                    },
+                    update = { it.keepScreenOn = keepAwake },
+                )
+            } else {
+                AndroidView(
+                    modifier = viewModifier,
+                    factory = { ctx ->
+                        SurfaceView(ctx).apply {
+                            holder.addCallback(object : SurfaceHolder.Callback {
+                                override fun surfaceCreated(holder: SurfaceHolder) = engine.setSurface(holder.surface)
+                                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+                                override fun surfaceDestroyed(holder: SurfaceHolder) = engine.detachSurface(holder.surface)
+                            })
+                        }
+                    },
+                    update = { it.keepScreenOn = keepAwake },
+                )
+            }
         }
         // Subtitle overlay — mounted ONLY while subs are on, so 4K live keeps its direct hardware-overlay path.
         // Sized like the video, not like the screen (F17): at any zoom other than Fit the two differ, and
@@ -216,7 +262,9 @@ fun ExoPreviewSurface(
 private fun StyledSubtitleView(cues: List<androidx.media3.common.text.Cue>, modifier: Modifier = Modifier) {
     val settings = org.koin.compose.koinInject<SettingsRepository>()
     val styleOn by settings.subtitleStyleEnabled.collectAsStateWithLifecycle(initialValue = false)
-    val scale by settings.subtitleScale.collectAsStateWithLifecycle(initialValue = SubtitleStyle.SCALE_DEFAULT)
+    // Media3 cues, so this is the ExoPlayer size — both the live ExoPlayer path and the VOD
+    // image-subtitle handoff render through here.
+    val scale by settings.subtitleScaleExo.collectAsStateWithLifecycle(initialValue = SubtitleStyle.SCALE_DEFAULT)
     val font by settings.subtitleFont.collectAsStateWithLifecycle(initialValue = null)
     val colorHex by settings.subtitleColor.collectAsStateWithLifecycle(initialValue = SubtitleStyle.COLOR_DEFAULT)
     val position by settings.subtitlePosition.collectAsStateWithLifecycle(initialValue = SubtitleStyle.Position.DEFAULT)

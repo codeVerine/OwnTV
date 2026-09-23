@@ -15,7 +15,10 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
@@ -55,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
@@ -94,6 +98,13 @@ fun AudioNowPlayingBar(
     onExpand: () -> Unit,
     onClose: () -> Unit,
     focusable: Boolean,
+    /** Focus target for "enter the audio session" from the sidebar's Now Playing item. Lands on stage 1. */
+    entryFocusRequester: FocusRequester? = null,
+    /** The favourite state of whatever is playing — the same channel/movie/series the fullscreen HUD toggles. */
+    favorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
+    /** Reported so the top strip can grow with the capsule and push the content panel down. */
+    onExpandedChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = OwnTVTheme.colors
@@ -103,6 +114,7 @@ fun AudioNowPlayingBar(
     val volume by player.volume.collectAsStateWithLifecycle()
     val position by player.position.collectAsStateWithLifecycle()
     val duration by player.duration.collectAsStateWithLifecycle()
+    val seekStep by player.seekStepMs.collectAsStateWithLifecycle()
 
     var hasFocus by remember { mutableStateOf(false) } // any part of the bar holds focus (stage 1 or 2)
     var active by remember { mutableStateOf(false) }    // stage 2 — inner buttons live and trapped
@@ -110,16 +122,22 @@ fun AudioNowPlayingBar(
 
     val pillFocus = remember { FocusRequester() }
 
-    // Button slots, fixed order: 0=prev 1=play 2=next 3=volume 4=fullscreen 5=close. prev/next are only
-    // focusable when there's somewhere to go (episode queue / channel zap); everything else is always on.
-    val slotCount = 6
+    // Button slots, fixed order: 0=back 1=play 2=forward 3=favourite 4=volume 5=fullscreen 6=close.
+    // Slots 0 and 2 are prev/next channel on a live stream and seek on a recording — same place, same
+    // shape, different verb, because seeking a live stream means nothing. Both are only focusable when
+    // there is somewhere to go; favourite only when the shell knows what to favourite.
+    val slotCount = 7
     val requesters = remember { List(slotCount) { FocusRequester() } }
-    val enabled = booleanArrayOf(canPrev, true, canNext, true, true, true)
+    val seekable = !isLive && duration > 0L
+    val canBack = if (isLive) canPrev else seekable
+    val canForward = if (isLive) canNext else seekable
+    val enabled = booleanArrayOf(canBack, true, canForward, onToggleFavorite != null, true, true, true)
     val navSlots = (0 until slotCount).filter { enabled[it] }
     var focusedSlot by remember { mutableIntStateOf(1) } // play by default
 
     val expanded = (hasFocus || active) && focusable
     val hasTime = !isLive && duration > 0L
+    LaunchedEffect(expanded) { onExpandedChange(expanded) }
 
     fun moveFocus(dir: Int) {
         val pos = navSlots.indexOf(focusedSlot)
@@ -172,7 +190,7 @@ fun AudioNowPlayingBar(
         // --- Content (drawn in all states; buttons focusable only in stage 2) ---
         // Focus never fills or outlines the card in stage 1 — the catcher's slight scale-up is the only
         // cue. Stage 2 (active) shows the accent outline; the focused button carries its accent ring/icon.
-        Row(
+        Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(18.dp))
                 // AMOLED-dark card (owner spec) in dark; the same "extreme" in light = a crisp pure-white
@@ -182,66 +200,118 @@ fun AudioNowPlayingBar(
                     width = if (active) 2.dp else 1.dp,
                     color = if (active) colors.primary else colors.onSurfaceVariant.copy(alpha = 0.18f),
                     shape = RoundedCornerShape(18.dp),
-                )
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ),
         ) {
-            // Bare equalizer, no cover tile (mini-player mock in future-plan/audio-hud-options.html).
-            Equalizer(playing = isPlaying, color = colors.primary, modifier = Modifier.size(width = 26.dp, height = 20.dp))
-
-            Column(Modifier.widthIn(max = if (expanded) 260.dp else 150.dp), verticalArrangement = Arrangement.Center) {
-                Text(
-                    meta.title ?: "",
-                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.SansSerif),
-                    color = colors.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().then(
-                        if (hasFocus) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
-                    ),
-                )
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // At rest the bare equalizer, exactly as before. Grown, it moves inside an artwork tile
+                // that shows the station logo when there is one — on IPTV there usually is not, so the
+                // tile falls back to an accent wash with the equalizer over it. It is never empty.
                 if (expanded) {
-                    when {
-                        isLive -> LiveRow(colors.favorite)
-                        // The 2nd line is reserved for the timelapse only — series info would crowd out
-                        // the time on the 1-line, width-clamped text. (Series subtitle still shows in
-                        // the fullscreen HUD; it only falls back to `meta.subtitle` below when there's
-                        // no time to show, e.g. before duration is known.)
-                        hasTime -> Text(
-                            stringResource(R.string.player_time_progress, fmtTime(position), fmtTime(duration)),
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = LocalPopupFontFamily.current),
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        meta.localizedSubtitle() != null -> Text(
-                            meta.localizedSubtitle() ?: "",
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.SansSerif),
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    Box(
+                        Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
+                            .background(colors.primary.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val logo = meta.logoUrl
+                        if (!logo.isNullOrBlank()) {
+                            AsyncImage(model = logo, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        }
+                        Equalizer(playing = isPlaying, color = colors.primary, modifier = Modifier.size(width = 22.dp, height = 16.dp))
+                    }
+                } else {
+                    Equalizer(playing = isPlaying, color = colors.primary, modifier = Modifier.size(width = 26.dp, height = 20.dp))
+                }
+
+                Column(Modifier.widthIn(max = if (expanded) 260.dp else 150.dp), verticalArrangement = Arrangement.Center) {
+                    Text(
+                        meta.title ?: "",
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.SansSerif),
+                        color = colors.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (hasFocus) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
+                        ),
+                    )
+                    // The station line: what is playing under the title, then whether it is live or how
+                    // far through it you are. The dot between them is drawn, not typed, so the line needs
+                    // no separator string in 24 languages.
+                    if (expanded) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            val station = meta.localizedSubtitle()
+                            if (station != null) {
+                                Text(
+                                    station,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.SansSerif),
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 130.dp),
+                                )
+                                StationDot(colors.onSurfaceVariant.copy(alpha = 0.5f))
+                            }
+                            if (isLive) {
+                                LiveRow(colors.favorite)
+                            } else if (hasTime) {
+                                Text(
+                                    stringResource(R.string.player_time_progress, fmtTime(position), fmtTime(duration)),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = LocalPopupFontFamily.current),
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Breathing room between the text block and the transport buttons (mock: buttons pushed right).
+                if (expanded) Spacer(Modifier.width(14.dp))
+
+                if (expanded) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        AudioBtn(0, if (isLive) OwnTVIcon.SKIP_PREVIOUS else OwnTVIcon.SEEK_BACK, active && enabled[0], enabled[0], requesters, { focusedSlot = it }) {
+                            if (isLive) onPrev() else player.seekBy(-seekStep)
+                        }
+                        // Play/pause leads the row visually: one step bigger than the rest (mock proportions).
+                        AudioBtn(1, if (isPlaying) OwnTVIcon.PAUSE else OwnTVIcon.PLAY, active, true, requesters, { focusedSlot = it }, sizeDp = 36, iconDp = 17, glow = true) { player.togglePlayPause() }
+                        AudioBtn(2, if (isLive) OwnTVIcon.SKIP_NEXT else OwnTVIcon.SEEK_FORWARD, active && enabled[2], enabled[2], requesters, { focusedSlot = it }) {
+                            if (isLive) onNext() else player.seekBy(seekStep)
+                        }
+                        // The heart keeps its coral wherever it appears in the app, so one colour still
+                        // means "favourite" here as it does on a poster.
+                        AudioBtn(3, OwnTVIcon.FAVORITE, active && enabled[3], enabled[3], requesters, { focusedSlot = it }, activeTint = if (favorite) colors.favorite else null) {
+                            onToggleFavorite?.invoke()
+                        }
+                        AudioBtn(4, if (volume <= 0) OwnTVIcon.VOLUME_MUTE else OwnTVIcon.VOLUME_HIGH, active, true, requesters, { focusedSlot = it }) { player.toggleMute() }
+                        AudioBtn(5, OwnTVIcon.EXPAND, active, true, requesters, { focusedSlot = it }, onClick = onExpand)
+                        // Close stops Audio Mode altogether. Back only leaves the focus trap — the two
+                        // used to be the same key, which is why there was no way to end a session here.
+                        AudioBtn(6, OwnTVIcon.CLOSE, active, true, requesters, { focusedSlot = it }, onClick = onClose)
                     }
                 }
             }
 
-            // Breathing room between the text block and the transport buttons (mock: buttons pushed right).
-            if (expanded) Spacer(Modifier.width(14.dp))
-
-            if (expanded) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    AudioBtn(0, OwnTVIcon.SKIP_PREVIOUS, active && enabled[0], canPrev, requesters, { focusedSlot = it }, onClick = onPrev)
-                    // Play/pause leads the row visually: one step bigger than the rest (mock proportions).
-                    AudioBtn(1, if (isPlaying) OwnTVIcon.PAUSE else OwnTVIcon.PLAY, active, true, requesters, { focusedSlot = it }, sizeDp = 36, iconDp = 17) { player.togglePlayPause() }
-                    AudioBtn(2, OwnTVIcon.SKIP_NEXT, active && enabled[2], canNext, requesters, { focusedSlot = it }, onClick = onNext)
-                    AudioBtn(3, if (volume <= 0) OwnTVIcon.VOLUME_MUTE else OwnTVIcon.VOLUME_HIGH, active, true, requesters, { focusedSlot = it }) { player.toggleMute() }
-                    AudioBtn(4, OwnTVIcon.EXPAND, active, true, requesters, { focusedSlot = it }, onClick = onExpand)
-                    AudioBtn(5, OwnTVIcon.CLOSE, active, true, requesters, { focusedSlot = it }, onClick = onClose)
+            // The progress hairline, drawn over the card's bottom edge in every state rather than laid
+            // out below the row — that way the strip at rest is exactly the height it always was.
+            if (hasTime) {
+                val frac = (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                // A normal fillMaxWidth child makes this wrap-content card request the complete
+                // top-bar width. Match the card after it has been measured so the hairline overlays
+                // its bottom edge without stretching the capsule or pushing other chips off-screen.
+                Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomStart) {
+                    Box(Modifier.fillMaxWidth(frac).height(1.5.dp).background(colors.primary))
                 }
             }
         }
@@ -253,6 +323,7 @@ fun AudioNowPlayingBar(
             modifier = Modifier
                 .matchParentSize()
                 .focusRequester(pillFocus)
+                .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .focusProperties { canFocus = focusable && !active },
             shape = RoundedCornerShape(18.dp),
             focusedScale = 1.03f,
@@ -265,6 +336,12 @@ fun AudioNowPlayingBar(
             selectedContainerColor = Color.Transparent,
         ) { _ -> }
     }
+}
+
+/** The separator in the station line, drawn rather than typed so it needs no string in 24 languages. */
+@Composable
+private fun StationDot(color: Color) {
+    Box(Modifier.size(3.dp).clip(CircleShape).background(color))
 }
 
 @Composable
@@ -282,9 +359,12 @@ private fun LiveRow(dotColor: Color) {
     }
 }
 
-/** Bars that dance while [playing] and freeze flat when paused (Audio Mode plan §3/§6). */
+/**
+ * Bars that dance while [playing] and freeze flat when paused (Audio Mode plan §3/§6). Also stands in
+ * for the missing picture on the sidebar's Now Playing item while Audio Mode is running.
+ */
 @Composable
-private fun Equalizer(playing: Boolean, color: Color, modifier: Modifier) {
+internal fun Equalizer(playing: Boolean, color: Color, modifier: Modifier) {
     val bars = 5
     val transition = rememberInfiniteTransition(label = "eq")
     val heights = (0 until bars).map { i ->
@@ -320,6 +400,10 @@ private fun AudioBtn(
     onFocused: (Int) -> Unit,
     sizeDp: Int = 28,
     iconDp: Int = 13,
+    /** Overrides the resting tint — the favourite heart keeps its coral wherever it appears. */
+    activeTint: Color? = null,
+    /** Draws focus as light (rim + wash + bloom) instead of a bare ring — the play circle. */
+    glow: Boolean = false,
     onClick: () -> Unit,
 ) {
     // White-on-dark circles; focus = accent ring (built-in focus border) + accent icon, background
@@ -336,13 +420,19 @@ private fun AudioBtn(
         shape = CircleShape,
         focusedScale = 1.02f,
         glowElevation = 0,
+        focusLight = if (glow) colors.primary else null,
         // Bare icons — no circle fill or glow behind them; focus shows only the accent ring + tint.
         focusedContainerColor = Color.Transparent,
         unfocusedContainerColor = Color.Transparent,
         selectedContainerColor = Color.Transparent,
         contentAlignment = Alignment.Center,
     ) { focused ->
-        OwnTVIcon(icon, tint = if (focused) colors.primary else if (colors.isDark) Color.White else colors.onSurface, filled = true, modifier = Modifier.size(iconDp.dp))
+        OwnTVIcon(
+            icon,
+            tint = activeTint ?: if (focused) colors.primary else if (colors.isDark) Color.White else colors.onSurface,
+            filled = true,
+            modifier = Modifier.size(iconDp.dp),
+        )
     }
 }
 

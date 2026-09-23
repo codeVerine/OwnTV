@@ -7,38 +7,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import tv.own.owntv.R
-
-/** The five font families users can independently apply to the main UI and popup chrome. */
-enum class AppFontFamily {
-    LORA,
-    SYSTEM_SANS,
-    MONOSPACE,
-    PLAYFAIR_DISPLAY,
-    DANCING_SCRIPT,
-    POPPINS;
-
-    companion object {
-        fun fromStored(value: String?, fallback: AppFontFamily): AppFontFamily =
-            entries.firstOrNull { it.name == value } ?: fallback
-    }
-}
-
-/** App-only text scaling. Android's system font scale remains the base and is multiplied by this. */
-object UiFontScale {
-    const val MIN = 60
-    const val MAX = 140
-    const val DEFAULT = 100
-    const val STEP = 5
-
-    fun clamp(percent: Int): Int = percent.coerceIn(MIN, MAX)
-    fun factor(percent: Int): Float = clamp(percent) / 100f
-}
-
-data class FontCustomization(
-    val sizePercent: Int = UiFontScale.DEFAULT,
-    val mainFamily: AppFontFamily = AppFontFamily.SYSTEM_SANS,
-    val popupFamily: AppFontFamily = AppFontFamily.LORA,
-)
+import tv.own.owntv.core.theme.AppFontFamily
 
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 private fun variableFont(resourceId: Int, weight: FontWeight, style: FontStyle = FontStyle.Normal) =
@@ -109,16 +78,8 @@ val AppFontFamily.subtitleFontResource: Int
         -> 0
     }
 
-val AppFontFamily.mpvFamilyName: String
-    get() = when (this) {
-        AppFontFamily.LORA -> "Lora"
-        AppFontFamily.SYSTEM_SANS -> "sans-serif"
-        AppFontFamily.MONOSPACE -> "monospace"
-        AppFontFamily.PLAYFAIR_DISPLAY -> "Playfair Display"
-        AppFontFamily.DANCING_SCRIPT -> "Dancing Script"
-        AppFontFamily.POPPINS -> "Poppins"
-    }
-
 val LocalMainFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.SansSerif }
 val LocalPopupFontFamily = staticCompositionLocalOf<FontFamily> { LoraFamily }
 val LocalUiFontScaleFactor = staticCompositionLocalOf { 1f }
+val LocalPopupFontScaleFactor = staticCompositionLocalOf { 1f }
+val LocalPopupSizeScaleFactor = staticCompositionLocalOf { 1f }

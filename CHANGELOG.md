@@ -1,5 +1,1228 @@
 # Changelog
 
+## v5.0.2 — 2026-09-21
+
+### 🩹 Fixes
+
+#### 💥 The app would not open after updating from v5.0.0
+
+Updating straight from `v5.0.0` to `v5.0.1` left the app unable to start: the splash screen appeared
+and the app closed again, every time, because the one-off upgrade of the stored guide data could not
+finish and was retried on every launch. Nothing was wrong with the data — the upgrade step asked
+SQLite to begin a save point that was already open, which the newer storage engine in `v5.0.1`
+refuses. The upgrade now runs as one piece and completes on the first launch, with your profiles,
+playlists, favourites and history untouched.
+
+Televisions already running `v5.0.1` are affected only if they never managed to open it. A box that
+opened `v5.0.1` once has already finished the upgrade and was never at risk.
+
+## v5.0.1 — 2026-09-21
+
+### 🎬 A cinematic layout for Movies & Series
+
+- **Settings → Layout → "Movies & Series layout".** A second way to browse films and shows, beside
+  the one you have now. *Separate panels* — categories, the list and a preview side by side — stays
+  the default, so nothing changes until you pick otherwise. The chooser shows a small bar diagram
+  under each option so you can see the difference without reading.
+- **The focused title's artwork fills the whole screen.** Its backdrop sits behind the category panel
+  and the posters, washed down on the left so the text stays readable over any picture. Move along
+  the row and it cross-fades to the next film — and holding the D-pad down does not fire a download
+  per poster it passes under; only the title you settle on is fetched.
+- **Details above the posters, and no buttons up there.** The studio's own title lettering where TMDB
+  has it (with the film's name printed under it, because plenty of those logos are black line-art and
+  would be invisible on a dark background), then the rating, year, running time, quality badges
+  (4K/HDR/5.1 as the provider advertised them), genres, the plot, and the cast as photos. Nothing in
+  that area can take focus — it is there to read. **OK** on the focused poster still plays or opens
+  it, **long-press** still opens the same menu with Resume, Favourite, TMDB details and the rest, and
+  a half-watched film still shows a green *Resume* badge and the green sliver on its poster.
+- **Grid only, and your List choice is remembered.** The List/Grid toggle is hidden while Cinematic
+  is on, because a full-bleed backdrop has nowhere to go behind a row of text. Switching back to
+  *Separate panels* restores whichever of the two you were using.
+- **Panel Width Adjustment works in both.** In Cinematic the section has two columns rather than
+  three, so its second slider becomes *Content area* and the two move together — whatever one gives
+  up, the other takes. The third becomes **Details height**, and it now sits **below** the Total size
+  line because it is a height and takes no part in that 100%: set it to 0% for nothing but posters,
+  or raise it for more plot and cast, without touching either width. Live TV is untouched.
+- **It follows your other settings.** Text grows with the app font size, the category panel follows
+  your Glass Effect setting, and with *Animations = Off* every fade snaps instantly.
+
+### ✨ Set a new television up from the one you already have
+
+- **"From another device" on the very first setup screen.** Setting up a new box no longer means
+  finishing setup and then hunting through the menus for Local sync: the first screen now offers it
+  beside "New profile" and "Restore backup", and copies your profiles, playlists, favourites and
+  history straight over the Wi-Fi from the OwnTV device you already have. Turn Sync mode on over
+  there first (More → Local sync); the new television finds it on the network, you type the six-digit
+  PIN once, choose what to bring across, see exactly what will change, and confirm.
+- **You still choose what comes over.** The direction is not a question — a television being set up
+  can only receive — but the tick list is the same one Backup & Restore uses, so you can take the
+  playlists and leave the old box's settings behind. Closes #189.
+
+### 🚀 Refreshing a playlist gets out of your way
+
+- **The background catalogue fill pauses while you watch.** A Stalker playlist keeps downloading its
+  film and series lists after setup, quietly, for several minutes. It now stops the moment you start
+  watching anything from that playlist and picks up again afterwards — on an account that only allows
+  one stream, that download was competing with your picture.
+- **The category you open is filled first.** Open a film or series category that has not finished
+  downloading and it jumps to the front of the queue instead of waiting its turn behind every
+  category above it.
+
+### 📅 A week of guide, and you choose how much
+
+- **"Guide days to keep" in Settings → EPG Sources.** The app used to store two days of upcoming
+  guide and throw away the rest, however much your provider sent — so the grid stopped at tomorrow,
+  and two days after a refresh the guide was simply empty. It now keeps as many days as you ask for,
+  seven by default, up to a fortnight. One number decides everything: how much is downloaded, how
+  much is kept, and how far the grid scrolls.
+- **The grid scrolls the whole week.** It was fixed at 24 hours forward regardless of what was
+  stored.
+- **Old programmes are kept only where they can be replayed.** A week of finished programmes used to
+  be kept for every channel, though only catch-up channels can play any of it back. Catch-up channels
+  keep their full archive — including ones you matched to a guide by hand — and everything else keeps
+  six hours, which is all the player's "Before" slot needs. On one television that took the stored
+  guide from 397,415 programmes to 172,083 *while storing a week ahead instead of two days*.
+- **Guide refresh can be set to "every N days",** exactly like a playlist's. Anything you had already
+  chosen is untouched — a source set to 48 hours stays on 48 hours.
+
+### 🔄 Local sync, tidied up on the television
+
+- **Every row now carries a mark that means what it does.** One archive-box icon used to stand for
+  "let this television be found", for your paired phone *and* for "send my data there" — three
+  different jobs, and the same mark Backup & Restore uses one row above. Sync mode now shows a
+  globe, Connect a magnifier, your phone a phone, and Send and Receive a matching pair of arrows.
+- **The PIN and the QR code have a card of their own, beside the list.** They used to be wedged
+  between the buttons and your paired devices, so turning Sync mode on shoved the device rows a
+  third of a screen downwards while you were looking at them. Now nothing moves — the card simply
+  appears next to the list.
+- **Choosing what to do with a paired device opens a panel.** Press OK on your phone and Send,
+  Receive, Merge and Forget appear in a popup that names the device, with the remote already on the
+  first choice. Before, the list was replaced where it stood and the highlight was left on the Back
+  arrow, so the first press of the D-pad was wasted.
+- **"Forget this device" now looks like the destructive one** — below a divider and drawn in red,
+  instead of sitting flush under "Merge" as though it were a fourth way of syncing.
+- **The remote can no longer fall out of the screen.** A Down press at the end of the list used to
+  jump focus up into the Search button in the top bar, leaving the screen behind.
+- **The screen says what it is for.** It now carries the same one-line description the More screen
+  shows, the paired devices sit under their own heading, and Sync mode's state is shown as a badge
+  in the corner whether it is on or off. "Working…" is a proper row with a spinner rather than a
+  stray line of grey text.
+
+### 🪟 Every popup now behaves like every other popup
+
+- **Dialogs and menus all follow your Glass Effect, popup size and popup font.** Around forty of
+  them were built before the shared popup was, and each one opted out of something: a hand-drawn
+  panel ignored the Glass setting, a fixed black wash ignored it again, and a dozen had no popup
+  typography at all, so the popup font and popup size settings simply passed them by. The long-press
+  menu on a Live channel, the Multiview tile menu, the guide's channel chooser, the subtitle
+  appearance dialogs, the Customize dialogs and every Backup & Restore dialog are now built the same
+  way as the rest.
+- **The on-screen keyboard can no longer cover the button you need.** A popup with a text field now
+  measures the space the keyboard leaves and lays itself out inside it. This mattered most in Backup
+  & Restore: the backup password and the profile PIN are typed into a dialog whose *Restore* button
+  the keyboard could hide, with no way to scroll to it.
+- **The remote stays inside an open popup.** A stray Left or Right with nothing to land on could
+  drop focus onto the screen behind the dialog, leaving it open with the highlight somewhere else.
+- **Popups stay translucent at high transparency settings.** A dialog is drawn slightly denser than
+  the panels around it so it reads as being in front. That extra density was a fixed amount added on
+  top of your own Surface transparency, so at 85% it reached 97% and the popup turned solid while
+  the panels beside it were still glass. It is now a proportion of what is left, so a popup follows
+  your setting at every value and can never close up on its own. Cards, focused rows and everything
+  drawn *lighter* than its container are unchanged.
+- **The subtitle-timing panel still leaves the picture undimmed** — it is the one dialog with no
+  wash behind it, deliberately, so speech and subtitles can be compared while the offset is nudged.
+
+### 📺 Protected and MPEG-DASH channels play
+
+- **Channels delivered as MPEG-DASH now play, protected ones included.** Some providers publish a
+  channel at an address that gives no hint of its format and only reveals it once the app asks. The
+  app could only ever guess between two formats, so these channels were opened the wrong way and
+  stopped with a format error before any picture appeared — and because a protected channel can only
+  run on one of the two players, there was nothing left to fall back to. It now recognises the format
+  three ways: from what the playlist says about the channel, from what the provider actually sends
+  back, and from what other channels on the same provider have already turned out to be. Reported by
+  a user with a mixed playlist where the ordinary channels played and these never did.
+- **Stream info said MPEG-TS on a DASH channel.** The Format line only had two possible answers, so
+  the third format was labelled as the wrong one — even on a channel that had failed to start, which
+  is what people were sending in with their reports. It now shows HLS, DASH or MPEG-TS to match what
+  is really being played.
+- **A channel that will not open can now fall back to the provider's own address.** Where a playlist
+  supplies one, it is tried once as the very last resort — after every other recovery step, at the
+  point where the alternative is an error screen. Channels that work today are unaffected: this
+  address is never used first, because providers frequently publish one that only works inside their
+  own network.
+- **Recording a copy-protected channel is refused straight away, and says why.** It used to try, save
+  a file that could not play, and reconnect to the provider for the entire length of the programme —
+  holding one of your allowed connections the whole time. The recording now stops immediately and
+  explains that the protection comes from the provider rather than from OwnTV.
+
+### 🗂️ Restoring a backup during setup asks what to bring back
+
+- **The first-run restore takes only what you tick.** It used to apply the whole file, always —
+  while Settings → Backup & Restore and the local-sync setup step have always offered the list. The
+  same list now appears before anything is applied, whether the file came off a USB stick or was
+  sent from another device, so a restore can bring the playlists and leave the old box's settings
+  behind. It is the same dialog Backup & Restore uses, so the two cannot drift apart. Fixed in core
+  (`core-1.0.52`), so the phone gained it in the same change.
+
+### 🔗 Sync mode could hand the other device a key that did not fit
+
+- **A phone or television set up from this one could fail with "Something went wrong".** When Sync
+  mode had been started more than once, this box answered "who are you" with a newly minted key
+  while still serving the data package built for the previous one — so the far device downloaded
+  something it could not open, and gave up with a message that explained nothing. The key is now
+  published together with the package it opens. A package that genuinely cannot be read also says
+  so now, instead of shrugging. Fixed in core (`core-1.0.52`).
+
+### 📡 A long guide download is no longer stopped by the system
+
+- **The guide sync runs as a foreground job.** It could previously be frozen part-way and then
+  restarted from the beginning — on a large feed, forever. It now announces itself the way downloads
+  and recordings always have. Fixed in core (`core-1.0.52`). This was found on a phone, where
+  aggressive battery management makes it happen within seconds of the screen going dark; the same
+  protection applies here.
+
+### 🩹 Empty categories fill, catch-up plays, a crash is gone, and Settings search finds everything
+
+- **A category your provider lists no longer arrives empty.** A playlist could offer a category and
+  hand over none of its channels, leaving it on screen with nothing inside — an adult category most
+  often, because providers filter those out of the "give me everything" request while still listing
+  them. The app now notices a category the provider skipped and asks for it directly. On one portal
+  playlist that recovered 174 channels that had never been delivered. Fixed in core (`core-1.0.45`),
+  and it applies to live channels, movies and series on both portal and Xtream playlists. Kids
+  profiles hide those categories automatically, exactly as before.
+- **The frame rate shown for a live channel is no longer a notch too low.** A channel sending 25
+  pictures a second could be labelled "24 FPS", because the reading was taken over a single second —
+  short enough that one frame of slack tipped the answer onto the wrong standard rate, and 24 looks
+  as convincing as 25. It now measures over a longer stretch and insists on the same answer twice
+  before showing it. On one television BBC Two Northern Ireland went from 24 FPS to the correct 25,
+  and a 50fps sports channel still reads 50. Fixed in core (`core-1.0.47`). Only the label was ever
+  wrong — the picture was always correct.
+- **Stalker catch-up plays.** Picking a past programme on a portal playlist did nothing at all — no
+  picture, no message. The archive request carried a reference the provider could not resolve, so it
+  answered with an empty response and the app gave up in silence. Fixed in core (`core-1.0.43`) and
+  confirmed against a real portal. The lookup is also faster: finding the programme used to take up
+  to eight requests to the provider and got slower the later in the day it aired; four at the worst
+  now, usually two or three.
+- **Catch-up says when it cannot play.** Where "Watch from start" or "Go back to…" cannot reach the
+  archive — a provider with no recording behind the channel, most often — the player now says so
+  instead of returning to the live picture without a word.
+- **Holding OK on the Multiview settings no longer crashes the app.** Both Multiview rows offered
+  "Pin to Quick" without being registered for it, so holding OK on either closed the app. They pin,
+  move and unpin like every other row now.
+- **Settings search finds every setting.** Twenty-four settings on the Video player screen could not
+  be found by name — Multiview, the Live TV and Movies player pickers, the seek and rewind steps, the
+  volume and zoom defaults, the language preferences, the per-playlist overrides — and four whole
+  screens had no entry at all: Recording, OpenSubtitles, Glass Effect and Content menus. A result you
+  can simply switch on or off now flips in the results list itself.
+- **The user guide explains Multiview.** It says that it is off by default and where to switch it on,
+  and the Settings table describes it. Two stale lines were corrected: Quick holds what *you* pin, not
+  "the six most-used switches".
+- **The user guide now describes first-run setup exactly as it happens.** It listed five screens
+  where there are eight, folded the "Set up OwnTV" choice into the profile step, and never mentioned
+  the screen that asks whether to enter a playlist by remote or by phone. Adding a playlist from your
+  phone also has an entry of its own under Playlists now — it was described only as part of first-run
+  setup, so anyone who pressed "Skip for now" had no way of discovering it. Both guides also explain
+  that a feed's channel logos can stand in for a playlist that carries none.
+- **The app no longer crashes on opening for people with many manually matched channels.** Every
+  channel you match to a guide by hand is remembered, and the Guide looked all of them up in a single
+  database request. Past roughly a thousand matches that request exceeds SQLite's limit on how many
+  values one query may carry, so it was rejected outright and the app closed — instantly and every
+  time, because the Guide loads as the app starts. The lookup is now made in batches of 500, so it
+  cannot hit the limit however many channels you match. Still one request per batch, so the speed the
+  bulk lookup was written for is unchanged. Reported with a crash log by a user.
+- **Popup font size now resizes the whole popup.** Turning it up, even to the maximum, moved only a
+  few labels: the setting reached the shared text styles and nothing else, so buttons, input fields
+  and any text with a size of its own stayed exactly as they were — which read as a setting that did
+  nothing at all. It is now applied to the popup's text scale itself, so every word inside a dialog or
+  menu follows it. At the larger sizes some labels wrap onto a second line; popups already scroll, so
+  nothing moves out of reach.
+- **Channel logos no longer sit on a black square.** Most provider logos are transparent, and the
+  tile behind them showed through as a dark box around the artwork — worst on a logo drawn in dark
+  ink, which disappeared into it entirely. The tile is now drawn only when there is no logo to show,
+  and the logo itself is measured once so the few that would be unreadable get a backing plate in the
+  opposite shade: light behind a dark logo, dark behind a light one, following the theme. A logo that
+  carries its own background is left alone, and a logo that fails to load falls back to the channel
+  icon instead of an empty box. The tile never changes size, so nothing shifts on screen. Reported by
+  a user; applies to the Live TV list and preview and to the Home screen's channel rows.
+- **The app no longer runs out of memory when the guide is refreshed.** Re-syncing a guide could
+  close the app outright. To draw the eight rows on screen the Guide was reading *every* programme in
+  the database — 349,077 of them on one television — and a refresh restarted that job every few
+  seconds without stopping the previous one, six copies at a time, until there was no memory left. It
+  now reads only the rows actually on screen, remembers a few hundred of them, and waits for a
+  download to finish before redrawing. The Guide opens in under two seconds instead of eight, and
+  each row loads in milliseconds.
+- **"Match EPG" lists guide channels again.** On a channel with no guide the picker could come up
+  empty — "No guide channels match" — while the grid happily drew programmes for that same channel.
+  The picker was filtering by which playlist delivered the guide; nothing else was. It now offers
+  every guide channel the app holds, including feeds that list programmes without naming their
+  channels.
+- **Searching the guide picker understands names.** Typing `bbc1` now finds "BBC One"; a lowercase
+  Cyrillic or Greek search now finds an uppercase name, which it never could before.
+- **Your manual EPG matches survive deleting and re-adding a playlist.** Every match was remembered
+  against the playlist's internal id, so re-importing the same playlist quietly orphaned all of them.
+- **Auto-match no longer reports success it cannot deliver.** It skipped channels whose guide id
+  existed but held no programmes, and silently applied matches onto empty guide channels. Those now
+  go to the review list instead.
+- **Duplicate programmes are removed when the guide is downloaded** rather than hidden on every read
+  — 16,080 of them on one sync.
+- **The Live TV list stops re-asking what is on.** Scrolling a large category re-queried every
+  channel already on screen on every page, and again every minute. It now asks only about channels it
+  has not seen, and refreshes on the minute so every row changes together.
+
+## v5.0.0 — 2026-09-14
+
+### 🧱 The player engine, the database and the build toolchain move up
+
+- **ExoPlayer (Media3) 1.11.0 → 1.11.1 and Room 2.8.4 → 2.8.5.** Both are bug-fix releases on the
+  versions already in use — the first is half of the live TV player, the second is every query in
+  the library. Pinned here as well as in core deliberately: a core generating Room 2.8.5 code beside
+  an app carrying the 2.8.4 runtime would put two Room versions on one classpath.
+- **Android Gradle Plugin 9.3.2 → 9.4.0 and Kotlin 2.4.10 → 2.4.20.** One change across all three
+  repositories, because they share a composite build that cannot mix two versions of either.
+- **Nothing in this app's own code changed** — the whole of it is the version catalogue. Verified by
+  a full release build, lint and the unit tests on the new toolchain.
+
+### 🔎 Set how big everything is during setup, not after it — issue #179 by @Generator
+
+- **The settings that make the interface bigger were only findable once setup was over.** A first
+  run now asks, on its second screen, how large you want the interface and its text — before the
+  disclaimer, which is the first screen that is mostly words.
+- **A sample sentence sits under the two controls and resizes as you press**, so you judge the size
+  by reading it from where you actually sit rather than by picking a number.
+- **UI Zoom and Font size are the same settings Settings has always had.** What you choose here is
+  simply the app's from then on, and Settings can still change either at any time.
+- The screen offers zoom's whole 50–150% range, and going below 85% asks the same
+  accept-the-risk question Settings asks, because very small sizes can exhaust a low-memory TV.
+- **The step is drawn at full size while the rest of the wizard is drawn smaller.** That is
+  deliberate: a size tuned against a shrunken screen would be the wrong size everywhere else.
+
+### 🗂️ Hide or move a category without leaving the screen — community PR #131 by @pt5pnzghm6-sys0
+
+- **Tidying your categories meant a trip to Settings.** Hold **OK** on any category in Live TV,
+  Movies or Series and a small menu offers **Hide** and **Move**, right where you are.
+- **Move** opens the same full-screen reorder view the rest of the app uses — Up and Down to shift
+  the category, then Commit or Cancel.
+- Changes made here and changes made in **Settings → Customize categories and items** are the same
+  thing, so either place shows what you did in the other.
+- **Opening the menu does not move you.** Holding OK on a category you are not in leaves you where
+  you were, so backing out of the menu never strands you in a category you never chose, and nothing
+  loads behind it.
+- The cursor comes back to the category you opened the menu on — including after a Move, where it
+  follows that category to its new position.
+
+### 🎨 In Glass mode, the focused item is yours again
+
+- **Your chosen highlight colour was ignored on Glass.** A focused channel, film or show now uses
+  the colour and thickness you picked under **Settings → Appearance**, whether Glass Effect is on
+  or off.
+- **The "you are here" marker stopped shouting.** The category you are currently in used to draw a
+  bright white border that, from across the room, read as a second cursor. It is now a thin hairline
+  in your own colour, so there is one cursor on screen again — and picking Gold or Cyan no longer
+  loses your choice there.
+
+### 🔁 Customize follows the item you are moving
+
+- **The cursor used to stay in the slot instead of on the item.** In **Settings → Customize**, moving
+  an item up or down now carries the cursor with it, so holding Up moves one item a long way instead
+  of walking a different item each press.
+- Rapid presses no longer glitch the order — each move now waits for the one before it.
+
+### 📺 What the programme actually is, while you are watching it
+
+- **Live TV showed a title and nothing else.** The guide has carried a synopsis all along — the Guide
+  screen has shown it for ages — but the two places you actually look while watching never did. The
+  fullscreen card now carries two lines of it under the clock, and the preview pane in the channel
+  list carries the whole paragraph for what is on now, with a shorter one for what is next.
+- Works the same whether the description comes from an XMLTV feed or straight from your provider's
+  own guide.
+
+### 🖼️ Channel logos in the guide
+
+- **The guide named your channels but never showed them.** Every other list did — Home, Live TV, the
+  channel list over the picture — so a guide of nothing but numbers and names was the odd one out.
+  The logo now sits at the left of each channel label, before the number.
+- It follows **Prefer EPG logos** like everywhere else, so a logo from your guide feed wins over the
+  playlist's where you asked for that.
+- Channels with no logo, and logos that fail to load, take up no room at all rather than leaving a
+  gap or a placeholder — the channel column is narrow, and its width is still yours to set under
+  **Settings → Layout → Guide Column Widths**.
+
+### 📅 Episodes say when they first aired
+
+- **A series with a thousand episodes gave you a list of near-identical titles and a number.** Every
+  episode now shows the day it first aired — on the list rows, on the grid tiles, in the detail pane
+  and in the TMDB details sheet.
+- The provider's own date wins where it sends one; TMDB's fills the (very common) gap where it does
+  not. A refresh that carries no date leaves the one you already had alone.
+- The date is a calendar day, not a clock time, so it reads the same wherever you are.
+
+### 🖼️ A profile picture of your own
+
+- **The drawn avatars are no longer the only choice.** Pick a picture from this television, or send
+  one from your phone over your own Wi-Fi — the same two ways the Glass background image already
+  works, so there is one idea to learn rather than two.
+- The picture is copied into the app, cropped square and scaled down, so a photo on a USB stick keeps
+  working after the stick is gone, and a twelve-megapixel picture does not cost twelve megapixels
+  every time your profile is drawn.
+- **It travels in your backup.** Restore on another television and the picture comes with it, onto
+  the right person even though profiles are matched up by name.
+- The ten drawn avatars were redrawn with a lit gradient, a soft sheen and a hairline rim. Same
+  shapes, far less flat.
+
+### 🗓️ A Stalker portal has a guide and catch-up at last
+
+- **A portal that publishes no XMLTV feed had no guide at all — and therefore no catch-up**, because
+  choosing a programme to replay means choosing it out of a guide that was never there. The portal's
+  own guide is now read, and appears in Settings → EPG as **"Guide from the portal"**.
+- It is registered after the playlist syncs but never downloaded on its own — pressing Sync is still
+  your decision. **Add EPG source → Fill from playlist** offers it too, and adds it straight away
+  since there is nothing to type.
+- **Catch-up never worked on a Stalker portal.** The app was looking for a field name that Xtream uses
+  and this kind of portal does not send, so every portal channel was recorded as having no archive. On
+  a real portal that hid catch-up on 427 channels. It was also about to read the portal's "72 hours"
+  as "72 days".
+
+### ⋯ More, rebuilt as a two-pane hub
+
+- **More now looks and works like Settings, because it is built from the same parts.** A narrow list
+  on the left and a panel on the right that tells you what is behind the highlighted row *before* you
+  open it. The rows, the panel header, the icon tiles and the monospaced values are the Settings
+  screen's own components, not lookalikes, so the two screens one press apart finally read as one
+  product.
+- **The panel answers the question the arrow never did.** Highlight **Local sync** and it says whether
+  this television is listening and lists your paired devices with when each last synced — so "why
+  can't my phone see it?" is answered from the sofa. Highlight **Backup & Restore** and it says when
+  your last backup was, how big it was, whether it was encrypted and **where it was saved**.
+  Highlight **Error log** and it shows the newest failures, or says plainly that nothing has failed.
+  **About** shows the version and how many languages are packaged. **Settings** shows your pinned
+  Quick toggles with their current values, and the settings groups behind the door.
+- **Favourites and History show what is in them.** Three counts — channels, films, shows — and under
+  them a list of the actual items, newest first. A type with nothing in it shows a zero rather than
+  vanishing, so an empty Movies reads as "you have not starred a film" rather than looking broken.
+- **The right-hand panel never takes focus, on any row.** Up and Down walk the list, the panel
+  follows, OK opens, Back leaves. One direction does one thing everywhere, rather than Right working
+  on some rows and doing nothing on others.
+- **Nothing is pushed off the bottom.** However many toggles you pin to Quick, the panel trims the
+  list at the bottom edge so the groups and the "OK to open" line stay on screen.
+- **When the last backup happened, and where, are now recorded at all.** Previously nothing in the app
+  knew — the date only starts from your next export, and until then the row honestly says "Never".
+
+### ⋯ More: the last item on the sidebar
+
+- **Settings is now one press further in, and never a hunt.** The sidebar's last item is **More**
+  instead of Settings, and Settings is the first row inside it — with focus already on it the moment
+  More opens. So the route is sidebar → More → OK. Downloads and your profile card have not moved:
+  they already have a place on the sidebar.
+- **Favourites, in one place, for the first time.** More → Favourites is one screen with three tabs —
+  Live TV, Movies, Series — showing everything you have starred, whichever section you starred it in.
+  Each tab is the pane that section already has: the channel list with what is on now, the Movies
+  grid at your own column count, the Series grid. The context menu is the section's own, un-favourite
+  included, and a row leaves the list the moment the star does. A tab with nothing under it is still
+  shown, so a Movies count of zero reads as "nothing starred" rather than as a broken screen.
+- **History, the same way**, newest first — and **Clear history now lives on that screen** instead of
+  inside Settings. Same four choices and the same confirmation; only the door changed.
+- **Backup & Restore, Local sync, the playback error log and About left Settings.** None of them is a
+  preference — two are places, one is a log and one is a page of facts — and they were only in
+  Settings because Settings used to be the only door. All four are More rows now, opening exactly the
+  same pages.
+- **Settings holds settings and nothing else.** The whole *Data* group is gone with them. Searching
+  Settings for "backup", "sync" or "history" now finds nothing, because none of those is in Settings
+  any more. **Settings → Profiles has not moved** — it is still where you rename a profile, set its
+  PIN, turn kids mode on or delete it.
+- **The download folder moved to the Downloads screen.** It was the last thing left in *Data*, and it
+  is now a gear beside the Downloads title, opening the same volume picker. If you know it as
+  Settings → Data → Download folder, that is where it went — it has not been removed.
+
+### 🔄 Sync with your phone over your own Wi-Fi
+
+- **Local sync.** Settings → Data → Local sync pairs this television with the OwnTV app on your phone
+  or tablet, over your home Wi-Fi — no account, no cloud, nothing leaving the house. Turn *Sync mode*
+  on here and on the other device, tap *Connect*, and type the six-digit PIN once; a badge at the top
+  right shows while sync mode is on, and it switches itself off the moment you leave the screen.
+  After that either device can start a sync: *Send to*, *Receive from* or *Merge with*, always named
+  so the direction is never a guess.
+- **You choose what travels.** The same tick-list Backup & Restore uses — playlists, favourites, watch
+  history, resume positions, your customisations, your manual ordering and your settings — all of it
+  or only the parts you want.
+- **You are never asked for a password, and your playlist logins travel anyway.** The two devices
+  agree a key between themselves when they pair, and everything crossing the network is locked with
+  it. **Both devices need this update** — a television still on the old version cannot open what an
+  updated one sends.
+- **You see what will change before it does.** A summary counts what would be added and what would be
+  removed, and nothing is written until you say yes. A sync never deletes anything you did not delete
+  yourself.
+- **A deletion now stays deleted.** Unfavourite a channel here, sync, and it does not come back from
+  the phone on the next sync. This is why the database gains a table on this update: OwnTV now
+  remembers *that* you removed something, not merely that it is gone.
+- **The newer of the two always wins.** Finish an episode on the television and your phone takes that
+  over, not the other way round. Watch history and resume positions used to be decided by whichever
+  device happened to sync last, so a sync could quietly move you backwards in a show.
+- **A device you have already paired says so** when you go looking, instead of asking for its PIN a
+  second time — select it and you go straight to Send, Receive or Merge.
+- **Pairing the same device again updates it** instead of adding a second copy to the list. Pairing a
+  phone three times used to leave three identical rows behind.
+- **Two devices of the same model are told apart** by a short code after the name, shown only when two
+  paired devices would otherwise read exactly the same.
+- **Each device shows when you last synced with it**, and forgetting a device asks for the PIN again
+  next time.
+
+### 🖼️ Now Trending, your way
+
+- **Choose how Now Trending looks.** Settings → Home has a new *Trending layout* line: keep the big
+  detailed card with its artwork, badges and the panel explaining why a title is there, or switch to
+  *Posters only* — a plain row of posters like the rows under it. The detailed card is what you have
+  today and stays the default, and the line only appears while Now Trending is switched on. The
+  choice is kept with your profile, so the phone app shows trending the same way.
+
+### 📅 The guide keeps itself up to date
+
+- **The guide refreshes itself after a guide feed changes.** Adding, re-syncing or deleting an EPG
+  source now updates the guide straight away, instead of showing the old programmes until the app is
+  restarted.
+
+### 🪟 A new Glass Effect look: Aurora
+
+- **Aurora** joins Subtle, Balanced, Frosted, Vivid and Opaque in Settings → Appearance → Glass
+  Effect. It is clearer than Balanced and frosts a little harder, and it is the look the phone app
+  uses by default — so a television and a phone set to Aurora are set to the same thing. Nothing
+  already chosen changes: the new look sits between Opaque and Custom, and every existing preset,
+  scope and slider is exactly where it was.
+
+### 🌍 The guide now matches channels in any alphabet, and matches them quickly
+
+- **Auto-match works for Cyrillic, Greek, Arabic and CJK channel names** (community PR by
+  @Sekator778). Channel names were cleaned down to plain Latin letters and digits before being
+  compared, which left a name written in another script as nothing at all — so it could never be
+  paired with a guide entry, and the guide stayed behind "channel ids don't match your channels' EPG
+  ids" no matter how many times it was re-run. Names are now compared in whatever script they are
+  written in, decorative spellings like `ᴴᴰ` are folded away first, and a channel's number is read in
+  its own digits, so `MTV ٢` and `MTV 2` are recognised as the same channel while `٢` and `٣` are
+  still kept apart.
+- **Auto-match finishes in seconds rather than minutes.** The scan compares every channel against
+  every guide entry — a 1,786-channel lineup against a 1,907-channel guide is about 3.4 million
+  comparisons — and it ran one at a time on a single core, which on older TV hardware meant a
+  spinner that outlasted anyone's patience. It now runs across all of the television's cores and does
+  less work per comparison: about nine times faster end to end on that catalogue, with exactly the
+  same matches in the same order.
+
+### 🧪 Test a playlist before you trust it
+
+- **Every saved playlist has a Test button** on its row in **Settings → Manage sources**. It contacts the
+  provider and reports back in a popup: whether the account is active, when the subscription expires,
+  whether it is a trial, and **how many connections are in use out of how many are allowed** — the
+  figure that explains "why does it say the maximum number of devices is reached?". Xtream accounts get
+  all of it, M3U and Stalker portals get reachability and, for Stalker, whether the portal accepted the
+  MAC address.
+- **The same Test button is inside the playlist form**, so you can fill in a brand-new provider's
+  details and check them **before saving**. It tests what is on screen, not what is stored, and it is
+  available for M3U, Xtream and Stalker alike. Stalker's old one-line "connection OK" message is gone;
+  it now opens the same full result popup as everything else. The Xtream **Test HLS support** button is
+  unchanged.
+- Nothing is downloaded, synced or written to your library by a test — it only asks and reports.
+
+### 🔄 Auto refresh: choose your own number of days
+
+- **Playlist auto-refresh now offers a custom interval of 1 to 99 days.** The list is **Off**, **Refresh
+  at startup**, **6 hours**, **12 hours** and **Custom interval…**; picking the last one opens a day
+  picker where **Left and Right change the number by one** and holding the key repeats. No on-screen
+  keyboard, and cancelling leaves your previous choice alone.
+- **The old fixed 24-hour, 48-hour and 7-day choices are gone, and any playlist already using one moves
+  across by itself** — 24 hours becomes 1 day, 48 hours becomes 2 days, 7 days becomes 7 days. You do
+  not have to set anything again, and restoring an older backup does the same translation.
+- **The companion phone/browser form** offers 1, 2, 7, 14 and 30-day presets; any other figure is dialled
+  in on the television.
+
+### ⏺️ Record Live TV
+
+Live TV can be recorded — from the guide, from the channel list, or from the player while you are
+watching — and the recordings live in **Downloads → Live TV**, beside Movies and Series.
+
+- **Record what you are watching.** A button in the player, on live channels only, once the setting is
+  on. It keeps running when you change channel or leave the player; the Recordings list stops it.
+- **Record from the guide.** Long-press a programme. A channel your provider publishes no guide for
+  records for two hours, because a recording with no end is worse than one that stops too early.
+- **Record every showing.** A standing rule for a programme on a channel — new showings are scheduled
+  as the guide learns about them.
+- **Catch-up as a recording.** A programme that has already been broadcast can be saved from the
+  provider's archive instead of being watched once.
+- **It costs one of your provider's connections**, and says so before it starts rather than failing
+  into a spinner. If your account allows one stream and something is already using it, you are told in
+  a sentence — and a recording is allowed to take that one stream, because a live programme is gone
+  forever and a picture is not.
+- Each row shows **duration · size · the full path**, and the status pill shows the size ticking up.
+- **Recording is a row under Playback in Settings**, not a group of its own.
+
+### 🔲 Multiview — up to four channels at once
+
+Watch several live channels side by side. The grid opens from the player's **Multiview** button, or
+by marking channels with **Add to Multiview** from the channel list and then playing one.
+
+- **The Settings number is a ceiling, not a size.** The grid opens with two — your channel and an
+  empty tile — and grows only when you ask, up to the maximum. Four allowed does not mean four every
+  time, and watching exactly two needs no trip back to Settings.
+- **Hold OK on a tile** for its menu: change channel, add a tile, make it fullscreen, give it the
+  sound, sound only, remove it. (A long press, because most remotes have no MENU key.)
+- **Filling a tile starts at the categories**, across every playlist, so a grid can mix channels from
+  playlists you were not browsing.
+- **One tile has the sound**, and short OK moves it.
+- **Sound only** gives up a tile's picture and keeps its commentary — it still uses one of your
+  provider's connections, and the tile says so rather than looking free.
+- **A tile never sits blank.** One that cannot start says why; one your provider has no connection
+  left for says that; one this television cannot decode says *that*, which is a different problem
+  from a full account and sends you somewhere different.
+- **Leaving the grid stops everything** and returns you to the Live TV list. A grid is put away by
+  someone who has finished watching, and being handed one of the four full screen would leave a
+  stream running — and a connection spent — while you believed you had closed it.
+
+### 🔌 OwnTV works out how many channels your provider allows
+
+Most providers never say how many streams your account may run at once, so Multiview and recording
+could only find out by a picture stopping.
+
+OwnTV now finds out by trying, **once**, when a playlist is added — before any channels are saved, so
+nothing you are watching can be interrupted. It asks the provider first, so an account that publishes
+the number is never tested. Afterwards it warns you *before* a tile or a recording is refused, instead
+of after.
+
+- A playlist's **Test** button is now **Info**: what is already known, and a quick check that the
+  playlist is still alive.
+- **Re-test** is inside it, behind a warning that says plainly that playback will stop and that it can
+  take up to two minutes — with **Skip** if you change your mind.
+- A broken channel cannot fool it, and it stores **nothing** rather than a wrong number.
+
+### 📂 Downloads, recordings and where files go
+
+- **Recordings moved into Downloads** as its **Live TV** tab. The Recordings row is gone from More.
+- A download row now shows **where the file went** — the whole path, not a crumb. On a box with an
+  internal drive and a USB stick, "Downloads" does not say which disk.
+- The folder picker's *Use this folder* sits **above** the list, one Up from the first row.
+
+### 🐛 Bug fixes
+
+- **A Multiview tile that could not be played no longer plays its sound.** The picture failing does
+  not stop the audio track, so a tile reading "Couldn't play this channel" went on making a noise from
+  a channel nobody could see — and could even hold the audio badge.
+- **File sizes say MB again.** A download or recording could read "233,8" with no unit.
+- **An episode download appeared in no list at all**, because the Series tab looked for the wrong kind
+  of item.
+- **The guide, the channel row and the preview pane no longer disagree** about what is on, and the
+  same programme is no longer listed twice when a playlist carries two guides for one channel.
+- **A guide row whose stored data has run out now asks the provider**, as the preview pane always did.
+- **A recording scheduled across a reboot is repaired the next time OwnTV is opened.** Some
+  televisions never tell an app the box has restarted, so the timers could be lost without it.
+
+- **A playlist that offers two TV guides now sets up both of them (#171).** Some playlists name more
+  than one guide in their header, separated by a comma — one for each country a provider covers. Both
+  addresses were taken as a single one and glued together, so the guide request could only fail: the
+  entry in Settings → EPG showed the two addresses joined, it sat on "Connecting…", and no programmes
+  ever appeared. Each guide is now set up on its own, syncs on its own and can be re-synced or deleted
+  on its own. A playlist you already added repairs itself the next time it syncs — there is nothing to
+  re-import — and if one of the two guides is dead, the other still fills the TV Guide.
+- **The highlight stays where you left it in More, and lands where you expect going in.** Coming back
+  out of Local sync — or Backup & Restore, or Favourites — dropped the highlight at the top of the
+  list instead of on the row you had just been on, so you had to walk back down to where you were.
+  And opening Local sync put the highlight on the back arrow rather than on the first row, so the
+  first press down was spent getting into the screen you were already in. Both were the same cause:
+  the screen asked for the highlight before it had finished drawing, and the request was quietly
+  dropped.
+- **Back works on the first press again, everywhere.** Leaving Settings took two presses: the first did
+  nothing at all, and only the second returned you to More. The first press was not being ignored — it was
+  being spent moving the highlight one step outwards inside the screen, which usually looks like nothing
+  happening, and that swallowed the press before anything could act on it. It was never really about
+  Settings; that screen is simply where it showed, because Settings is now reached through More. Back is
+  now answered on the first press wherever you are, and everything it already did is unchanged: leaving a
+  settings page returns you to the list you opened it from, Back inside the settings list steps up to the
+  groups, Back on an open search box closes it, Back in a browse screen returns to the sidebar, Back on
+  the sidebar asks whether to exit, and Back while watching leaves the player.
+- **Live TV's catch-up list now reaches back a full week, like the TV Guide already did.** The list was
+  capped at 48 hours by a note that stopped being true when the stored guide grew to seven days, so a
+  programme from four days ago could be replayed from the Guide but was not even listed against the same
+  channel in Live TV. Both screens now offer the same archive, still limited by what each channel's own
+  provider allows.
+- **The guide line under a channel's name no longer goes blank after updating the app.** The channel list
+  looked up programmes only among the playlists the visible page happened to come from, while the preview
+  pane beside it searched everything — and guide entries routinely sit under a different playlist than
+  the channel showing them (one provider's guide covering another's channels). The two disagreed until an
+  EPG re-sync happened to rewrite the entries. The channel list now searches every playlist and every
+  guide feed, so the line under the name matches the panel next to it.
+- **Films and shows your provider gave no artwork for now show the poster OwnTV already found.** Their
+  tiles stayed a grey placeholder for good, even though highlighting one filled the panel beside it with
+  the real poster — the tile only ever used the picture that came with the playlist, and the panel's find
+  was never carried back to it. It is most obvious sorted by **Date added**, which puts a whole freshly
+  imported batch, artwork or not, at the front of the list. Highlight such a title once and its tile keeps
+  that poster from then on, along with every duplicate copy of the same film (the 4K listing and the
+  ordinary one fill together). Nothing extra is downloaded while you scroll — only what is already stored
+  on the television is reused, so a title nothing has been found for yet still shows the placeholder.
+
+## v4.2.4 — 2026-08-27
+
+### 🩺 A crash now leaves a report you can send
+
+- **The Playback error log is now simply Error log, and it lives under Settings → App, after About.**
+  It is no longer a playback-only page: alongside the most recent playback failures it now carries the
+  last crash, so one place answers "what went wrong" whatever went wrong. The row keeps its place in
+  settings search — searching for *error* or *crash* still finds it.
+- **A crash is written to disk the moment it happens** and survives the app being killed, so it is still
+  there the next time OwnTV opens. **Export** puts it at the top of the report file it saves to Downloads,
+  ahead of the playback history, which is the file to attach when reporting a problem.
+
+### ⚡ Playlists import and refresh faster
+
+- **Downloading a playlist and saving it into the library now happen at the same time.** Previously the two
+  took strict turns: reading the provider's list stopped completely while a batch was written, then the
+  database sat idle while the next batch was read. Both now run together, on every playlist type — M3U,
+  Xtream and Stalker portals alike, on a first import and on a refresh. Nothing about the resulting library
+  changes; there is simply less waiting.
+
+### 🚀 OwnTV opens faster
+
+- **The app is usable in roughly 0.7 seconds instead of 1.5, and Home fills in about 0.6 seconds instead
+  of 1.6.** Measured on a TCL Google TV over five cold starts before and after, with a full catalogue.
+  Nothing was removed or simplified to get there — the same rows, artwork and quality arrive, sooner.
+- **The largest single cause was the list of code OwnTV asks Android to prepare ahead of time.** That
+  list is recorded by walking the app, and it had been recorded on a fresh install, so it described the
+  first-run setup wizard rather than Home, Live TV, Movies, Series and Search. It is now recorded against
+  a real catalogue and covers every browse screen, so the first screen no longer has to be worked out
+  from scratch while you wait.
+- **Home no longer loads itself twice on startup.** Two separate triggers each asked for the same load a
+  fraction of a second apart, and the second one restarted work the first had nearly finished.
+- **Home's rows are now fetched all at once rather than one after another**, and the Continue watching row
+  no longer re-reads the same show from the database once per episode. On a library with a long history
+  this was the slowest part of opening the app.
+- **Posters load over a faster connection to the artwork service**, so a grid of covers no longer queues
+  up behind a handful of connections.
+- **Playlists and artwork are read with settings better suited to a television's storage.**
+
+### 🧰 Toolchain
+
+- **Updated to the current release of every build tool and library OwnTV depends on**, including Kotlin,
+  the Compose UI toolkit, the image loader and the networking stack. Building the project now requires
+  Android SDK 37; the app still runs on Android 8.0 and newer, exactly as before.
+
+### 🐛 Bug fixes
+
+- **Live TV no longer crashes when a channel goes full screen with Animations turned off.** The LIVE badge
+  introduced in 4.2.3 pulsed using a duration that the Animations = Off setting reduced to zero, which
+  brought the app down a frame later. Because the Animations setting is included in Backup & Restore, users
+  who reinstalled and restored hit it again immediately. The badge now simply stays steady when animations
+  are off.
+- **The long-press menu editor can be scrolled.** With thirteen actions, the Movies list was taller than a
+  television screen, so its title and its Save and Cancel buttons hung off the top and bottom with no way to
+  reach them. Every menu editor now scrolls within the panel.
+- **A playlist that claims an absurd catch-up length no longer breaks tuning.** A nonsense `catchup-days`
+  value overflowed the rewind window into a negative number and threw while the channel was being opened;
+  the value is now capped at 31 days.
+- **Stopping a stream during a retry no longer crashes the player.** Several retry paths re-read the current
+  stream address after their backoff delay, which could have been cleared by a stop in the meantime.
+- **A television whose media session refuses to start no longer takes playback with it.** The media session
+  exists so other apps and the TV's own controls can see what is playing; if it fails, the video now
+  continues regardless.
+- **Long-press menu Settings now reopens in the order you saved.** The editor briefly treated its empty
+  loading value as the real setting, filled itself with the shipped order and then ignored the saved
+  order when it arrived. Live TV, movie, series and episode editors now wait for their stored value, so
+  the arrangement shown in Settings matches the popup you actually use.
+- **Resuming from Home no longer makes working Auto surround fall back to stereo or mpv.** ExoPlayer
+  prepared a movie or episode at the beginning and immediately sought to Home's saved position, forcing
+  some TCL/Realtek TVs to rebuild a just-created E-AC3 output that then stayed silent. The saved position
+  is now part of the initial preparation, so Home resumes directly there with the same working audio path
+  as playback started from Movies or Series.
+
+## v4.2.3 — 2026-08-26
+
+### 🏷️ Every merged library says which provider an item came from
+
+- **When two or more playlists are active, Live TV, Movies, Series and the TV Guide now place a compact
+  provider label beside each category and item.** The label also appears on poster cards, list rows, Guide
+  channel rows, the Guide category picker, and the full-screen channel/history overlays, so identical names
+  from different services are no longer a guessing game.
+- **Single-playlist browsing stays exactly as clean as before.** Provider labels appear only when they are
+  useful; with zero or one active source, OwnTV leaves the existing layouts unchanged.
+
+### 🔎 Customize can show All, Visible or Hidden entries
+
+- **Both the category screen and a category's item screen now have a Filter control.** Choose All, Visible
+  or Hidden to narrow the working list without changing anything, making it practical to audit what has
+  already been hidden or bring selected entries back.
+- **Changing section or opening another category starts from All again**, and the list returns to its first
+  row when the filter changes so D-pad focus and range actions have a predictable starting point.
+
+### 🎛️ Spare remote buttons can do exactly what you choose
+
+- **Settings → Content → Remote Shortcuts replaces the old fixed CH+/RW · CH−/FF paging page.** Press or
+  hold a spare key, choose one of 25 navigation, browsing and playback actions, and edit or delete that
+  assignment later. Short and long presses are independent; one master switch disables every custom
+  assignment without deleting it, and Restore default shortcuts puts the shipped paging controls back.
+- **The familiar paging behavior remains the default.** CH+ and Rewind page toward the first items and
+  jump to the first item when held; CH− and Fast-forward do the same toward the last items. The two skip
+  counts remain adjustable, and Jump to last stays blocked on enormous All lists.
+- **Shortcuts can open every top-level destination, Search, profile or playlist switching; continue the
+  last watched item; control or move Now Playing between fullscreen, mini-player and Audio Mode; page or
+  jump through the focused browse panel; and open contextual player controls.** Focus Now Playing chooses
+  the mini player or Audio Mode bar intelligently, while Play/Pause works on the current playback.
+- **Essential remote navigation cannot be reassigned.** Back, D-pad, OK, volume, Home and power remain
+  protected; long-press Back still focuses Now Playing. Number shortcuts work while browsing, but
+  fullscreen number entry keeps priority for channel navigation. Assignments are included in Backup &
+  Restore.
+- **The assignment list now looks like the physical remote.** Rewind, Fast-forward and Channel+/− have
+  distinct key symbols, short and long presses carry compact badges, coloured keys look like coloured
+  keycaps, and the two skip-count rows use clear first/last paging illustrations.
+
+### 🕰️ The Guide keeps the present in view
+
+- **The Guide now opens with the current time around 37.5% across the timeline**, leaving useful programme
+  title space on both sides instead of pinning the live edge against the channel list. It loads two recent
+  hours as part of the immediate view while older catch-up history continues to fill in behind it.
+- **The live marker updates every 30 seconds without leaving and reopening Guide.** Its old solid red rule is
+  now an amber line that fades down each programme row, with a matching amber **NOW · time** badge in the
+  time ruler. Jump to Now uses the same live clock.
+
+### ↔️ Choose how much of Guide belongs to channels and programmes
+
+- **Settings → Layout → Guide Column Widths adds an independent two-column split for the TV Guide.** The
+  pinned channel list and scrollable EPG timeline can each be adjusted from 10% to 90% in 5% steps, with a
+  live diagram showing the result.
+- **The two shares must total exactly 100% before Save works.** Turning customization off restores the
+  standard 10% / 90% layout without discarding the saved values, and the setting is included in Backup &
+  Restore.
+
+### 🪟 Popup boxes and popup text finally size independently
+
+- **Appearance now has separate controls for popup geometry and popup text.** Popup size scales dialog and
+  menu boxes from 50% to 120%, while Popup font size changes only their text from 50% to 120%; changing the
+  main app font size no longer makes popup panels physically grow or shrink.
+- **Large popup text remains reachable by scrolling inside the fixed panel**, and the shared popup treatment
+  now covers the previously independent source, backup, EPG, update, player-warning, metadata-name and
+  browsing menus while deliberately dense or full-screen panels keep their own base dimensions.
+
+### ✨ Glass Effect is now a complete settings screen
+
+- **Glass Effect moved out of an oversized popup and into a proper Settings page.** A compact live preview
+  stays at the top; turning Glass off hides the controls below it, while turning it on reveals Appearance,
+  Fine tuning, Behavior and Apply glass to sections without losing any existing function.
+- **All six presets, background-image choices, transparency, blur, highlight, full-transparency protection,
+  depth effects and per-surface choices remain available.** Panels, Sidebar, Preview, Dialogs, Top bar,
+  Cards and Mini player can be toggled inline, and the new **All** button both reflects the complete set and
+  enables every surface in one press. **Reset to Balanced** also restores the default highlight, depth and
+  all-surface selection.
+
+### 🪟 The corner player carries one floating strip of buttons
+
+- **The mini player's controls are now a single rounded pill floating just above the bottom of the little
+  window**, instead of a row of buttons welded to its edge. Play leads the group as a large circle in your
+  accent colour; everything else is a small dark tile, with hairlines separating sound (volume, audio mode)
+  from window (size, corner) from exit (fullscreen, close).
+- **Shrink the window and the strip thins itself out before anything can be cut off.** At the smallest size
+  it keeps play, volume, fullscreen and close, and tucks the rest behind a **⋯** tile you press to swap them
+  in and out. Nothing ever spills outside the window.
+- **The window's progress line moved to its top edge**, so it no longer runs behind the buttons. Live
+  channels have no progress and simply don't show it.
+- **The window itself lights up with an accent outline while the remote is inside it**, and the title still
+  appears — and scrolls, if it is long — only while it holds focus.
+
+### 🎵 The music bar opens up when you move to it
+
+- **The now-playing bar at the top grows when the remote reaches it, and the page below slides down with
+  it** rather than being covered. Left alone it is exactly the thin strip it always was.
+- **Opened, it shows artwork** — the station's logo when there is one, otherwise a coloured tile with the
+  dancing bars in it — plus the station name and whether you are live or how far into a recording you are.
+- **Seven controls, not five.** A **favourite heart** was added — it toggles the same favourite as the full
+  player and stays coral when set — and **Close** now ends Audio Mode from here, so Back is free to simply
+  step out of the bar.
+- **The two outer buttons say what they will actually do.** On a live radio channel they change channel; on
+  a recording they rewind and fast-forward. Same place, different job.
+
+### ✨ Focus that reads like light, and icons that stop sharing
+
+- **Buttons over the picture now take focus as light**: a thin accent rim, a soft wash of the same colour
+  and a gentle glow behind it. With Reduce animations turned up the glow goes and the rim stays, so the
+  focus is never lost.
+- **Nine settings that used to share a symbol with something else now have their own.** DNS, Remote shortcuts,
+  Panel width, Focus highlight and Auto-play next each got a drawn mark of their own, and Zoom and the TV
+  guide were redrawn to look like what they do. The live dot in the player is now the same mark everywhere
+  it appears — the badge, the Go live button and the marker at the end of the timeline.
+
+### 🔀 Arrange the long-press menus yourself
+
+- **Settings → Layout → Long-press menus** lets you set the order of the actions in the four long-press
+  menus — channel, movie, series and episode — each one on its own. Pick a menu and the exact popup you
+  see while browsing opens, holding the same actions in the same style.
+- **Hold OK on an action to pick it up**, then Up and Down to carry it, then OK to drop it. A ↕ sign marks
+  the action you are carrying, and the row stays highlighted so you can see where it lands. Nothing is
+  saved until you press Save; Cancel or Back leaves the menu as it was.
+- **Reset puts every menu back the way it ships**, and there is a Reset on each menu as well as one for all
+  four at once.
+- **An order you set now survives later updates.** An action added by a future version appears at the end
+  of your arrangement rather than being lost, and an action that goes away is simply skipped — you never
+  have to redo the order after an update. **Close** is always last and cannot be moved.
+
+### ▶️ The player's transport buttons sit in one pill
+
+- **Play, pause, skip and the two seek buttons are now grouped inside a single rounded dark pill** in the
+  middle of the screen instead of floating loose over the picture, and they are slightly smaller so the
+  group reads as one control.
+- **The button you are on fills with your accent colour** and gets a thin white outline. The icon inside
+  switches between dark and light to stay readable, so a very dark or very bright custom accent still
+  shows the symbol clearly.
+
+### 🗂️ Settings is a spine and a sheet, with your quick switches at the top of it
+
+- **The section list on the left is now a proper column of its own.** Each of the nine groups carries
+  its icon and how many settings it holds, and the selected one gets an accent bar down its leading
+  edge with the highlight fading away from it — so the left column visibly points at the rows on the
+  right. It sits on the same panel the settings do, instead of floating loose beside them.
+- **The settings themselves are one sheet, not 34 floating cards.** The group is named at the top with
+  a one-line summary of what is in it, and every value (`Dark`, `Teal`, `100%`, `On`) lines up in a
+  column down the right-hand side as quiet text rather than a filled badge. The highlighted row gets a
+  slim accent stripe on its left and a soft wash, which is what separates the rows — there are no rules
+  between them.
+- **"Quick" is now the first entry in the section list.** The six most-used switches — Live preview,
+  Preview sound, Channel numbers, HDR, Auto-play, Check for update — moved out of the strip that used
+  to sit across the top of Settings and became ordinary rows you flip with OK. Nothing was lost and
+  nothing needs setting up; the header they vacated is now a single line, which is where the extra room
+  for the settings came from.
+- **Search is a small pill in that header.** Press OK on it and it opens into the field you already
+  know; Back clears what you typed, and Back again puts it away. Results still name where each setting
+  lives and still open it directly.
+- **Arrows now only appear on rows that actually open another screen.** A row that opens a popup, or
+  flips in place, no longer promises a page that isn't there.
+- **Everything still scrolls.** At 150% UI zoom on a large screen the columns are narrower and taller
+  lists scroll, so no setting can ever be out of reach.
+- **Coming back from a setting no longer changes the section you were in.** Pressing Left out of the
+  settings used to land on whichever section happened to be level with your row — and because the
+  highlight *is* the selection there, that quietly switched groups on you. It now always returns you to
+  the group you were inside.
+
+### 🪟 You can reach the docked mini player again
+
+- **A "Now Playing" item appears at the top of the side menu** whenever a video is docked in the corner
+  or Audio Mode is running. Press OK on it and the remote moves into that little window. It shows the
+  channel's logo (or the equalizer in Audio Mode) inside a gently pulsing accent ring, and it disappears
+  the moment there is nothing playing.
+- **Hold BACK from anywhere to jump into the mini player, and hold it again to come back.** Short
+  presses of Back are completely unchanged everywhere in the app.
+- **Back from inside the mini player returns you to the exact control you left**, instead of dropping
+  you somewhere arbitrary.
+- **Play/Pause on the remote works on the docked window wherever you are.** CH+/CH− change its channel
+  too, except where those keys already have a job — in a browse list they still page the list, and in
+  full screen the player still owns them.
+- Why this was needed: the mini window floats above the content panel, so the remote's directional
+  focus had no path into it from most screens. It was reachable by luck from some, and not at all from
+  Settings.
+
+### 💬 A separate subtitle size for each of the two players
+
+- **Settings → Video player → Subtitle appearance → Subtitle size now holds two rows**, one for
+  ExoPlayer and one for MPV, above a preview that shows both sizes at once so you can see the
+  difference. Press OK on a row to step it through Small → Normal → Large → Extra large; the preview
+  follows as you go.
+- **Why:** the two players draw the same size setting differently — ExoPlayer's text is noticeably
+  bigger — so a single shared setting could never be right for both. "Small" read as medium on one and
+  tiny on the other.
+- **Nothing changes on upgrade.** Whatever size you had is kept for *both* players until you decide to
+  move one of them, and the setting still travels in backup and restore.
+
+### ⏱️ A dead channel says so, instead of leaving you with a black screen
+
+- **New setting: Settings → Video player → Live TV → "Give up on a channel after".** A live channel
+  that will never play used to leave you looking at black for about a minute and a half, because
+  OwnTV silently worked through four different player-and-format combinations and each one had its
+  own long timeout. Nothing put a limit on the total. There is now a limit on the whole attempt —
+  **30 seconds by default**, with 15 and 60 also offered — and when it runs out you get the usual
+  error message instead of more black screen. **Never** keeps the old behaviour for a slow provider
+  that needs it.
+- **A wait your provider asks for is never counted against it.** When a panel answers "your account is
+  busy, try again in 20 seconds", OwnTV is counting that down behind the spinner on purpose. That time
+  is added back, so a channel queued behind a wait the app agreed to is never mistaken for a dead one.
+- **The error now actually appears.** A stream that opens its playlist and then sends nothing produces
+  no picture *and* no error, so nothing was there to show — the spinner simply stayed up forever once
+  the last combination had been tried. Whichever player is on screen is now told to show the failure.
+
+### 🎛️ Every playback setting in one place
+
+- **Settings → Video player is now the complete list.** HDR, Auto frame rate, Surround sound,
+  Auto-play next, Live preview, Preview sound and Mini player used to live only on the main Settings
+  page, even though everything else about playback was one level down — so which screen a setting was
+  on came down to memory. They are all on Video player now, grouped with the settings they belong
+  next to: HDR and Auto frame rate beside Hardware decoding, Surround with the other audio settings,
+  Live preview at the top of Live TV.
+- **The main Settings page is shorter, and the quick chips still cover the common ones.** The
+  duplicated rows are gone from the Playback group, which now holds Video player and the Playback
+  error log. The chip row at the top of Settings still toggles Live preview, Preview sound, HDR and
+  Auto-play next in one press.
+- **Search tells you where a setting lives.** A result now reads *Playback › Video player › HDR*
+  rather than just *Playback › HDR*, and typing "video player" lists everything on that screen. You
+  can still flip a setting straight from the results without opening anything.
+- **The warnings still appear wherever you change the setting.** Turning on Auto frame rate below
+  Android 12 still asks first, and turning on Live preview while your layout has no room for the
+  preview panel still says so — from the new location and from search alike.
+
+### 🎚️ Per-playlist Live TV player and Live latency
+
+- **Settings → Video player → "Live TV player per playlist" and "Live latency per playlist".** Both
+  of these were one choice for everything, so a single provider that needed different treatment forced
+  the change on all of them. Each playlist can now have its own answer, chosen the same way the
+  per-playlist Pre-buffer already is: pick the playlist, then pick the value. Anything you have not
+  touched says **Follow setting** and behaves exactly as before.
+- **The order of precedence is unchanged where it matters.** A channel you pinned yourself still wins
+  over its playlist's choice, and a protected (DRM) channel still plays on ExoPlayer regardless — mpv
+  cannot obtain a licence, so that is not a preference to weigh but a fact.
+- **Both settings survive backup and restore**, and a backup made before this version restores as
+  "follow setting" on every playlist.
+
+### 🎧 Remember the audio sync for one channel or one film
+
+- **Player → Audio → "Remember this delay".** The A/V-sync nudge could already fix a stream whose
+  sound runs ahead of or behind the picture, but it was forgotten the moment you moved on — so a
+  channel that is always a quarter-second out had to be corrected every single time. You can now keep
+  the correction for that one channel, film or episode. Everything else still follows the global
+  setting, which is the point: lip-sync error belongs to the stream, not to you.
+- **Nudging further while it is remembered updates what is stored**, and turning it off both forgets
+  the value and puts playback back on the global setting immediately.
+- **Settings → Video player → "Reset saved audio sync"** clears them all at once, with a count of how
+  many are saved — the same shape as the existing saved-zoom and saved-volume rows, and reset
+  independently of them. Remembered delays are per profile and ride along with a backup.
+
+### 🏠 Turn off the video on the Home screen's big card
+
+- **Settings → Home screen → Keep Watching → "Play video in the hero row".** The highlighted item on
+  Home starts playing after a moment, which keeps a video player running the whole time you browse.
+  Live preview has had an off switch for a long time; this one did not. It does now, and on a low-memory
+  TV it starts **off**, since that is where a second video pipeline costs the most.
+
+### ⏭️ Catch-up plays on to the next programme
+
+- **A finished catch-up programme no longer leaves a black screen.** Watching something from the guide
+  used to simply stop at the end of the programme, with nothing on screen and nothing to say why. It
+  now continues down the guide by itself, so an evening's catch-up plays through the way live
+  television would.
+- **Catching up with the present hands over to live.** If the programme that follows is the one on the
+  air right now, OwnTV tunes the live channel instead of asking the provider for a recording that is
+  only half made — that recording would end again within seconds and drop you straight back. Where the
+  guide has nothing after the programme, or a gap of more than three hours, playback stops as before.
+- **It uses the switch you already have.** *Settings → Video player → Auto-play next episode* now
+  governs catch-up as well as episodes, so turning it off turns this off too.
+
+### 🪟 Mini player is one popup instead of three screens
+
+- **Settings → Video player → Mini player is now a single panel.** It was a page of its own holding two
+  rows, and each row opened another box on top of it — three levels deep to set a size and a corner.
+  Size and position are now on one small popup and apply as you press, rather than after confirming.
+- **The position choices are laid out like the TV screen.** Six cells in two rows — top and bottom,
+  left/centre/right — so the option you highlight sits where the mini player will. **Reset** returns
+  both the size and the position to their defaults in one press.
+
+### 🏷️ The player's buttons tell you what they are
+
+- **Every button on the player bar names itself when you highlight it.** The bar can hold twelve
+  unlabelled icons, and some of them were only identifiable by pressing — including the engine
+  toggle, which restarts the stream. The name now appears just above the row as you move along it.
+  The line is always there, so the bar never jumps as focus arrives or leaves, and with **Reduce
+  Animations** on the name appears instantly instead of fading.
+- **Nothing moved.** The buttons are in exactly the same order and the same left/right groups as
+  before.
+
+### 🎨 The player follows your accent colour
+
+- **The player was always teal, whatever accent you had chosen.** Pick violet and you got a violet
+  app with a teal player: the seek bar, the active buttons, the speed and engine pills, the subtitle
+  count badge and the channel-number card were all a fixed colour. They now use your accent, the same
+  as the rest of the app. Custom hex accents are included.
+- **It stays readable on the light theme.** The player's controls sit on dark video, so they use the
+  brighter version of your accent rather than the deeper one the light theme uses on its own pages.
+
+### ⚡ Settings opens faster, and catch-up stops redrawing the screen
+
+- **The Settings page only builds the rows you can see.** It used to build all forty rows and headings
+  every time it opened, and again on every change. Everything is where it was; it just arrives
+  quicker, which is most noticeable on a slower TV.
+- **A rewound catch-up programme no longer redraws the whole screen once a second.** The two clocks in
+  the player tick every second, and the entire screen behind them was being rebuilt each tick just to
+  move them along. Only the clocks update now.
+
+### 🗂️ Settings is two columns, and grouped the way you'd look for things
+
+- **The sections are on the left, their settings on the right.** Settings used to be one long column
+  you scrolled through — everything from Profiles down to About in a single list. It is now the same
+  shape as the rest of the app: pick a section on the left, and only that section's settings show on
+  the right. Nothing is hidden and nothing moved to a different place; there is just far less
+  scrolling to reach anything.
+- **Nine sections instead of six.** The old grouping had one very large "Appearance" bucket and put
+  unrelated things together. The sections are now Profile, Sources & guide, Appearance, Layout &
+  navigation, Content & metadata, Playback, Network, Data & backup, and App. Every row kept its own
+  wording, chip and behaviour — only which heading it sits under changed.
+- **Coming back from a settings page returns you to the exact row**, in the right section, the way it
+  always did.
+- **Search is unchanged.** Typing in the search box still replaces the page with a flat list of
+  matches, each labelled with the section it came from.
+
+### 🎨 Icons that match what they do
+
+- **Eighteen settings rows got the right icon.** Several rows were sharing a picture with something
+  unrelated — Catch-up showed the guide icon, DNS showed a magnifying glass, Weather showed the guide
+  icon, Network showed a share arrow, Refresh now showed a clock. Ten new pictures were drawn for the
+  rows that had nothing suitable to point at: weather, network, text size, backup, refresh, power,
+  motion, glow, warning and list layout. The search results show the same icon as the row they open.
+- **Settings pages keep their colour.** A row's icon used to change colour the moment you opened it —
+  Weather was a grey tile on the settings list and a coloured one inside. Each page's rows now use the
+  colour of the row that opened it, so nothing changes underneath you.
+- **One mark for "make this bigger".** The mini player and the settings list were using two different
+  pictures for the same action. There is now one.
+- **The favourite heart is the same colour everywhere.** It was coral on posters and in Live TV, your
+  accent colour in Movies, Series and Search, and your accent colour again in the player. It is coral
+  in all five places now, so one colour always means "favourite".
+- **The Backup screen's buttons have icons**, like the buttons everywhere else.
+
+### 🐛 Fixes
+
+- **Entering a Guide programme row no longer pushes the current time to the left edge.** Guide still
+  opens with Now around 37.5% across the timeline; pressing OK to browse that row keeps the same view
+  and scrolls only after the highlighted programme reaches an edge.
+- **Embedded TMDB trailers do less work on lower-memory TVs.** The in-app YouTube surface no longer
+  builds its own controls, captions, annotations or related-video UI behind OwnTV's controls, and the
+  progress display updates once per second instead of forcing ten interface updates per second.
+- **Backup & Restore now preserves every Settings arrangement and global player choice.** The Live TV
+  and Movies & Series player modes, Quick pinned rows and their order, and all four arranged
+  long-press menus now return with the rest of App settings. Existing backups remain compatible;
+  create a new backup to carry these newly covered values.
+- **CH+ / CH− now always changes the channel while a Live TV or catch-up player is open.** The
+  dedicated channel keys could be claimed by a focused on-screen control just after playback started,
+  or briefly stop responding while the channel list or playback engine changed underneath them. They
+  now belong to the player for the entire session, including channels opened from the Guide, Home,
+  startup and launcher shortcuts. Browse screens keep their configurable CH+/CH− paging, media and
+  colour-key shortcuts are unchanged, and D-pad Up/Down still navigates whenever the controls are visible.
+- **Focus no longer slides across the screen when you leave a settings page.** Coming back from the
+  bigger panels — Glass Effect, About — the highlight appeared somewhere else for a moment and then
+  travelled to the row you had opened. Full settings pages such as Playlists had the same visible jump:
+  the two-column Settings screen briefly rebuilt its first section before restoring the row you left.
+  Both return paths now keep their section and list position still until focus has landed directly on
+  the opener row.
+- **Home's Now Trending showcase no longer follows the popup controls.** Trending is part of the main
+  interface, but it was wrapped in the popup styling, so Popup size resized the entire showcase and
+  Popup font size changed its text while the general font setting was ignored. It now follows the
+  general interface font and size, while popup controls affect only actual popups.
+- **Two settings put the highlight in the wrong place afterwards.** Closing **Focus highlight**, or the
+  remote background-image picker, restored nothing at all — and left a marker set that sent focus to
+  the wrong row the *next* time you opened Settings from the sidebar.
+- **Back now goes back one level in Settings, not two.** In the per-playlist settings (Live TV player,
+  Live latency, Pre-buffer) you pick a playlist and then a value; Back from the value closed both and
+  left you two rows above where you started, so setting a second playlist meant beginning again.
+  Back — and choosing a value — now returns to the playlist list, where each playlist's current setting
+  is shown. The same applies to the background-image and OpenSubtitles sign-in steps.
+- **Every series re-sync used to leave a dead resume position behind, for ever.** After a re-sync the
+  app re-attaches your favorites, history and resume points to the content's new ids and drops the old
+  rows. The dropping step only ever considered channels, movies and shows — never *episodes*, which is
+  what almost every resume position and half the watch history actually is. So each re-sync added a
+  fresh row and kept the stale one, and the table grew for as long as you owned the app. The stale rows
+  are now dropped like every other kind; an episode that has not finished loading is still held safely
+  and re-attached when it arrives.
+- **Removing a series from Continue watching now removes it from the Home screen too.** A show is
+  watched one episode at a time, so what the Home screen's Continue watching row actually shows is the
+  episode you stopped in the middle of — not the show's history entry. Removing the show cleared only
+  the history entry, so the episode stayed on Home and the top-bar Continue chip still offered it.
+  Both now go with it. Shows removed before this version need removing once more to clear the leftover;
+  and because the resume points go too, the show opens at episode 1 again afterwards.
+- **The "watch next episode" box no longer pops up for the wrong episode.** Clicking *Continue* at the
+  end of an episode started the next one and immediately offered the episode after that — and resuming
+  a part-watched episode sometimes showed the box straight away as well. The player was still reporting
+  the previous item's elapsed time and length for a second or so after a new one began, which reads as
+  "eight seconds from the end". Each new item now starts on a clean clock.
+- **A deleted profile's favorites can no longer surface in someone else's account.** When re-attaching
+  records after a sync or a restore, a record whose profile no longer existed was given to whichever
+  profile happened to be first — so deleting a profile could push its favorites, history and resume
+  points, including a Kids profile's, into another person's account. Such a record is now discarded.
+- **Rewinding a channel with no recording available now returns to live.** If the provider had nothing
+  to serve, OwnTV kept showing "behind live" and a rewind counter over a picture that had never left
+  the live edge, and hid the player's engine switch behind a rewind that did not exist. It now slips
+  back to live. Opening a catch-up programme that cannot be served tunes that channel live instead of
+  naming it over the previous channel's picture.
+- **Choosing a category right after typing a channel number sticks.** Entering a channel number
+  rebuilds the zap list in the background. If you opened the in-player category browser and picked a
+  category while that was still running, the older rebuild landed on top a second later and silently
+  replaced the category you had just chosen.
+- **Your audio sync survives a stream reconnecting.** A channel that dropped and recovered — or that
+  moved to the other decoder — reset the A/V-sync offset to the global default and only put your own
+  value back once it had been re-read from storage, which was audible as a sync jump. An adjustment you
+  had not asked OwnTV to remember was lost outright. Zoom and volume already survived a reconnect;
+  audio sync now behaves the same way.
+- **The offline warning reads the connection you are actually using.** On a TV with both an Ethernet
+  cable and Wi-Fi connected, a change on the idle one could publish its state over the working one,
+  showing an offline warning over a perfectly good connection until the next check corrected it.
+- **Auto frame rate now respects your TV's own "Match content frame rate" setting.** If you had
+  turned frame-rate matching off in Android TV's display settings, OwnTV changed the display mode
+  anyway — it was using an older method that the system does not police. Set to **Never**, OwnTV now
+  leaves your display alone and stops offering to switch; set to **Seamless only**, it restricts
+  itself to changes your TV can make without the brief black gap of an HDMI re-handshake. **Always**
+  behaves exactly as before, as does any TV on Android 11 or older, which has no such setting.
+- **Nothing from the previous channel or film can survive into the next one.** Everything the player
+  had to forget when you changed channel was a long hand-written list, and anything left off such a
+  list bleeds into whatever you open next — a stale error, a stale resolution badge, a retry the new
+  channel had not actually used. Both players now forget in one step that cannot be half-done. The
+  distinction that matters is preserved: a silent retry of the *same* film still remembers what it has
+  already tried, or it would retry the same failing trick forever.
+- **Live latency now admits what a 4K channel can actually buffer.** Asking for a long buffer on a
+  very high-bitrate channel gives you less time than the number suggests, because there is a limit on
+  how much video can be held in memory at once. That was always true and correctly handled; the
+  setting simply never said so, which made it look broken. It now explains it.
+- **A film with picture-based subtitles is less likely to be given up on early.** The player waited 8
+  seconds for the first frame, measured from before it had even connected — inside the normal opening
+  time for a large 4K file on a slow provider. It now waits 12, the same as the Home screen preview
+  has always used, so a slow-starting film is no longer restarted or reported as "audio, no picture"
+  when it was about to play.
+- **ExoPlayer no longer drops a working movie or episode into mpv after switching surround to stereo.**
+  Rebuilding ExoPlayer's audio output also replaces its hardware video decoder; on some TCL/Realtek TVs,
+  doing that immediately on the same video surface left the replacement decoder playing sound over a
+  blank picture. Recovery now releases the old decoder, allows it to settle, recreates the video surface,
+  and resumes at the saved position in ExoPlayer. The same safe restart protects its hardware-to-software
+  decoder rescue, while mpv's independent stereo recovery remains unchanged.
+- **"App not installed" when updating from inside OwnTV.** The app downloaded the new version and
+  handed it straight to Android without checking anything, so a download that arrived incomplete —
+  easy on a TV that is low on storage or on a weak connection — was rejected by the system with a bare
+  "App not installed" and no way to tell why. OwnTV now checks there is room before it starts, checks
+  the download arrived whole, and checks Android can actually read the file as OwnTV before offering
+  it for installation. If any of those fail you get a plain message saying what to do — free up space,
+  or check your connection and try again — and the bad file is deleted rather than retried as-is.
+- **An update that the system refuses now says why.** Installing goes through Android's own installer
+  service instead of opening the downloaded file as a document, which means OwnTV can read back the
+  real reason a package was turned down (not enough space, a signing mismatch, a damaged file) and show
+  it. Cancelling the system's confirmation prompt is treated as a choice, not an error.
+- **The first-run "Add a playlist" screen no longer hides Stalker.** The **New** card described itself
+  as "Add an M3U or Xtream source" even though the form behind it has offered Stalker portals for
+  several releases. It now reads "Add an M3U, Xtream or Stalker source", in every language.
+- **Fast-forward and rewind from a Bluetooth remote or the system media notification now use your Seek
+  step.** Those two routes had a fixed 30 seconds built in, so a remote's skip buttons moved by a
+  different amount than the on-screen ones — with Seek step set to 10 seconds, the buttons jumped 10
+  and the remote jumped 30. Both now read the setting.
+- **A frozen live channel moves to the other player about twice as fast.** The wait before handing a
+  stalled channel over was a flat 30 seconds, while the player underneath had already declared the feed
+  dead at 12 seconds and quietly retried twice in the meantime. The wait is now worked out from that
+  verdict — about 15 seconds — which leaves room for one genuine recovery and not for two that have
+  already failed.
+- **The offline warning now appears when the internet is actually unreachable.** OwnTV only checked
+  that a network interface claimed to carry internet, which an Ethernet cable plugged into a dead
+  router does forever. It now also requires Android's own confirmation that traffic reached the
+  outside, so unplugging the router shows the warning instead of silently failing every request.
+- **Online subtitle searching now filters correctly for seven more languages.** Bengali, Czech, Danish,
+  Malayalam, Norwegian, Polish and Swedish were missing from the code-conversion table, so choosing one
+  as your search language quietly returned unfiltered results.
+- **Track menus stop hunting for tracks that will never arrive.** Opening the audio or subtitle menu on
+  a stream that has none — a radio channel, most often — left OwnTV re-checking three times a second
+  for as long as the menu stayed open. It now stops after six seconds, which is well past the slowest
+  stream that has ever reported its tracks late.
+- **The in-player channel list no longer mislabels itself.** Opening a channel from the catch-up
+  programme dialog reset the list's heading to "All channels" while the list underneath was still
+  showing Favorites, History or whatever rail you came from. The heading now always names what is
+  actually in the list.
+- **One less timer running while you watch a recording.** Rewinding a live channel after watching a
+  catch-up programme left two identical once-a-second counters running side by side for the rest of the
+  session, both working out the same thing. There is one now.
+- **Less background work during playback, and less of it on weaker TVs.** Several separate timers
+  driving the progress readout, the stream-info panel and the frame-rate chip have been merged into a
+  single once-a-second tick, and on low-memory devices the "is this channel frozen?" check now runs
+  every 4 seconds instead of every 2.5 (reaching the same verdict in 12 seconds instead of 10). The
+  still picture shown while the app swaps video players is also captured at a fraction of its old size
+  — on a 4K stream it used to allocate about 33 MB for a placeholder shown for a quarter of a second.
+
 ## v4.2.2 — 2026-08-19
 
 ### 🖼️ Episode grid — see a picture for every episode

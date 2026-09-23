@@ -9,6 +9,206 @@
 > (e.g. `(community PR #40 by @codeVerine)`). Issue numbers that are part of a title (e.g. `(#57)`) are
 > fine; explanatory parentheticals are not. Descriptions belong in CHANGELOG.md, never here.
 
+## v5.0.2 — 2026-09-21
+
+### 🩹 Fixes
+
+- **💥 The app would not open after updating from v5.0.0**
+
+## v5.0.1 — 2026-09-21
+
+### ✨ New features
+
+- **🎬 A cinematic layout for Movies & Series**
+- **✨ Set a new television up from the one you already have** (#189)
+- **🚀 Refreshing a playlist gets out of your way**
+- **📅 A week of guide, and you choose how much**
+- **🔄 Local sync, tidied up on the television**
+- **📺 Protected and MPEG-DASH channels play**
+
+### 🩹 Fixes
+
+- **📺 Stream info said MPEG-TS on a DASH channel**
+- **📺 A channel that will not open can now fall back to the provider's own address**
+- **⏺️ Recording a copy-protected channel is refused straight away, and says why**
+- **🪟 Every popup now behaves like every other popup**
+- **🗂️ Restoring a backup during setup asks what to bring back**
+- **🔗 Sync mode could hand the other device a key that did not fit**
+- **📡 A long guide download is no longer stopped by the system**
+- **🎞️ A live channel's frame rate is no longer shown a notch too low**
+- **🗂️ Categories your provider lists no longer arrive empty**
+- **⏪ Catch-up plays on Stalker portal playlists**
+- **⏪ Catch-up loads faster**
+- **💬 Catch-up says when a provider has no recording, instead of doing nothing**
+- **🔲 Holding OK on the Multiview settings no longer closes the app**
+- **🔎 Settings search finds every setting, including Multiview and the player engines**
+- **📖 The user guide explains how to turn Multiview on**
+- **💥 The app no longer crashes on opening with many manually matched EPG channels**
+- **📖 The user guide describes first-run setup and remote playlist entry accurately**
+- **🔠 Popup font size now resizes everything inside a popup**
+- **🖼️ Channel logos no longer sit on a black square**
+- **💥 The app no longer runs out of memory when the guide is refreshed**
+- **🔗 "Match EPG" lists guide channels again**
+- **🔎 The guide picker's search understands names and non-Latin scripts**
+- **🔗 Manual EPG matches survive deleting and re-adding a playlist**
+- **🤖 Auto-match no longer reports success it cannot deliver**
+- **🧹 Duplicate programmes are removed when the guide is downloaded**
+- **⚡ The Live TV list stops re-asking what is on**
+
+## v5.0.0 — 2026-09-14
+
+### ✨ New features
+
+- **🔎 Set how big the interface and its text are during setup** (#179)
+- **🗂️ Hide or move a category without leaving the screen** (community PR #131 by @pt5pnzghm6-sys0)
+- **⏺️ Record Live TV — from the guide, the channel list or while you are watching**
+- **🔁 Record every showing of a programme on a channel**
+- **⏪ Save a catch-up programme from your provider's archive**
+- **🔲 Multiview — up to four live channels at once**
+- **🔊 Sound only: keep a channel's commentary without its picture**
+- **🔌 OwnTV works out how many channels your provider allows, and warns you before refusing one**
+- **ℹ️ A playlist's Test button is now Info, with Re-test behind it**
+- **📂 Recordings live in Downloads, as its Live TV tab**
+- **📺 Live TV shows what a programme is about, not just its name**
+- **🖼️ Channel logos in the guide**
+- **📅 Episodes show the day they first aired**
+- **🖼️ A profile picture of your own, from this TV or sent from your phone**
+- **🎨 The drawn avatars redrawn — lit, not flat**
+- **🗓️ Stalker portals: the portal's own TV guide, and catch-up with it**
+- **⋯ More is the sidebar's last item, with Settings its first row**
+- **⋯ More rebuilt as a two-pane hub, in Settings' own shape**
+- **👀 The panel says what is behind each row before you open it**
+- **💾 Backup & Restore shows when your last backup was, and where it was saved**
+- **⭐ Favourites: everything you starred, on one screen**
+- **🕘 History, newest first, with your resume points**
+- **🧹 Clear history sits on the history screen now, not inside Settings**
+- **📤 Backup & Restore, Local sync, the error log and About moved to More**
+- **⚙️ Settings holds settings only — the Data group is gone**
+- **📁 The download folder moved from Settings to the Downloads screen**
+- **🧪 Test a playlist before you trust it**
+- **🔄 Auto refresh: choose your own number of days**
+- **🪟 A new Glass Effect look: Aurora**
+- **🖼️ Trending layout choice: detailed card or posters only**
+- **🔄 Local sync: swap your data with your phone over your own Wi-Fi**
+- **🔀 Send, receive or merge — you pick the direction and what travels**
+- **👁️ See exactly what a sync will change before it changes anything**
+- **🪦 A deletion now stays deleted on both devices**
+- **🕐 The newer of two devices always wins, so a sync never moves you backwards in a show**
+- **🔐 No password to invent: the two devices lock the transfer themselves, logins included**
+- **✅ A device you already paired says so, and skips the PIN**
+- **♻️ Pairing the same device twice updates it instead of listing it twice**
+- **🏷️ Two devices of the same model are told apart by a short code**
+
+### 🐛 Fixes
+
+- **🧱 ExoPlayer, Room and the build toolchain updated**
+- **Glass mode ignored your chosen focus highlight colour**
+- **The active category's white border looked like a second cursor**
+- **Customize moved the item but left the cursor behind**
+- **A Multiview tile that could not be played no longer plays its sound**
+- **File sizes say MB again**
+- **An episode download appeared in no list at all**
+- **The guide, the channel row and the preview pane no longer disagree**
+- **The same programme is no longer listed twice**
+- **A guide row whose data has run out now asks the provider**
+- **A recording booked across a reboot is repaired when OwnTV is next opened**
+- **A playlist that offers two TV guides now sets up both of them (#171)**
+- **Stalker portals: no more 403 errors, endless loading and half-finished syncs**
+- **Stalker portals: catch-up appears on the channels that actually have it**
+- **The highlight stays where you left it in ⋯ More, and lands on the first row going in**
+- **Back works on the first press again, everywhere**
+- **Live TV's catch-up list now reaches back a full week**
+- **The guide refreshes itself after adding, re-syncing or deleting an EPG source**
+- **The guide line under a channel's name no longer goes blank after updating the app**
+- **Guide auto-match now works for non-Latin channel names** (community PR by @Sekator778)
+- **⚡ Guide auto-match finishes in seconds instead of minutes**
+- **Blank poster tiles now show the poster OwnTV already found**
+
+## v4.2.4 — 2026-08-27
+
+### ✨ New features
+
+- **🩺 A crash now leaves a report you can send**
+- **⚡ Playlists import and refresh faster**
+- **🚀 OwnTV opens faster**
+
+### 🐛 Fixes
+
+- **Live TV no longer crashes in full screen with Animations turned off**
+- **The long-press menu editor can be scrolled**
+- **An absurd catch-up length no longer breaks tuning**
+- **Stopping a stream during a retry no longer crashes the player**
+- **A refusing media session no longer takes playback with it**
+- **Long-press menu Settings shows the saved order**
+- **Home resume no longer trips working Auto surround into stereo or mpv**
+
+## v4.2.3 — 2026-08-26
+
+### ✨ New features
+
+- **🏷️ Every merged library says which provider an item came from**
+- **🔎 Customize can show All, Visible or Hidden entries**
+- **🎛️ Spare remote buttons can do exactly what you choose**
+- **🕰️ The Guide keeps the present in view**
+- **↔️ Choose how much of Guide belongs to channels and programmes**
+- **🪟 Popup boxes and popup text finally size independently**
+- **✨ Glass Effect is now a complete settings screen**
+- **🪟 The corner player carries one floating strip of buttons**
+- **🎵 The music bar opens up when you move to it**
+- **✨ Focus that reads like light, and icons that stop sharing**
+- **🗂️ Settings is a spine and a sheet, with your quick switches at the top of it**
+- **🔀 Arrange the long-press menus yourself**
+- **▶️ The player's transport buttons sit in one pill**
+- **🪟 You can reach the docked mini player again**
+- **💬 A separate subtitle size for each of the two players**
+- **⏱️ A dead channel says so, instead of leaving you with a black screen**
+- **🎛️ Every playback setting in one place**
+- **🎚️ Per-playlist Live TV player and Live latency**
+- **🎧 Remember the audio sync for one channel or one film**
+- **🏠 Turn off the video on the Home screen's big card**
+- **⏭️ Catch-up plays on to the next programme**
+- **🪟 Mini player is one popup instead of three screens**
+- **🏷️ The player's buttons tell you what they are**
+- **🎨 The player follows your accent colour**
+- **⚡ Settings opens faster, and catch-up stops redrawing the screen**
+- **🗂️ Settings is two columns, and grouped the way you'd look for things**
+- **🎨 Icons that match what they do**
+
+### 🐛 Fixes
+
+- **Entering a Guide programme row keeps the current time in place**
+- **Embedded TMDB trailers run with less interface overhead**
+- **Backup & Restore preserves every Settings arrangement and global player choice**
+- **CH+ / CH− always changes the channel while the Live TV or catch-up player is open**
+- **Focus returns directly to the Settings row you left**
+- **Home Trending no longer follows popup size and popup font controls**
+- **Two settings put the highlight in the wrong place afterwards**
+- **Back now goes back one level in Settings, not two**
+- **Every series re-sync used to leave a dead resume position behind, for ever**
+- **Removing a series from Continue watching now removes it from the Home screen too**
+- **The "watch next episode" box no longer pops up for the wrong episode**
+- **A deleted profile's favorites can no longer surface in someone else's account**
+- **Rewinding a channel with no recording available now returns to live**
+- **Choosing a category right after typing a channel number sticks**
+- **Your audio sync survives a stream reconnecting**
+- **The offline warning reads the connection you are actually using**
+- **Nothing from the previous channel or film can survive into the next one**
+- **Auto frame rate now respects your TV's own "Match content frame rate" setting**
+- **Live latency now admits what a 4K channel can actually buffer**
+- **A film with picture-based subtitles is less likely to be given up on early**
+- **ExoPlayer no longer drops a working movie or episode into mpv after switching surround to stereo**
+- **"App not installed" when updating from inside OwnTV**
+- **An update that the system refuses now says why**
+- **The first-run "Add a playlist" screen no longer hides Stalker**
+- **Fast-forward and rewind from a Bluetooth remote or the system media notification now use your Seek step**
+- **A frozen live channel moves to the other player about twice as fast**
+- **The offline warning now appears when the internet is actually unreachable**
+- **Online subtitle searching now filters correctly for seven more languages**
+- **Track menus stop hunting for tracks that will never arrive**
+- **The in-player channel list no longer mislabels itself**
+- **One less timer running while you watch a recording**
+- **Less background work during playback, and less of it on weaker TVs**
+
 ## v4.2.2 — 2026-08-19
 
 ### ✨ New features

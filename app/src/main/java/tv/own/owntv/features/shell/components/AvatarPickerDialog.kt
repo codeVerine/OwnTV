@@ -37,7 +37,7 @@ import tv.own.owntv.ui.components.OwnTVAvatars
 import tv.own.owntv.ui.components.longPressMenuGuard
 import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.trapAllFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 /** Full-screen avatar picker: a grid of the preset cartoon avatars. Picking one applies & closes. */
@@ -45,6 +45,12 @@ import tv.own.owntv.ui.theme.OwnTVTheme
 fun AvatarPickerDialog(
     selectedId: Int,
     onSelect: (Int) -> Unit,
+    // A picture of the user's own, when this profile has one — it takes the place of the drawn tile
+    // wherever the avatar appears. Blank means none, and the two callbacks below are absent when the
+    // host has nowhere to pick a picture from.
+    customPath: String = "",
+    onPickCustom: (() -> Unit)? = null,
+    onClearCustom: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val colors = OwnTVTheme.colors
@@ -101,6 +107,45 @@ fun AvatarPickerDialog(
                 }
             }
             Spacer(Modifier.height(14.dp))
+
+            // A picture of your own, alongside the drawn set. Same two ways in as the background
+            // image — a file on this device, or a photo sent from a phone — so there is one idea to
+            // learn rather than two; the host supplies that chooser.
+            if (onPickCustom != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FocusableSurface(
+                        onClick = onPickCustom,
+                        modifier = Modifier.size(88.dp),
+                        selected = customPath.isNotBlank(),
+                        shape = RoundedCornerShape(22.dp),
+                        focusedScale = 1.03f,
+                        focusedContainerColor = colors.surfaceContainerHighest,
+                        unfocusedContainerColor = colors.surfaceContainer,
+                        selectedContainerColor = colors.primaryContainer,
+                        contentAlignment = Alignment.Center,
+                        surface = GlassSurface.DIALOGS,
+                    ) { _ ->
+                        if (customPath.isNotBlank()) {
+                            OwnTVAvatar(avatarId = selectedId, imagePath = customPath, modifier = Modifier.size(64.dp))
+                        } else {
+                            ProfileIcon(color = colors.onSurfaceVariant, modifier = Modifier.size(40.dp))
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.profiles_avatar_own_picture),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                    if (customPath.isNotBlank() && onClearCustom != null) {
+                        tv.own.owntv.ui.components.OwnTVButton(
+                            label = stringResource(R.string.common_clear),
+                            onClick = onClearCustom,
+                            style = tv.own.owntv.ui.components.OwnTVButtonStyle.SECONDARY,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
 
             val ids = (0 until OwnTVAvatars.COUNT).toList()
             ids.chunked(4).forEach { rowIds ->

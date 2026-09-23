@@ -33,9 +33,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import tv.own.owntv.features.home.HeroKind
-import tv.own.owntv.features.home.HomeLiveRowMode
-import tv.own.owntv.features.home.HomeRow
+import tv.own.owntv.core.model.HeroKind
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
+import tv.own.owntv.core.model.HomeTrendingStyle
+import tv.own.owntv.core.trending.TrendingAvailability
 import tv.own.owntv.features.home.displayTitle
 import tv.own.owntv.features.home.displayLabel
 import tv.own.owntv.features.home.settingsDescription
@@ -55,6 +57,7 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val config by vm.config.collectAsStateWithLifecycle()
     val trendingAvailability by vm.trendingAvailability.collectAsStateWithLifecycle()
     val devRebuild by vm.devRebuild.collectAsStateWithLifecycle()
+    val heroPreviewEnabled by vm.heroPreviewEnabled.collectAsStateWithLifecycle()
     val androidTvHomeEnabled by settingsVm.androidTvHomeEnabled.collectAsStateWithLifecycle()
     val tvHomeRefresh by settingsVm.tvHomeRefresh.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
@@ -109,6 +112,33 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     modifier = Modifier.focusRequester(firstFocus),
                     onClick = { vm.setRowHidden(HomeRow.TRENDING, trendingEnabled) },
                 )
+            }
+
+            // Only while the row is actually on — with Trending off there is nothing for the choice
+            // to apply to, so it is not shown at all.
+            if (trendingEnabled) {
+                item {
+                    Row2(
+                        icon = OwnTVIcon.MOVIES,
+                        title = stringResource(R.string.home_trending_style),
+                        desc = stringResource(R.string.home_row_trending_description),
+                        chip = stringResource(
+                            when (config.trendingStyle) {
+                                HomeTrendingStyle.HERO -> R.string.home_trending_style_hero
+                                HomeTrendingStyle.POSTERS -> R.string.home_trending_style_posters
+                            },
+                        ),
+                        primaryChip = true,
+                        onClick = {
+                            vm.setTrendingStyle(
+                                when (config.trendingStyle) {
+                                    HomeTrendingStyle.HERO -> HomeTrendingStyle.POSTERS
+                                    HomeTrendingStyle.POSTERS -> HomeTrendingStyle.HERO
+                                },
+                            )
+                        },
+                    )
+                }
             }
 
             item {
@@ -199,6 +229,16 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     onClick = { vm.setHeroInclude(HeroKind.SERIES, !config.heroIncludeSeries) },
                 )
             }
+            item {
+                Row2(
+                    icon = OwnTVIcon.PLAY,
+                    title = stringResource(R.string.settings_hero_preview),
+                    desc = stringResource(R.string.settings_hero_preview_description),
+                    chip = if (heroPreviewEnabled) stringResource(R.string.common_on) else stringResource(R.string.common_off),
+                    primaryChip = heroPreviewEnabled,
+                    onClick = { vm.setHeroPreviewEnabled(!heroPreviewEnabled) },
+                )
+            }
 
             item {
                 Spacer(Modifier.height(6.dp))
@@ -217,7 +257,7 @@ fun HomeSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             if (androidTvHomeEnabled) {
                 item {
                     Row2(
-                        icon = OwnTVIcon.SHARE,
+                        icon = OwnTVIcon.REFRESH,
                         title = stringResource(R.string.settings_refresh_now),
                         desc = stringResource(R.string.settings_refresh_description),
                         chip = when (tvHomeRefresh) {

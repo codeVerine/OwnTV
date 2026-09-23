@@ -1,13 +1,17 @@
 package tv.own.owntv.ui.components
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 
@@ -42,6 +46,77 @@ fun Modifier.trapAllFocusExit(): Modifier =
     imePadding().focusProperties { onExit = { cancelFocusChange() } }
 
 /**
+ * Put focus back on the control that opened a dialog, and hold the list still while it lands.
+ *
+ * Restoring focus after a modal closes is two jobs, not one, and doing them in sequence is what made
+ * the highlight visibly *travel* across the screen on the way back:
+ *
+ *  1. **Focus.** The dialog's own window still owns focus for a frame or two after the flag flips, so
+ *     a single early request is silently dropped. Hence the retry per frame until one is accepted.
+ *  2. **Scroll.** Tearing down a scrim dialog makes Compose re-search focus through the scrollable
+ *     that is suddenly exposed again; it lands on the first row, resets the offset and
+ *     bringIntoView-animates. The previous fix snapped the offset back **once** and then waited 80 ms
+ *     before asking for focus — which works only while the dialog tears down inside that one frame. A
+ *     heavier dialog (Glass Effect, About) tore down *after* the snap, so the re-search scrolled the
+ *     list anyway and the restore then animated all the way back down: the "focus arriving from
+ *     another setting" the user sees. Re-asserting the offset every frame leaves the re-search nothing
+ *     to animate.
+ *
+ * Stops as soon as focus has landed and the offset has been steady for a moment, so it never fights a
+ * user who is already pressing a direction key.
+ */
+suspend fun restoreAfterDialogClose(
+    opener: FocusRequester?,
+    scrollState: ScrollState? = null,
+    scrollOffset: Int = 0,
+) {
+    var landed = opener == null
+    var settled = 0
+    repeat(RESTORE_MAX_FRAMES) {
+        withFrameNanos { }
+        if (scrollState != null && scrollState.value != scrollOffset) {
+            // scrollTo takes the scroll mutex, so it also cancels a bringIntoView animation in flight.
+            runCatching { scrollState.scrollTo(scrollOffset) }
+        }
+        if (!landed) landed = opener != null && runCatching { opener.requestFocus() }.isSuccess
+        if (landed && ++settled > RESTORE_SETTLE_FRAMES) return
+    }
+}
+
+/**
+ * [restoreAfterDialogClose] for a lazy list, where a position is an item index plus an offset into it.
+ *
+ * Same two jobs, one extra consequence: an opener row that is scrolled out of view is not composed at
+ * all, so its [FocusRequester] is unattached and the request is dropped. Re-asserting the position
+ * every frame therefore both holds the list still AND is what puts the row back on screen for the
+ * focus request to land on.
+ */
+suspend fun restoreAfterDialogClose(
+    opener: FocusRequester?,
+    listState: LazyListState,
+    index: Int,
+    offset: Int,
+) {
+    var landed = opener == null
+    var settled = 0
+    repeat(RESTORE_MAX_FRAMES) {
+        withFrameNanos { }
+        if (listState.firstVisibleItemIndex != index || listState.firstVisibleItemScrollOffset != offset) {
+            runCatching { listState.scrollToItem(index, offset) }
+        }
+        if (!landed) landed = opener != null && runCatching { opener.requestFocus() }.isSuccess
+        if (landed && ++settled > RESTORE_SETTLE_FRAMES) return
+    }
+}
+
+/** ~10 frames: long enough for a slow TV to finish tearing the dialog down, short enough not to fight
+ *  a user who has already pressed a key. */
+private const val RESTORE_MAX_FRAMES = 10
+
+/** Frames to keep correcting the offset after focus lands, covering a late teardown. */
+private const val RESTORE_SETTLE_FRAMES = 3
+
+/**
  * Remembers which control opened a dialog, and puts focus back on it once every dialog is closed.
  *
  * Every screen that opens a modal had its own copy of this: a nullable [FocusRequester] state, plus a
@@ -54,23 +129,26 @@ fun Modifier.trapAllFocusExit(): Modifier =
  * onClick = { dialogFocus.value = sortRowFocus; showSortPicker = true }
  * ```
  *
- * The delay is what makes it work: the dialog's own window still owns focus for a frame or two after
- * `anyDialogOpen` flips, and a request issued inside that window is silently dropped. Screens that also
- * restore scroll position, or that arbitrate against a second focus source, keep their own effect —
- * this covers the plain case, which is most of them.
+ * Pass the screen's [scrollState] whenever the rows live in a scrollable column — which is nearly
+ * always — and the offset is held still across the restore too; see [restoreAfterDialogClose]. It is
+ * captured here, when the dialog opens, so no caller has to thread a saved offset of its own.
+ *
+ * Screens that arbitrate against a second focus source (a `focusProperties.onEnter` that reads the
+ * same state) keep their own effect and call [restoreAfterDialogClose] directly.
  */
 @Composable
 fun rememberDialogFocusRestore(
     anyDialogOpen: Boolean,
-    delayMs: Long = 60,
+    scrollState: ScrollState? = null,
 ): MutableState<FocusRequester?> {
     val target = remember { mutableStateOf<FocusRequester?>(null) }
+    val savedScroll = remember { mutableIntStateOf(0) }
     LaunchedEffect(anyDialogOpen) {
-        if (anyDialogOpen) return@LaunchedEffect
-        target.value?.let { opener ->
-            kotlinx.coroutines.delay(delayMs)
-            runCatching { opener.requestFocus() }
+        if (anyDialogOpen) {
+            savedScroll.intValue = scrollState?.value ?: 0
+            return@LaunchedEffect
         }
+        restoreAfterDialogClose(target.value, scrollState, savedScroll.intValue)
         target.value = null
     }
     return target

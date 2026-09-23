@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -57,8 +59,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.database.entity.SourceEntity
+import tv.own.owntv.core.setup.SourceImporter
 import tv.own.owntv.core.sync.importProgressDisplay
+import tv.own.owntv.core.theme.GlassSurface
+import tv.own.owntv.core.theme.UiFontScale
+import tv.own.owntv.core.theme.UiZoom
 import tv.own.owntv.features.profiles.ProfileEditorDialog
+import tv.own.owntv.features.settings.SectionPickerDialog
 import tv.own.owntv.features.settings.FirstRunLanguageSelector
 import tv.own.owntv.ui.components.BrandLockup
 import tv.own.owntv.ui.components.BrowseMode
@@ -70,7 +77,11 @@ import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.features.settings.EpgSyncDialog
 import tv.own.owntv.features.settings.RemoteBackupRestoreScreen
+import tv.own.owntv.features.settings.SetupLocalSyncScreen
 import tv.own.owntv.ui.components.StorageBrowser
+import tv.own.owntv.ui.components.dialogPanel
+import tv.own.owntv.ui.components.modalScrim
+import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.detailText
 import tv.own.owntv.ui.components.primaryText
 import tv.own.owntv.ui.components.remainderText
@@ -78,7 +89,7 @@ import tv.own.owntv.ui.components.summaryText
 import tv.own.owntv.ui.components.warningText
 import tv.own.owntv.ui.theme.OwnTVTheme
 
-private enum class Step { WELCOME, DISCLAIMER, SETUP_CHOICE, CREATE_PROFILE, ADD_CONTENT, ADD_SOURCE_CHOOSER, ADD_SOURCE_REMOTE, ADD_SOURCE, IMPORTING, EXISTING, IMPORT_BACKUP_CHOOSER, IMPORT_BACKUP_REMOTE, IMPORT_BACKUP }
+private enum class Step { WELCOME, DISPLAY_SIZE, DISCLAIMER, SETUP_CHOICE, SYNC_DEVICE, CREATE_PROFILE, ADD_CONTENT, ADD_SOURCE_CHOOSER, ADD_SOURCE_REMOTE, ADD_SOURCE, IMPORTING, EXISTING, IMPORT_BACKUP_CHOOSER, IMPORT_BACKUP_REMOTE, IMPORT_BACKUP }
 
 /**
  * Onboarding for one profile. [firstRun] shows language/welcome/disclaimer; otherwise it starts at profile
@@ -101,20 +112,40 @@ fun Onboarding(firstRun: Boolean, onDone: (Long?) -> Unit, onCancel: () -> Unit,
     var importOrigin by remember { mutableStateOf(Step.ADD_SOURCE) }
     // Where Back from the backup-restore picker returns to (first-run choice vs. add-content step).
     var backupOrigin by remember { mutableStateOf(Step.ADD_CONTENT) }
+    // The chosen backup file and what the user wants out of it. A file with no choice yet is what
+    // raises the section dialog below; picking a file no longer starts the restore by itself.
+    // Settings → Backup & Restore has always asked which sections to apply — the wizard took the
+    // whole file, so "playlists but not that device's settings" could not be said here.
+    var restoreFile by remember { mutableStateOf<java.io.File?>(null) }
+    var restoreSections by remember { mutableStateOf<Set<tv.own.owntv.core.backup.BackupManager.Section>?>(null) }
 
     // Refresh the "existing playlists" availability whenever we land on the add-content step.
     LaunchedEffect(step) { if (step == Step.ADD_CONTENT) existing = runCatching { vm.availableExistingSources() }.getOrDefault(emptyList()) }
 
     Box(modifier = modifier.fillMaxSize().background(OwnTVTheme.colors.background)) {
         when (step) {
-            Step.WELCOME -> WelcomeScreen(onNext = { step = Step.DISCLAIMER })
-            Step.DISCLAIMER -> DisclaimerScreen(onAgree = { step = Step.SETUP_CHOICE }, onBack = { step = Step.WELCOME })
+            Step.WELCOME -> WelcomeScreen(onNext = { step = Step.DISPLAY_SIZE })
+            // Before the disclaimer, which is the first screen with a paragraph of real text on it:
+            // if the interface is too small to read, that is the screen it first hurts on (#179).
+            Step.DISPLAY_SIZE -> DisplaySizeScreen(
+                onNext = { step = Step.DISCLAIMER },
+                onBack = { step = Step.WELCOME },
+            )
+            Step.DISCLAIMER -> DisclaimerScreen(onAgree = { step = Step.SETUP_CHOICE }, onBack = { step = Step.DISPLAY_SIZE })
             // First decision: start fresh or bring everything back from a backup (profiles included —
             // no point creating a profile first that the restore would replace).
             Step.SETUP_CHOICE -> SetupChoiceScreen(
                 onCreate = { step = Step.CREATE_PROFILE },
                 onRestore = { backupOrigin = Step.SETUP_CHOICE; step = Step.IMPORT_BACKUP_CHOOSER },
+                onSyncDevice = { step = Step.SYNC_DEVICE },
                 onBack = { step = Step.DISCLAIMER },
+            )
+            // A sync brings whole profiles with it, exactly as a restored backup does, so it finishes
+            // the wizard the same way: hand over with no profile chosen and let MainActivity ask for
+            // the PIN of whichever one the user picks.
+            Step.SYNC_DEVICE -> SetupLocalSyncScreen(
+                onRestored = { onDone(null) },
+                onBack = { step = Step.SETUP_CHOICE },
             )
             Step.CREATE_PROFILE -> ProfileEditorDialog(
                 initial = null,
@@ -161,7 +192,6 @@ fun Onboarding(firstRun: Boolean, onDone: (Long?) -> Unit, onCancel: () -> Unit,
                 remotePayload = vm.remotePayload,
                 onRemotePayloadConsumed = { vm.consumeRemotePayload() },
                 onBack = { step = Step.ADD_SOURCE_CHOOSER },
-                initial = vm.lastFailedSource, // pre-fill on retry after failed import
                 showDefaultToggle = false, // first playlist in setup: nothing to be "default" over yet
             )
             Step.IMPORTING -> ImportProgressScreen(
@@ -187,16 +217,43 @@ fun Onboarding(firstRun: Boolean, onDone: (Long?) -> Unit, onCancel: () -> Unit,
                 backups = vm.remoteBackups,
                 onStart = { port -> vm.startRemoteRestore(port) },
                 onStop = { vm.stopRemoteRestore() },
-                // An uploaded file starts the restore; the state-driven IMPORT_BACKUP screen shows
-                // progress, the password prompt, or the result from here on.
-                onBackupReceived = { file -> vm.importBackup(file, onDone); step = Step.IMPORT_BACKUP },
+                // An uploaded file asks what to take out of it first; the state-driven IMPORT_BACKUP
+                // screen shows progress, the password prompt, or the result from here on.
+                onBackupReceived = { file ->
+                    restoreSections = null
+                    restoreFile = file
+                    step = Step.IMPORT_BACKUP
+                },
                 onBack = { vm.stopRemoteRestore(); step = Step.IMPORT_BACKUP_CHOOSER },
             )
             Step.IMPORT_BACKUP -> ImportBackupScreen(
                 state = importState,
-                onPick = { file -> vm.importBackup(file, onDone) }, // restore activates a profile itself
-                onPassword = { file, pass -> vm.restoreWithPassword(file, pass, onDone) },
-                onBack = { vm.reset(); step = backupOrigin },
+                onPick = { file -> restoreSections = null; restoreFile = file },
+                // The same choice, carried across the password question: a sealed file is chosen
+                // from before it can be opened, so the answer has to outlive the prompt.
+                onPassword = { file, pass ->
+                    vm.restoreWithPassword(file, pass, onDone, restoreSections ?: allRestoreSections)
+                },
+                onBack = { vm.reset(); restoreFile = null; restoreSections = null; step = backupOrigin },
+            )
+        }
+        // A file is chosen and nothing has been asked of it yet — so ask, over whatever is behind.
+        restoreFile?.takeIf { restoreSections == null }?.let { file ->
+            SectionPickerDialog(
+                title = stringResource(R.string.settings_backup_what_restore),
+                // Every section, not only the ones the file holds: Settings can narrow the list
+                // because it has already opened the container, and this has not — a sealed file says
+                // nothing until its password arrives, and asking for that before the user has said
+                // what they want would be the wrong order. Ticking a section the file lacks restores
+                // nothing for it.
+                sections = tv.own.owntv.core.backup.BackupManager.Section.entries,
+                initial = allRestoreSections,
+                confirmLabel = stringResource(R.string.settings_backup_restore_action),
+                onConfirm = { chosen ->
+                    restoreSections = chosen
+                    vm.importBackup(file, onDone, chosen) // restore activates a profile itself
+                },
+                onDismiss = { vm.reset(); restoreFile = null; step = backupOrigin },
             )
         }
         // Semi-auto EPG: after the first playlist imports, ask → sync (live count) → done (overlays "All set!").
@@ -238,6 +295,224 @@ private fun WelcomeScreen(onNext: () -> Unit) {
     }
 }
 
+/**
+ * First-run interface size (#179): UI zoom and text size, with a sample line to judge them by.
+ *
+ * Rendered at [FULL_SETUP_CONTENT_SCALE] rather than the wizard's usual 0.62 — every other setup
+ * page is deliberately drawn smaller than the app it leads into, so tuning a size against one of
+ * them would be tuning against the wrong thing. Here the sample text is the size it will really be.
+ *
+ * Both steppers write straight through to the stored settings, so the whole screen — buttons,
+ * labels and sample alike — resizes under the user's thumb as they press. That live feedback is the
+ * feature; there is no draft state and no Apply.
+ */
+@Composable
+private fun DisplaySizeScreen(onNext: () -> Unit, onBack: () -> Unit) {
+    val vm: DisplaySizeViewModel = koinViewModel()
+    val zoom by vm.uiZoomPercent.collectAsStateWithLifecycle()
+    val fontSize by vm.fontSizePercent.collectAsStateWithLifecycle()
+    val colors = OwnTVTheme.colors
+    val fr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+    // Zoom below LOW_RAM_WARN can OOM a 2 GB device (#51), so the first step under the line is
+    // gated exactly as the Settings dialog gates it. Accepting once arms the rest of this visit;
+    // arriving already below the line (a restored backup) must not nag.
+    var lowZoomAccepted by remember { mutableStateOf(zoom < UiZoom.LOW_RAM_WARN) }
+    var pendingLowZoom by remember { mutableStateOf<Int?>(null) }
+    BackHandler { onBack() }
+    Box(Modifier.fillMaxSize()) {
+    MainSetupPage(contentScale = FULL_SETUP_CONTENT_SCALE) {
+        Text(
+            stringResource(R.string.setup_display_size_title),
+            style = MaterialTheme.typography.headlineLarge,
+            color = colors.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            stringResource(R.string.setup_display_size_description),
+            style = MaterialTheme.typography.bodyLarge,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 560.dp),
+        )
+        Spacer(Modifier.height(22.dp))
+        // Zoom first: it scales everything including the font row below it, so it is the coarse
+        // control and the one most likely to be enough on its own.
+        DisplaySizeRow(
+            label = stringResource(R.string.settings_ui_zoom),
+            percent = zoom,
+            atMin = zoom <= UiZoom.MIN,
+            atMax = zoom >= UiZoom.MAX,
+            // Focus lands on "+", the opposite of the Settings zoom dialog. That dialog is opened to
+            // escape an over-zoomed screen; this step exists because everything was too small (#179),
+            // so the button the user reaches for first is the one that makes things bigger.
+            increaseFocus = fr,
+            onDecrease = {
+                val next = UiZoom.clamp(zoom - UiZoom.STEP)
+                if (next < UiZoom.LOW_RAM_WARN && !lowZoomAccepted) pendingLowZoom = next else vm.setZoom(next)
+            },
+            onIncrease = { vm.setZoom(zoom + UiZoom.STEP) },
+        )
+        Spacer(Modifier.height(14.dp))
+        DisplaySizeRow(
+            label = stringResource(R.string.settings_font_size),
+            percent = fontSize,
+            atMin = fontSize <= UiFontScale.MIN,
+            atMax = fontSize >= UiFontScale.MAX,
+            increaseFocus = null,
+            onDecrease = { vm.setFontSize(fontSize - UiFontScale.STEP) },
+            onIncrease = { vm.setFontSize(fontSize + UiFontScale.STEP) },
+        )
+        Spacer(Modifier.height(22.dp))
+        SetupAccentRule()
+        Spacer(Modifier.height(18.dp))
+        Text(
+            stringResource(R.string.setup_display_size_preview),
+            style = MaterialTheme.typography.bodyLarge,
+            color = colors.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 620.dp),
+        )
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OwnTVButton(
+                stringResource(R.string.common_back),
+                onClick = onBack,
+                modifier = Modifier.width(140.dp),
+                style = OwnTVButtonStyle.SECONDARY,
+            )
+            OwnTVButton(
+                stringResource(R.string.settings_reset),
+                onClick = { vm.reset() },
+                modifier = Modifier.width(150.dp),
+                style = OwnTVButtonStyle.SECONDARY,
+            )
+            OwnTVButton(
+                stringResource(R.string.setup_continue),
+                onClick = onNext,
+                modifier = Modifier.width(200.dp),
+            )
+        }
+    }
+
+    // Accept-the-risk gate for zoom below LOW_RAM_WARN (#51), the same prompt Settings shows. One
+    // button, focus locked in every D-pad direction — OK accepts and applies the pending step, Back
+    // cancels and leaves the zoom where it was.
+    pendingLowZoom?.let { target ->
+        val acceptFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { runCatching { acceptFocus.requestFocus() } }
+        // Composed after the screen's own BackHandler, so it wins while the warning is up and Back
+        // dismisses the warning instead of leaving the step.
+        BackHandler {
+            pendingLowZoom = null
+            runCatching { fr.requestFocus() }
+        }
+        Box(
+            modifier = Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier.dialogPanel(width = 460.dp, padding = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    stringResource(R.string.settings_low_zoom_warning_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = colors.onSurface,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(R.string.settings_low_zoom_warning, UiZoom.LOW_RAM_WARN, UiZoom.LOW_RAM_WARN),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(20.dp))
+                OwnTVButton(
+                    stringResource(R.string.settings_low_zoom_accept),
+                    onClick = {
+                        lowZoomAccepted = true
+                        pendingLowZoom = null
+                        vm.setZoom(target)
+                        runCatching { fr.requestFocus() }
+                    },
+                    modifier = Modifier
+                        .focusRequester(acceptFocus)
+                        .focusProperties {
+                            up = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                            start = FocusRequester.Cancel
+                            end = FocusRequester.Cancel
+                        },
+                )
+            }
+        }
+    }
+    }
+}
+
+/**
+ * One labelled "– 100% +" stepper. The buttons stay focusable at the limits (dimmed, never
+ * disabled) for the same reason the Settings zoom dialog does it: a disabled button at the limit
+ * strands D-pad focus, which on a screen about escaping an unreadable size is the worst outcome.
+ */
+@Composable
+private fun DisplaySizeRow(
+    label: String,
+    percent: Int,
+    atMin: Boolean,
+    atMax: Boolean,
+    increaseFocus: FocusRequester?,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    val colors = OwnTVTheme.colors
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            SetupStepButton(stringResource(R.string.settings_decrease), dimmed = atMin, onClick = onDecrease)
+            Text(
+                stringResource(R.string.common_percent, percent),
+                style = MaterialTheme.typography.headlineMedium,
+                color = colors.primary,
+                modifier = Modifier.width(130.dp),
+                textAlign = TextAlign.Center,
+            )
+            SetupStepButton(
+                stringResource(R.string.settings_increase),
+                dimmed = atMax,
+                modifier = increaseFocus?.let { Modifier.focusRequester(it) } ?: Modifier,
+                onClick = onIncrease,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetupStepButton(
+    label: String,
+    dimmed: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val colors = OwnTVTheme.colors
+    FocusableSurface(
+        onClick = onClick,
+        modifier = modifier.size(58.dp),
+        shape = RoundedCornerShape(18.dp),
+        contentAlignment = Alignment.Center,
+        surface = GlassSurface.CARDS,
+    ) { _ ->
+        Text(
+            label,
+            style = MaterialTheme.typography.headlineMedium,
+            color = if (dimmed) colors.outline else colors.onSurface,
+        )
+    }
+}
+
 @Composable
 private fun DisclaimerScreen(onAgree: () -> Unit, onBack: () -> Unit) {
     val colors = OwnTVTheme.colors
@@ -275,7 +550,7 @@ private fun DisclaimerScreen(onAgree: () -> Unit, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SetupChoiceScreen(onCreate: () -> Unit, onRestore: () -> Unit, onBack: () -> Unit) {
+private fun SetupChoiceScreen(onCreate: () -> Unit, onRestore: () -> Unit, onSyncDevice: () -> Unit, onBack: () -> Unit) {
     val colors = OwnTVTheme.colors
     val fr = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
@@ -298,6 +573,7 @@ private fun SetupChoiceScreen(onCreate: () -> Unit, onRestore: () -> Unit, onBac
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             ChoiceCard(icon = OwnTVIcon.PERSON, title = stringResource(R.string.setup_new_profile), desc = stringResource(R.string.setup_create_profile_add_sources), modifier = Modifier.focusRequester(fr), onClick = onCreate)
             ChoiceCard(icon = OwnTVIcon.DOWNLOADS, title = stringResource(R.string.setup_restore_backup), desc = stringResource(R.string.setup_import_profiles_playlists), onClick = onRestore)
+            ChoiceCard(icon = OwnTVIcon.REFRESH, title = stringResource(R.string.setup_sync_device), desc = stringResource(R.string.setup_sync_device_description), onClick = onSyncDevice)
         }
     }
 }
@@ -351,8 +627,14 @@ private fun SetupAccentRule() {
 
 private const val MAIN_SETUP_CONTENT_SCALE = 0.62f
 
+/** No shrink — for the display-size step, whose whole job is to show sizes truthfully (#179). */
+private const val FULL_SETUP_CONTENT_SCALE = 1f
+
 @Composable
-private fun MainSetupPage(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+private fun MainSetupPage(
+    contentScale: Float = MAIN_SETUP_CONTENT_SCALE,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         SetupAmbientBackdrop()
         Box(
@@ -362,8 +644,8 @@ private fun MainSetupPage(content: @Composable androidx.compose.foundation.layou
             Column(
                 modifier = Modifier
                     .graphicsLayer {
-                        scaleX = MAIN_SETUP_CONTENT_SCALE
-                        scaleY = MAIN_SETUP_CONTENT_SCALE
+                        scaleX = contentScale
+                        scaleY = contentScale
                     }
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -458,17 +740,17 @@ private fun ExistingSourcesScreen(sources: List<SourceEntity>, onAdd: (Set<Long>
 
 @Composable
 private fun ImportBackupScreen(
-    state: SetupViewModel.ImportState,
+    state: SourceImporter.ImportState,
     onPick: (java.io.File) -> Unit,
     onPassword: (java.io.File, String?) -> Unit,
     onBack: () -> Unit,
 ) {
     when (state) {
-        SetupViewModel.ImportState.Running -> Centered {
+        SourceImporter.ImportState.Running -> Centered {
             OwnTVSpinner(sizeDp = 56); Spacer(Modifier.height(16.dp))
             Text(stringResource(R.string.setup_restoring), style = MaterialTheme.typography.titleMedium, color = OwnTVTheme.colors.onSurface)
         }
-        is SetupViewModel.ImportState.NeedPassword -> Centered {
+        is SourceImporter.ImportState.NeedPassword -> Centered {
             var password by remember { mutableStateOf("") }
             val firstFocus = remember { FocusRequester() }
             LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
@@ -506,7 +788,7 @@ private fun ImportBackupScreen(
                 OwnTVButton(stringResource(R.string.setup_restore), onClick = { onPassword(state.file, password) }, enabled = password.isNotBlank())
             }
         }
-        is SetupViewModel.ImportState.Failed -> Centered {
+        is SourceImporter.ImportState.Failed -> Centered {
             Text(stringResource(R.string.setup_restore_failed), style = MaterialTheme.typography.headlineLarge, color = OwnTVTheme.colors.onSurface)
             Spacer(Modifier.height(8.dp))
             Text(state.failure.displayText(), style = MaterialTheme.typography.bodyMedium, color = OwnTVTheme.colors.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp))
@@ -523,6 +805,10 @@ private fun ImportBackupScreen(
         )
     }
 }
+
+/** Every section, the wizard's starting point for a restore. */
+private val allRestoreSections: Set<tv.own.owntv.core.backup.BackupManager.Section>
+    get() = tv.own.owntv.core.backup.BackupManager.Section.entries.toSet()
 
 /** Restore chooser: send the backup from another device (LAN companion server) or pick a local file. */
 @Composable
@@ -574,7 +860,7 @@ private fun ChoiceCard(icon: OwnTVIcon, title: String, desc: String, modifier: M
 
 @Composable
 private fun ImportProgressScreen(
-    state: SetupViewModel.ImportState,
+    state: SourceImporter.ImportState,
     progress: tv.own.owntv.core.sync.ImportStage?,
     onContinue: () -> Unit,
     onRetry: () -> Unit,
@@ -586,13 +872,13 @@ private fun ImportProgressScreen(
     val bgFr = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { bgFr.requestFocus() } }
     LaunchedEffect(state) {
-        if (state is SetupViewModel.ImportState.Success || state is SetupViewModel.ImportState.Failed) runCatching { fr.requestFocus() }
+        if (state is SourceImporter.ImportState.Success || state is SourceImporter.ImportState.Failed) runCatching { fr.requestFocus() }
     }
-    BackHandler(enabled = state is SetupViewModel.ImportState.Running || state is SetupViewModel.ImportState.Idle) { onCancel() }
+    BackHandler(enabled = state is SourceImporter.ImportState.Running || state is SourceImporter.ImportState.Idle) { onCancel() }
     Centered {
         when (state) {
-            SetupViewModel.ImportState.Running, SetupViewModel.ImportState.Idle,
-            is SetupViewModel.ImportState.NeedPassword -> {
+            SourceImporter.ImportState.Running, SourceImporter.ImportState.Idle,
+            is SourceImporter.ImportState.NeedPassword -> {
                 val display = progress?.importProgressDisplay()
                 OwnTVSpinner(sizeDp = 56)
                 Spacer(Modifier.height(20.dp))
@@ -623,7 +909,7 @@ private fun ImportProgressScreen(
                     color = colors.onSurfaceVariant,
                 )
             }
-            is SetupViewModel.ImportState.Success -> {
+            is SourceImporter.ImportState.Success -> {
                 Text(stringResource(R.string.setup_all_set), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
                 Spacer(Modifier.height(10.dp))
                 state.counts?.let { counts ->
@@ -650,7 +936,7 @@ private fun ImportProgressScreen(
                 Spacer(Modifier.height(28.dp))
                 OwnTVButton(stringResource(R.string.setup_continue), onClick = onContinue, icon = OwnTVIcon.PLAY, modifier = Modifier.focusRequester(fr))
             }
-            is SetupViewModel.ImportState.Failed -> {
+            is SourceImporter.ImportState.Failed -> {
                 Text(stringResource(R.string.setup_import_failed), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
                 Spacer(Modifier.height(10.dp))
                 Text(state.failure.displayText(), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp))

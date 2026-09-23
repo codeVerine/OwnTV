@@ -67,6 +67,7 @@ fun EpgSyncDialog(
     onBackground: (() -> Unit)? = null,
 ) {
     if (state is EpgSyncUi.Hidden) return
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(state::class) {
@@ -137,5 +138,6 @@ fun EpgSyncDialog(
                 EpgSyncUi.Hidden -> Unit
             }
         }
+    }
     }
 }

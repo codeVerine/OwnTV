@@ -115,7 +115,7 @@ private fun ProfileTile(profile: ProfileEntity, modifier: Modifier = Modifier, o
             contentAlignment = Alignment.Center,
         ) { _ ->
             Box(contentAlignment = Alignment.TopEnd) {
-                OwnTVAvatar(avatarId = profile.avatarId, modifier = Modifier.size(104.dp))
+                OwnTVAvatar(avatarId = profile.avatarId, imagePath = profile.avatarPath.orEmpty(), modifier = Modifier.size(104.dp))
                 if (profile.pinHash != null) {
                     Box(Modifier.size(26.dp).clip(CircleShape).background(colors.surfaceContainerHighest), contentAlignment = Alignment.Center) {
                         OwnTVIcon(OwnTVIcon.SETTINGS, tint = colors.onSurface, modifier = Modifier.size(14.dp))

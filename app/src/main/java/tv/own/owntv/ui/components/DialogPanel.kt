@@ -3,6 +3,7 @@ package tv.own.owntv.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,7 +15,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
@@ -40,12 +41,14 @@ fun Modifier.dialogPanel(
     padding: Dp = 24.dp,
     fill: Color? = null,
     scroll: Boolean = true,
+    panelHeight: Dp? = null,
 ): Modifier {
     val shape = RoundedCornerShape(corner)
     val glassy = LocalGlass.current.isGlassy(GlassSurface.DIALOGS)
     val outline = OwnTVTheme.colors.outlineVariant.copy(alpha = 0.72f)
     val base = this
         .width(width)
+        .then(panelHeight?.let { Modifier.height(it) } ?: Modifier)
         .shadow(elevation = if (glassy) 16.dp else 24.dp, shape = shape, clip = false)
         .clip(shape)
         .glass(

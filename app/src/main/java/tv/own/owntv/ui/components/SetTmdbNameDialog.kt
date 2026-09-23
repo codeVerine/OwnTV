@@ -52,6 +52,7 @@ fun SetTmdbNameDialog(
     onClear: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     var title by remember { mutableStateOf(initialTitle) }
     var year by remember { mutableStateOf(initialYear?.toString() ?: "") }
@@ -100,5 +101,6 @@ fun SetTmdbNameDialog(
                 )
             }
         }
+    }
     }
 }

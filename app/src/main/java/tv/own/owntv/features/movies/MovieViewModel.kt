@@ -38,7 +38,10 @@ import tv.own.owntv.core.customize.CustomizationStore
 import tv.own.owntv.core.customize.CustomizeKeys
 import tv.own.owntv.core.customize.SectionCustomizations
 import tv.own.owntv.core.customize.applyCustomizations
-import tv.own.owntv.core.customize.applyCustomizationsWithCustoms
+import tv.own.owntv.core.customize.CategoryMove
+import tv.own.owntv.core.customize.CategoryRailEditor
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.railCategories
 import tv.own.owntv.core.database.dao.CategoryDao
 import tv.own.owntv.core.database.dao.ContentOrderDao
 import tv.own.owntv.core.database.dao.CustomCategoryDao
@@ -60,21 +63,25 @@ import tv.own.owntv.core.model.MediaType
 import tv.own.owntv.core.util.throttleLatest
 import tv.own.owntv.features.customize.MoveTarget
 import tv.own.owntv.features.live.LiveRailItem
-import tv.own.owntv.features.live.LiveKey
-import tv.own.owntv.features.live.parseLiveKey
-import tv.own.owntv.features.live.serialize
 import tv.own.owntv.core.download.DownloadManager
 import tv.own.owntv.core.storage.StorageAccess
+import tv.own.owntv.core.storage.MediaFolders
 import tv.own.owntv.core.repository.activeProfileSources
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.player.OwnTVPlayer
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.core.live.LiveKey
+import tv.own.owntv.core.live.parseLiveKey
+import tv.own.owntv.core.live.serialize
 
 class MovieViewModel(
     private val movieDao: MovieDao,
+    /** Lets the browse screen tell core's drain which category to fill first (core's N1c). */
+    private val catalogPriority: tv.own.owntv.core.sync.CatalogPriority,
     private val categoryDao: CategoryDao,
     private val favoriteDao: FavoriteDao,
     private val historyDao: HistoryDao,
+    private val userDataWriter: tv.own.owntv.core.backup.UserDataWriter,
     private val progressDao: ProgressDao,
     private val profileDao: ProfileDao,
     private val sourceDao: SourceDao,
@@ -95,13 +102,30 @@ class MovieViewModel(
     private val _moveState = MutableStateFlow<MovieMoveState?>(null)
     val moveState: StateFlow<MovieMoveState?> = _moveState.asStateFlow()
 
-    private data class Ctx(val profileId: Long, val sourceIds: List<Long>)
+    /** Hide and reorder a category from the rail — the same editor Settings → Customize writes through. */
+    private val categoryEditor = CategoryRailEditor(customize, categoryDao, profileDao)
+
+    private val _categoryMoveState = MutableStateFlow<CategoryMove?>(null)
+    val categoryMoveState: StateFlow<CategoryMove?> = _categoryMoveState.asStateFlow()
+
+    private data class Ctx(
+        val profileId: Long,
+        val sourceIds: List<Long>,
+        val sourceNames: Map<Long, String>,
+    )
     // Observe the active profile's sources reactively so adding/removing a playlist refreshes Movies
     // immediately (was read once at startup, so a new playlist showed nothing until app restart).
     private val ctx: StateFlow<Ctx> = activeProfileSources(settings, sourceDao)
-        .map { aps -> Ctx(aps.profileId, aps.movieSourceIds) }
+        .map { aps ->
+            val ids = aps.movieSourceIds
+            Ctx(aps.profileId, ids, aps.sources.filter { it.id in ids }.associate { it.id to it.name })
+        }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList(), emptyMap()))
+
+    val providerNames: StateFlow<Map<Long, String>> = ctx
+        .map { c -> c.sourceNames.takeIf { it.size > 1 } ?: emptyMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     private val folderContextKeys: StateFlow<Map<Long, String>> = ctx
         .flatMapLatest { c ->
@@ -175,8 +199,8 @@ class MovieViewModel(
             customCategoryDao.appendItem(pid, MediaType.MOVIE, targetId, itemId)
             if (!keepInOrigin) {
                 when {
-                    originKey == ContentOrderEntity.FAV_CONTEXT -> favoriteDao.remove(pid, MediaType.MOVIE, itemId)
-                    CustomizeKeys.isCustom(originKey) -> customCategoryDao.deleteItem(pid, MediaType.MOVIE, originKey, itemId)
+                    originKey == ContentOrderEntity.FAV_CONTEXT -> userDataWriter.removeFavorite(pid, MediaType.MOVIE, itemId)
+                    CustomizeKeys.isCustom(originKey) -> userDataWriter.removeCustomCategoryMember(pid, MediaType.MOVIE, originKey, itemId)
                     else -> customize.setItemMovedFromOrigin(pid, MediaType.MOVIE, itemKey, originKey, moved = true)
                 }
             }
@@ -279,6 +303,20 @@ class MovieViewModel(
      *  different card during the debounce window. [cache] is null while resolving or on no match. */
     data class MovieMeta(val movieId: Long, val cache: tv.own.owntv.core.database.entity.MetadataCacheEntity?)
 
+    /**
+     * Poster fallback for grid/list tiles the provider gave no artwork for. Those show a placeholder
+     * even once the detail pane has resolved and cached a TMDB poster for the same title — most
+     * visibly under Date added, which puts a whole freshly-imported batch at the front.
+     *
+     * The screen reports the on-screen posterless items and gets back whatever the cache already
+     * holds. Cache-only by design: a DB read, never a TMDB call, so scrolling costs no quota.
+     */
+    private val _posterProbe = MutableStateFlow<List<MovieEntity>>(emptyList())
+    private val _cachedPosters = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val cachedPosters: StateFlow<Map<Long, String>> = _cachedPosters.asStateFlow()
+
+    fun onPosterlessVisible(movies: List<MovieEntity>) { _posterProbe.value = movies }
+
     /** Source mode (plan §4.1) — the detail pane uses it to flip provider/TMDB field precedence. */
     val metadataMode: StateFlow<tv.own.owntv.core.metadata.MetadataMode> = settings.metadataMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.metadata.MetadataMode.PROVIDER_PLUS_TMDB)
@@ -318,6 +356,22 @@ class MovieViewModel(
                 wasPlaying = playing
             }
         }
+        // Resolve the poster fallback for what is on screen. Debounced so a fast scroll issues one
+        // query when it settles; keyed on the refresh tick too, so a "Refetch TMDB details" that
+        // dropped an entry re-reads it instead of leaving the tile blank.
+        viewModelScope.launch {
+            combine(_posterProbe, _metaRefreshTick) { probe, _ -> probe }
+                .debounce(250)
+                .collectLatest { probe ->
+                    val wanted = probe.filterNot { it.id in _cachedPosters.value }
+                    if (wanted.isEmpty()) return@collectLatest
+                    val found = runCatching { metadata.cachedMoviePosters(wanted) }.getOrDefault(emptyMap())
+                    if (found.isEmpty()) return@collectLatest
+                    // Bounded: a session spent browsing a 170k catalog would otherwise grow this forever.
+                    val base = if (_cachedPosters.value.size > 500) emptyMap() else _cachedPosters.value
+                    _cachedPosters.value = base + found
+                }
+        }
     }
 
     val railItems: StateFlow<List<LiveRailItem>> = ctx
@@ -332,14 +386,21 @@ class MovieViewModel(
                 // A–Z also sorts the category folders (custom categories included); manually moved
                 // categories stay pinned first. Custom categories ride the SAME customization keys,
                 // so renames/hides/reorders apply to them with no extra code (#87).
-                val kids = profile?.isKids == true
-                val visibleCats = if (kids) cats.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cats
-                val visibleCustoms = if (kids) cust.customCategories.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cust.customCategories
-                val folders = visibleCats.applyCustomizationsWithCustoms(cust, visibleCustoms, alphaRest = sort == SettingsRepository.SortMode.ALPHA)
+                val folders = cats.railCategories(
+                    cust,
+                    kids = profile?.isKids == true,
+                    alphaRest = sort == SettingsRepository.SortMode.ALPHA,
+                )
+                val multiSourceNames = c.sourceNames.takeIf { it.size > 1 }.orEmpty()
+                val categoriesById = cats.associateBy { it.id }
                 defaultRail + folders.map { e ->
                     LiveRailItem(
                         key = e.categoryId?.let { LiveKey.Folder(it) } ?: LiveKey.Custom(e.customId!!),
                         title = e.displayName,
+                        providerName = e.categoryId
+                            ?.let(categoriesById::get)
+                            ?.sourceId
+                            ?.let(multiSourceNames::get),
                     )
                 }
             }
@@ -401,7 +462,49 @@ class MovieViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    fun select(key: LiveKey) { _selected.value = key }
+    /**
+     * Set while this view model is serving More -> Favourites or More -> History rather than the
+     * browse section. Those screens are one folder each: the selection is theirs to fix, and it must
+     * not be persisted as the remembered category.
+     */
+    private var lockedKey: LiveKey? = null
+
+    /** What the browse section was showing before the pin, so [unlock] can put it back. */
+    private var previousKey: LiveKey? = null
+
+    fun lock(key: LiveKey) {
+        if (lockedKey == null) previousKey = _selected.value
+        lockedKey = key
+        _selected.value = key
+    }
+
+    /**
+     * Release the pin and put the browse section back where it was.
+     *
+     * **This is not optional bookkeeping.** On the television this view model is a single instance
+     * shared between the browse section and the More screens, so a pin that outlived the screen that
+     * took it froze the section's category rail — focusable, but every click a no-op. The screen that
+     * locks therefore unlocks on dispose.
+     */
+    fun unlock() {
+        val previous = previousKey ?: return
+        lockedKey = null
+        previousKey = null
+        _selected.value = previous
+    }
+
+    fun select(key: LiveKey) {
+        if (lockedKey != null) return
+        _selected.value = key
+        // Core's lazy-catalogue drain fills categories in the provider's order; tell it the user is
+        // here so this one is served next (core's N1c). A no-op for every playlist that was not
+        // lazily added, and for a category that is already complete.
+        if (key is LiveKey.Folder) {
+            viewModelScope.launch { runCatching { catalogPriority.requestFirst(key.id) } }
+        } else {
+            catalogPriority.clear()
+        }
+    }
     fun setSearchQuery(query: String) { _search.value = query }
     fun onMovieFocused(movie: MovieEntity) { _selectedMovie.value = movie }
 
@@ -412,6 +515,7 @@ class MovieViewModel(
     fun refetchMovieMeta(movie: MovieEntity) {
         viewModelScope.launch {
             runCatching { metadata.clearMovie(movie) }
+            _cachedPosters.value = _cachedPosters.value - movie.id
             _metaRefreshTick.value++
         }
     }
@@ -543,6 +647,7 @@ class MovieViewModel(
                 userAgent = sourceUa,
                 httpHeaders = movie.httpHeaders,
                 drmConfig = movie.drmConfig,
+                manifestType = movie.manifestType,
                 // P6 — engine pins key on this, not on playUrl (a Stalker playUrl is minted per play).
                 contentKey = pinKey,
                 // F12 — a Stalker create_link URL dies before a long film ends; give the player a way to
@@ -604,7 +709,7 @@ class MovieViewModel(
                 title = movie.name,
                 posterUrl = movie.posterUrl,
                 streamUrl = movie.streamUrl,
-                relativeDir = "Movies",
+                relativeDir = MediaFolders.MOVIES,
                 fileName = "${StorageAccess.sanitize(movie.name)}.${movie.containerExt ?: StorageAccess.extOf(movie.streamUrl)}",
             )
         }
@@ -621,10 +726,52 @@ class MovieViewModel(
     fun toggleFavorite(movie: MovieEntity) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            if (favoriteIds.value.contains(movie.id)) favoriteDao.remove(pid, MediaType.MOVIE, movie.id)
+            if (favoriteIds.value.contains(movie.id)) userDataWriter.removeFavorite(pid, MediaType.MOVIE, movie.id)
             else favoriteDao.add(FavoriteEntity(profileId = pid, mediaType = MediaType.MOVIE, itemId = movie.id))
             refreshList() // the Favorites category uses a manual PagingSource — force a rebuild
         }
+    }
+
+    /** Hide a category by its rail key (undo via Settings → Customize). */
+    fun hideCategory(key: LiveKey) {
+        viewModelScope.launch {
+            categoryEditor.hide(currentProfileId() ?: return@launch, MediaType.MOVIE, key)
+        }
+    }
+
+    fun enterCategoryMoveMode(key: LiveKey) {
+        if (key !is LiveKey.Folder && key !is LiveKey.Custom) return
+        viewModelScope.launch {
+            val c = ctx.first { it.profileId >= 0 }
+            _categoryMoveState.value = categoryEditor.beginMove(
+                profileId = c.profileId,
+                sourceIds = c.sourceIds,
+                type = MediaType.MOVIE,
+                alphaRest = sortMode.value == SettingsRepository.SortMode.ALPHA,
+                key = key,
+            )
+        }
+    }
+
+    fun moveCategoryUp() {
+        _categoryMoveState.value = _categoryMoveState.value?.moved(MoveKind.UP) ?: return
+    }
+
+    fun moveCategoryDown() {
+        _categoryMoveState.value = _categoryMoveState.value?.moved(MoveKind.DOWN) ?: return
+    }
+
+    fun commitCategoryMove() {
+        val s = _categoryMoveState.value ?: return
+        _categoryMoveState.value = null
+        viewModelScope.launch {
+            val pid = currentProfileId() ?: return@launch
+            customize.setCategoryOrder(pid, MediaType.MOVIE, s.keys)
+        }
+    }
+
+    fun cancelCategoryMove() {
+        _categoryMoveState.value = null
     }
 
     /** ≥95% of duration watched = completed (mirrors SeriesViewModel.isEpisodeCompleted). */
@@ -646,7 +793,7 @@ class MovieViewModel(
     fun markMovieUnwatched(movie: MovieEntity) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            progressDao.clear(pid, MediaType.MOVIE, movie.id)
+            userDataWriter.clearProgress(pid, MediaType.MOVIE, movie.id)
         }
     }
 
@@ -775,8 +922,8 @@ class MovieViewModel(
     fun removeFromHistory(movieId: Long) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            historyDao.remove(pid, MediaType.MOVIE, movieId)
-            progressDao.clear(pid, MediaType.MOVIE, movieId)
+            userDataWriter.removeHistory(pid, MediaType.MOVIE, movieId)
+            userDataWriter.clearProgress(pid, MediaType.MOVIE, movieId)
             refreshList() // the History category uses a manual PagingSource — force a rebuild
         }
     }
@@ -842,7 +989,7 @@ class MovieViewModel(
         // Persist on change, debounced — the rail fires select() on focus as you scroll it.
         viewModelScope.launch {
             _selected.drop(1).debounce(800).distinctUntilChanged()
-                .collect { settings.setLastMoviesCategory(it.serialize()) }
+                .collect { if (lockedKey == null) settings.setLastMoviesCategory(it.serialize()) }
         }
         // Restore once at startup, and only while still on the default (never yank a user who already
         // navigated). A saved folder is honoured only once it exists in this profile's rail.

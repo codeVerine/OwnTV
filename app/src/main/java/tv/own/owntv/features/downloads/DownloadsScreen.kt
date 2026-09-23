@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
@@ -44,14 +45,32 @@ import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.database.entity.DownloadEntity
 import tv.own.owntv.core.model.DownloadStatus
+import tv.own.owntv.core.storage.MediaFolders
+import tv.own.owntv.core.storage.StorageAccess
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.ui.components.BrowseMode
 import tv.own.owntv.ui.components.ContentPanelFill
+import tv.own.owntv.ui.components.StorageBrowser
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapVerticalFocusExit
 import tv.own.owntv.ui.theme.Dimens
 import tv.own.owntv.ui.theme.OwnTVTheme
+import tv.own.owntv.core.model.MediaType
+import tv.own.owntv.features.recordings.RecordingsScreen
+
+/**
+ * The three things this screen keeps, in the order Favourites and History use.
+ *
+ * Live TV holds recordings rather than downloads. They are the same thing from the user's side —
+ * a file of theirs, on their disk, in the same folder — so they belong behind one door.
+ */
+private enum class DownloadsTab(val labelRes: Int) {
+    LIVE(R.string.common_nav_live_tv),
+    MOVIES(R.string.common_nav_movies),
+    SERIES(R.string.common_nav_series),
+}
 
 /** Phase 12 — the Downloads section: offline movies & episodes with progress and playback. */
 @Composable
@@ -69,11 +88,46 @@ fun DownloadsScreen(
     // when playback is handed to an external app.
     val externalPlayerOn by vm.externalPlayerOn.collectAsStateWithLifecycle()
     val storage by vm.storage.collectAsStateWithLifecycle()
+    val downloadRoot by vm.downloadRoot.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
 
+    // Which type this screen is showing. Live TV is first and is where a remote lands, because a
+    // recording is the one thing here that can be *running* and wanting attention.
+    var tab by rememberSaveable { mutableStateOf(DownloadsTab.LIVE) }
+    val tabFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+
+    // Which tab holds which kind is core's rule (MediaFolders.folderFor), and the comment that used
+    // to sit here was the bug: it said `mediaType` on a download is only ever MOVIE or SERIES. It is
+    // never SERIES — an episode download is EPISODE — so the Series tab matched nothing and every
+    // episode ever downloaded was invisible here, finished or not.
+    val shown = remember(downloads, tab) {
+        downloads.filter {
+            when (tab) {
+                DownloadsTab.MOVIES -> MediaFolders.folderFor(it.mediaType) == MediaFolders.MOVIES
+                DownloadsTab.SERIES -> MediaFolders.folderFor(it.mediaType) == MediaFolders.SERIES
+                DownloadsTab.LIVE -> false // recordings come from their own screen
+            }
+        }
+    }
+
     // Grouped rows (Active / Waiting / Completed / Failed) with section headers interleaved.
-    val rows = remember(downloads) { buildDownloadRows(downloads) }
+    val rows = remember(shown) { buildDownloadRows(shown) }
     val firstItemId = rows.firstNotNullOfOrNull { (it as? DownloadListRow.Item)?.download?.id }
+
+    var showFolderPicker by remember { mutableStateOf(false) }
+    val gearFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    // Closing the picker puts focus back on the gear, or it falls spatially into the rail. Only
+    // *after* it has been open once: on arrival the pane's own onEnter owns focus, and stealing it
+    // here would land every entry on the gear instead of the first download.
+    var returnToGear by remember { mutableStateOf(false) }
+    LaunchedEffect(showFolderPicker) {
+        if (showFolderPicker) {
+            returnToGear = true
+        } else if (returnToGear) {
+            returnToGear = false
+            runCatching { gearFocus.requestFocus() }
+        }
+    }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val selFocus = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -110,7 +164,7 @@ fun DownloadsScreen(
     // Returning from the player: scroll to and focus the download you just played (index within the
     // grouped rows, so headers don't throw the target off).
     LaunchedEffect(restoreFocus, rows.size) {
-        if (!restoreFocus || downloads.isEmpty()) return@LaunchedEffect
+        if (!restoreFocus || shown.isEmpty()) return@LaunchedEffect
         val idx = lastPlayedId?.let { id -> rows.indexOfFirst { it is DownloadListRow.Item && it.download.id == id } } ?: -1
         if (idx >= 0) {
             runCatching { listState.scrollToItem(idx) }
@@ -120,12 +174,21 @@ fun DownloadsScreen(
         onRestored()
     }
 
+    // Arriving lands on the tab strip, the same as Favourites and History: the first thing a remote
+    // wants here is to choose a type, and from the strip the folder button is one press right.
+    LaunchedEffect(Unit) {
+        if (restoreFocus) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { tabFocus.requestFocus() }
+    }
+
     Column(
         modifier = modifier.fillMaxSize().roundedPanel(fillColor = ContentPanelFill)
-            // Route spatial D-pad entries to the first download row (entry from the sidebar would
-            // otherwise land on whatever row is horizontally aligned). onEnter fires only for
-            // directional entry from outside (internal moves don't re-trigger it).
-            .focusProperties { onEnter = { runCatching { firstFocus.requestFocus() } } }
+            // Route spatial D-pad entries to the tab strip rather than to whatever row happens to be
+            // horizontally aligned. It used to be the first download row, which on the Live TV tab
+            // does not exist at all — so entry landed nowhere and the tabs and the folder button
+            // could not be reached. onEnter fires only for directional entry from outside.
+            .focusProperties { onEnter = { runCatching { tabFocus.requestFocus() } } }
             // Held Up/Down can outrun the lazy list's composition and escape this pane
             // (landing on the top bar) — trap vertical exits; Left/Right/Back leave normally.
             .trapVerticalFocusExit()
@@ -133,17 +196,81 @@ fun DownloadsScreen(
             .onFocusChanged { if (it.hasFocus) onChildFocused() }
             .padding(horizontal = Dimens.ScreenPaddingH, vertical = Dimens.ScreenPaddingV),
     ) {
-        Text(stringResource(R.string.content_downloads_title), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
-        Spacer(Modifier.height(6.dp))
-        Text(stringResource(R.string.content_downloads_description), style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant)
-        Spacer(Modifier.height(18.dp))
+        // Title, the folder everything lands in beside it, and the button that changes it on the far
+        // right. The path sits with the title because it is a fact about the whole screen, not a
+        // control — and reading it should not cost a press.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                stringResource(R.string.content_downloads_title),
+                style = MaterialTheme.typography.headlineMedium,
+                color = colors.onSurface,
+            )
+            downloadRoot.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(bottom = 4.dp),
+                )
+            } ?: Spacer(Modifier.weight(1f))
+            OwnTVButton(
+                label = stringResource(R.string.settings_download_folder),
+                onClick = { showFolderPicker = true },
+                style = OwnTVButtonStyle.SECONDARY,
+                icon = OwnTVIcon.FOLDER,
+                compact = true,
+                modifier = Modifier.focusRequester(gearFocus),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
 
+        // One bar for the whole screen: recordings and downloads share a root folder and therefore
+        // share the free space, so showing it per tab would be the same number drawn three times.
         storage?.let {
             StorageBar(it)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
         }
 
-        if (downloads.isEmpty()) {
+        // Below the bar: the bar describes the disk all three tabs share, so it reads as a heading
+        // for them rather than as something belonging to whichever tab is open.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            DownloadsTab.entries.forEach { entry ->
+                OwnTVButton(
+                    label = stringResource(entry.labelRes),
+                    onClick = { tab = entry },
+                    style = if (entry == tab) OwnTVButtonStyle.PRIMARY else OwnTVButtonStyle.SECONDARY,
+                    selected = entry == tab,
+                    compact = true,
+                    modifier = if (entry == DownloadsTab.LIVE) Modifier.focusRequester(tabFocus) else Modifier,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // A recording is a download of a live channel, so it is this screen's Live TV tab rather
+        // than a separate place to look.
+        if (tab == DownloadsTab.LIVE) {
+            RecordingsScreen(
+                onFullscreen = onFullscreen,
+                onChildFocused = onChildFocused,
+                onBack = {},
+                embedded = true,
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Column
+        }
+
+        if (shown.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.content_downloads_empty), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
             }
@@ -176,6 +303,16 @@ fun DownloadsScreen(
                 }
             }
         }
+    }
+
+    // The volume picker Settings used to open, unchanged — only its door moved.
+    if (showFolderPicker) {
+        StorageBrowser(
+            title = stringResource(R.string.settings_download_folder_title),
+            mode = BrowseMode.FOLDER,
+            onPick = { vm.setDownloadRoot(it.absolutePath); showFolderPicker = false },
+            onDismiss = { showFolderPicker = false },
+        )
     }
 }
 
@@ -261,11 +398,26 @@ private fun DownloadRow(
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(download.title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            folderCrumb(download.filePath, stringResource(R.string.content_downloads_folder_separator))?.let {
+            MediaFolders.crumb(download.filePath, stringResource(R.string.content_downloads_folder_separator))?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(6.dp))
             StatusLine(download)
+            // The whole path, for the same reason a recording row carries one — and this screen shows
+            // both kinds, so a film that said only "Series > … > Season 32" while the recording beside
+            // it named its disk was the odd one out. "Series" says which folder inside the download
+            // root; it does not say WHICH disk, and on a television with an internal drive and a USB
+            // stick that is the only part worth reading. Two lines so a long path is shown, not clipped.
+            download.filePath?.takeIf { it.isNotBlank() }?.let { stored ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    StorageAccess.folderLabel(stored) ?: stored,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Spacer(Modifier.width(12.dp))
         when (download.status) {
@@ -281,14 +433,6 @@ private fun DownloadRow(
         Spacer(Modifier.width(10.dp))
         OwnTVButton(stringResource(R.string.common_delete), onClick = onDelete, style = OwnTVButtonStyle.SECONDARY)
     }
-}
-
-/** Shows the folder path of a download, e.g. "Series › Game of Thrones › Season 6". */
-private fun folderCrumb(filePath: String?, separator: String): String? {
-    val parts = filePath?.substringBeforeLast('/')?.split('/')?.filter { it.isNotBlank() } ?: return null
-    val idx = parts.indexOfLast { it == "Movies" || it == "Series" }
-    val rel = if (idx >= 0) parts.subList(idx, parts.size) else parts.takeLast(3)
-    return rel.joinToString(separator).ifBlank { null }
 }
 
 @Composable
@@ -315,8 +459,21 @@ private fun StatusLine(d: DownloadEntity) {
     }
 }
 
+/**
+ * A download's size, with its unit. `common_size_mb` carries the unit — the same string the
+ * recordings rows on this screen already use — because a bare number is not a size: the completed
+ * row read "206.1 downloaded".
+ */
+@Composable
 private fun sizeMb(bytes: Long, unknown: String): String =
-    if (bytes <= 0) unknown else java.text.NumberFormat.getNumberInstance().apply {
-        minimumFractionDigits = 1
-        maximumFractionDigits = 1
-    }.format(bytes / 1_048_576.0)
+    if (bytes <= 0) {
+        unknown
+    } else {
+        stringResource(
+            R.string.common_size_mb,
+            java.text.NumberFormat.getNumberInstance().apply {
+                minimumFractionDigits = 1
+                maximumFractionDigits = 1
+            }.format(bytes / 1_048_576.0),
+        )
+    }

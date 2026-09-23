@@ -37,7 +37,10 @@ import kotlinx.coroutines.launch
 import tv.own.owntv.core.customize.CustomizationStore
 import tv.own.owntv.core.customize.SectionCustomizations
 import tv.own.owntv.core.customize.applyCustomizations
-import tv.own.owntv.core.customize.applyCustomizationsWithCustoms
+import tv.own.owntv.core.customize.CategoryMove
+import tv.own.owntv.core.customize.CategoryRailEditor
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.railCategories
 import tv.own.owntv.core.customize.CustomizeKeys
 import tv.own.owntv.core.database.dao.CategoryDao
 import tv.own.owntv.core.database.dao.ContentOrderDao
@@ -63,23 +66,27 @@ import tv.own.owntv.core.util.throttleLatest
 import tv.own.owntv.core.download.DownloadManager
 import tv.own.owntv.core.repository.SeriesRepository
 import tv.own.owntv.core.storage.StorageAccess
-import tv.own.owntv.features.live.LiveKey
-import tv.own.owntv.features.live.parseLiveKey
-import tv.own.owntv.features.live.serialize
+import tv.own.owntv.core.storage.MediaFolders
 import tv.own.owntv.features.customize.MoveTarget
 import tv.own.owntv.features.live.LiveRailItem
 import tv.own.owntv.core.repository.activeProfileSources
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.player.MediaMeta
 import tv.own.owntv.player.OwnTVPlayer
 import tv.own.owntv.player.PlaylistItem
 import tv.own.owntv.ui.components.OwnTVIcon
+import tv.own.owntv.core.live.LiveKey
+import tv.own.owntv.core.live.parseLiveKey
+import tv.own.owntv.core.live.serialize
 
 class SeriesViewModel(
     private val seriesDao: SeriesDao,
+    /** Lets the browse screen tell core's drain which category to fill first (core's N1c). */
+    private val catalogPriority: tv.own.owntv.core.sync.CatalogPriority,
     private val categoryDao: CategoryDao,
     private val favoriteDao: FavoriteDao,
     private val historyDao: HistoryDao,
+    private val userDataWriter: tv.own.owntv.core.backup.UserDataWriter,
     private val progressDao: ProgressDao,
     private val profileDao: ProfileDao,
     private val sourceDao: SourceDao,
@@ -102,13 +109,30 @@ class SeriesViewModel(
     private val _moveState = MutableStateFlow<SeriesMoveState?>(null)
     val moveState: StateFlow<SeriesMoveState?> = _moveState.asStateFlow()
 
-    private data class Ctx(val profileId: Long, val sourceIds: List<Long>)
+    /** Hide and reorder a category from the rail — the same editor Settings → Customize writes through. */
+    private val categoryEditor = CategoryRailEditor(customize, categoryDao, profileDao)
+
+    private val _categoryMoveState = MutableStateFlow<CategoryMove?>(null)
+    val categoryMoveState: StateFlow<CategoryMove?> = _categoryMoveState.asStateFlow()
+
+    private data class Ctx(
+        val profileId: Long,
+        val sourceIds: List<Long>,
+        val sourceNames: Map<Long, String>,
+    )
     // Observe the active profile's sources reactively so adding/removing a playlist refreshes Series
     // immediately (was read once at startup, so a new playlist showed nothing until app restart).
     private val ctx: StateFlow<Ctx> = activeProfileSources(settings, sourceDao)
-        .map { aps -> Ctx(aps.profileId, aps.seriesSourceIds) }
+        .map { aps ->
+            val ids = aps.seriesSourceIds
+            Ctx(aps.profileId, ids, aps.sources.filter { it.id in ids }.associate { it.id to it.name })
+        }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Ctx(-1L, emptyList(), emptyMap()))
+
+    val providerNames: StateFlow<Map<Long, String>> = ctx
+        .map { c -> c.sourceNames.takeIf { it.size > 1 } ?: emptyMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     private val folderContextKeys: StateFlow<Map<Long, String>> = ctx
         .flatMapLatest { c ->
@@ -182,8 +206,8 @@ class SeriesViewModel(
             customCategoryDao.appendItem(pid, MediaType.SERIES, targetId, itemId)
             if (!keepInOrigin) {
                 when {
-                    originKey == ContentOrderEntity.FAV_CONTEXT -> favoriteDao.remove(pid, MediaType.SERIES, itemId)
-                    CustomizeKeys.isCustom(originKey) -> customCategoryDao.deleteItem(pid, MediaType.SERIES, originKey, itemId)
+                    originKey == ContentOrderEntity.FAV_CONTEXT -> userDataWriter.removeFavorite(pid, MediaType.SERIES, itemId)
+                    CustomizeKeys.isCustom(originKey) -> userDataWriter.removeCustomCategoryMember(pid, MediaType.SERIES, originKey, itemId)
                     else -> customize.setItemMovedFromOrigin(pid, MediaType.SERIES, itemKey, originKey, moved = true)
                 }
             }
@@ -278,6 +302,16 @@ class SeriesViewModel(
 
     data class SeriesMeta(val seriesId: Long, val cache: tv.own.owntv.core.database.entity.MetadataCacheEntity?)
 
+    /**
+     * Poster fallback for tiles the provider gave no artwork for — see MovieViewModel.cachedPosters
+     * for the reasoning. Cache-only: a DB read, never a TMDB call.
+     */
+    private val _posterProbe = MutableStateFlow<List<SeriesEntity>>(emptyList())
+    private val _cachedPosters = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val cachedPosters: StateFlow<Map<Long, String>> = _cachedPosters.asStateFlow()
+
+    fun onPosterlessVisible(series: List<SeriesEntity>) { _posterProbe.value = series }
+
     /** Source mode (plan §4.1) — the pane/details use it to flip provider/TMDB precedence. */
     val metadataMode: StateFlow<tv.own.owntv.core.metadata.MetadataMode> = settings.metadataMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), tv.own.owntv.core.metadata.MetadataMode.PROVIDER_PLUS_TMDB)
@@ -354,6 +388,22 @@ class SeriesViewModel(
         // here when a season's last episode finishes so we can start the next season's first episode.
         viewModelScope.launch {
             player.queueEnded.collect { continueToNextSeason() }
+        }
+        // Resolve the poster fallback for what is on screen (mirrors MovieViewModel). Debounced so a
+        // fast scroll issues one query when it settles, and re-run on the refresh tick so a
+        // "Refetch TMDB details" re-reads the entry it dropped.
+        viewModelScope.launch {
+            combine(_posterProbe, _seriesMetaTick) { probe, _ -> probe }
+                .debounce(250)
+                .collectLatest { probe ->
+                    val wanted = probe.filterNot { it.id in _cachedPosters.value }
+                    if (wanted.isEmpty()) return@collectLatest
+                    val found = runCatching { metadata.cachedSeriesPosters(wanted) }.getOrDefault(emptyMap())
+                    if (found.isEmpty()) return@collectLatest
+                    // Bounded: a long browse of a huge catalog would otherwise grow this forever.
+                    val base = if (_cachedPosters.value.size > 500) emptyMap() else _cachedPosters.value
+                    _cachedPosters.value = base + found
+                }
         }
         // In-season advance (auto-next / HUD prev-next) happens inside the player — re-point the
         // subtitle context at the NEW episode (subtitle plan Phase 5), else a subtitle search or §9
@@ -444,14 +494,21 @@ class SeriesViewModel(
                 // A–Z also sorts the category folders (custom categories included); manually moved
                 // categories stay pinned first. Custom categories ride the SAME customization keys,
                 // so renames/hides/reorders apply to them with no extra code (#87).
-                val kids = profile?.isKids == true
-                val visibleCats = if (kids) cats.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cats
-                val visibleCustoms = if (kids) cust.customCategories.filterNot { tv.own.owntv.core.content.AdultCategoryClassifier.isAdult(it.name) } else cust.customCategories
-                val folders = visibleCats.applyCustomizationsWithCustoms(cust, visibleCustoms, alphaRest = sort == SettingsRepository.SortMode.ALPHA)
+                val folders = cats.railCategories(
+                    cust,
+                    kids = profile?.isKids == true,
+                    alphaRest = sort == SettingsRepository.SortMode.ALPHA,
+                )
+                val multiSourceNames = c.sourceNames.takeIf { it.size > 1 }.orEmpty()
+                val categoriesById = cats.associateBy { it.id }
                 defaultRail + folders.map { e ->
                     LiveRailItem(
                         key = e.categoryId?.let { LiveKey.Folder(it) } ?: LiveKey.Custom(e.customId!!),
                         title = e.displayName,
+                        providerName = e.categoryId
+                            ?.let(categoriesById::get)
+                            ?.sourceId
+                            ?.let(multiSourceNames::get),
                     )
                 }
             }
@@ -568,11 +625,53 @@ class SeriesViewModel(
     fun markEpisodeUnwatched(episode: EpisodeEntity) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            progressDao.clear(pid, MediaType.EPISODE, episode.id)
+            userDataWriter.clearProgress(pid, MediaType.EPISODE, episode.id)
         }
     }
 
-    fun select(key: LiveKey) { _selected.value = key }
+    /**
+     * Set while this view model is serving More -> Favourites or More -> History rather than the
+     * browse section. Those screens are one folder each: the selection is theirs to fix, and it must
+     * not be persisted as the remembered category.
+     */
+    private var lockedKey: LiveKey? = null
+
+    /** What the browse section was showing before the pin, so [unlock] can put it back. */
+    private var previousKey: LiveKey? = null
+
+    fun lock(key: LiveKey) {
+        if (lockedKey == null) previousKey = _selected.value
+        lockedKey = key
+        _selected.value = key
+    }
+
+    /**
+     * Release the pin and put the browse section back where it was.
+     *
+     * **This is not optional bookkeeping.** On the television this view model is a single instance
+     * shared between the browse section and the More screens, so a pin that outlived the screen that
+     * took it froze the section's category rail — focusable, but every click a no-op. The screen that
+     * locks therefore unlocks on dispose.
+     */
+    fun unlock() {
+        val previous = previousKey ?: return
+        lockedKey = null
+        previousKey = null
+        _selected.value = previous
+    }
+
+    fun select(key: LiveKey) {
+        if (lockedKey != null) return
+        _selected.value = key
+        // Core's lazy-catalogue drain fills categories in the provider's order; tell it the user is
+        // here so this one is served next (core's N1c). A no-op for every playlist that was not
+        // lazily added, and for a category that is already complete.
+        if (key is LiveKey.Folder) {
+            viewModelScope.launch { runCatching { catalogPriority.requestFirst(key.id) } }
+        } else {
+            catalogPriority.clear()
+        }
+    }
     fun setSearchQuery(query: String) { _search.value = query }
     fun onSeriesFocused(s: SeriesEntity) { _selectedSeries.value = s }
 
@@ -583,6 +682,7 @@ class SeriesViewModel(
     fun refetchSeriesMeta(series: SeriesEntity) {
         viewModelScope.launch {
             runCatching { metadata.clearSeries(series) }
+            _cachedPosters.value = _cachedPosters.value - series.id
             _seriesMetaTick.value++
         }
     }
@@ -923,6 +1023,7 @@ class SeriesViewModel(
                         } else null,
                         httpHeaders = ep.httpHeaders,
                         drmConfig = ep.drmConfig,
+                        manifestType = ep.manifestType,
                     )
                 },
                 startIndex = startIndex,
@@ -989,7 +1090,7 @@ class SeriesViewModel(
                 title = episode.name.takeIf { it.isNotBlank() } ?: show?.name.orEmpty(),
                 posterUrl = show?.posterUrl,
                 streamUrl = episode.streamUrl,
-                relativeDir = "Series/$showDir/Season ${episode.seasonNumber}",
+                relativeDir = MediaFolders.seasonDir(showDir, episode.seasonNumber),
                 fileName = "${StorageAccess.sanitize(episode.name.ifBlank { "episode-${episode.episodeNumber}" })}.$ext",
             )
         }
@@ -1009,7 +1110,7 @@ class SeriesViewModel(
                     title = ep.name.takeIf { it.isNotBlank() } ?: series.name,
                     posterUrl = series.posterUrl,
                     streamUrl = ep.streamUrl,
-                    relativeDir = "Series/$showDir/Season ${ep.seasonNumber}",
+                    relativeDir = MediaFolders.seasonDir(showDir, ep.seasonNumber),
                     fileName = "${StorageAccess.sanitize(ep.name.ifBlank { "episode-${ep.episodeNumber}" })}.$ext",
                 )
             }
@@ -1019,10 +1120,52 @@ class SeriesViewModel(
     fun toggleFavorite(s: SeriesEntity) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            if (favoriteIds.value.contains(s.id)) favoriteDao.remove(pid, MediaType.SERIES, s.id)
+            if (favoriteIds.value.contains(s.id)) userDataWriter.removeFavorite(pid, MediaType.SERIES, s.id)
             else favoriteDao.add(FavoriteEntity(profileId = pid, mediaType = MediaType.SERIES, itemId = s.id))
             refreshList() // the Favorites category uses a manual PagingSource — force a rebuild
         }
+    }
+
+    /** Hide a category by its rail key (undo via Settings → Customize). */
+    fun hideCategory(key: LiveKey) {
+        viewModelScope.launch {
+            categoryEditor.hide(currentProfileId() ?: return@launch, MediaType.SERIES, key)
+        }
+    }
+
+    fun enterCategoryMoveMode(key: LiveKey) {
+        if (key !is LiveKey.Folder && key !is LiveKey.Custom) return
+        viewModelScope.launch {
+            val c = ctx.first { it.profileId >= 0 }
+            _categoryMoveState.value = categoryEditor.beginMove(
+                profileId = c.profileId,
+                sourceIds = c.sourceIds,
+                type = MediaType.SERIES,
+                alphaRest = sortMode.value == SettingsRepository.SortMode.ALPHA,
+                key = key,
+            )
+        }
+    }
+
+    fun moveCategoryUp() {
+        _categoryMoveState.value = _categoryMoveState.value?.moved(MoveKind.UP) ?: return
+    }
+
+    fun moveCategoryDown() {
+        _categoryMoveState.value = _categoryMoveState.value?.moved(MoveKind.DOWN) ?: return
+    }
+
+    fun commitCategoryMove() {
+        val s = _categoryMoveState.value ?: return
+        _categoryMoveState.value = null
+        viewModelScope.launch {
+            val pid = currentProfileId() ?: return@launch
+            customize.setCategoryOrder(pid, MediaType.SERIES, s.keys)
+        }
+    }
+
+    fun cancelCategoryMove() {
+        _categoryMoveState.value = null
     }
 
     fun enterMoveMode(series: SeriesEntity, key: LiveKey) {
@@ -1110,7 +1253,11 @@ class SeriesViewModel(
     fun removeFromHistory(seriesId: Long) {
         viewModelScope.launch {
             val pid = currentProfileId() ?: return@launch
-            historyDao.remove(pid, MediaType.SERIES, seriesId)
+            // A show is watched one episode at a time, so its trace lives in the EPISODE rows too:
+            // the resume positions Home's Continue watching row is built from, and the episode
+            // history the Continue chip reads. Without those the removed show came straight back —
+            // which is why removeSeriesHistory clears all three together.
+            userDataWriter.removeSeriesHistory(pid, seriesId)
             refreshList() // the History category uses a manual PagingSource — force a rebuild
         }
     }
@@ -1176,7 +1323,7 @@ class SeriesViewModel(
         // Persist on change, debounced — the rail fires select() on focus as you scroll it.
         viewModelScope.launch {
             _selected.drop(1).debounce(800).distinctUntilChanged()
-                .collect { settings.setLastSeriesCategory(it.serialize()) }
+                .collect { if (lockedKey == null) settings.setLastSeriesCategory(it.serialize()) }
         }
         // Restore once at startup, and only while still on the default (never yank a user who already
         // navigated). A saved folder is honoured only once it exists in this profile's rail.

@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
-import tv.own.owntv.features.shell.MainSection
+import tv.own.owntv.core.nav.MainSection
 
 /**
  * Rank 1 — Neo Signal Duotone (Phase 7). SVG shapes from
@@ -137,6 +137,14 @@ fun NavDuotoneIcon(
                 drawPath(poly(45f,67f, 83f,67f), fill, style = stroke)
                 drawCircle(fill, radius = 7f * s, center = o(39f, 67f), style = stroke)
                 drawPath(poly(50f,15f, 59f,21f, 69f,22f, 74f,30f), soft, style = thin)
+            }
+
+            // ---- More — three stacked bars, the shortest last, with a dot accent -----
+            MainSection.MORE -> {
+                drawPath(poly(20f,33f, 80f,33f), fill, style = stroke)
+                drawPath(poly(20f,50f, 80f,50f), fill, style = stroke)
+                drawPath(poly(20f,67f, 58f,67f), fill, style = stroke)
+                dot(72f, 67f, 4f, soft)
             }
         }
     }

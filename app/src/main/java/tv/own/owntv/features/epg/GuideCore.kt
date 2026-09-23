@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.drawText
@@ -47,10 +48,12 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
+import tv.own.owntv.core.model.RecordingStatus
+import tv.own.owntv.core.database.entity.RecordingEntity
 import tv.own.owntv.core.database.entity.EpgProgrammeEntity
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.dialogPanel
@@ -61,7 +64,7 @@ import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.longPressMenuGuard
 import tv.own.owntv.ui.format.rememberSystemTimeFormatter
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.PopupFontTheme
 import tv.own.owntv.ui.theme.glass
@@ -132,7 +135,7 @@ internal fun ProgrammeStripCanvas(
         }
     }
     // Vertical "now" marker + catch-up glyph — measured once, reused each frame.
-    val nowColor = Color(0xFFFF5C5C)
+    val nowColor = Color(0xFFFFC857)
     val nowLinePx = with(density) { 2.dp.toPx() }
     val catchupStyle = MaterialTheme.typography.labelSmall.copy(
         color = colors.primary,
@@ -187,7 +190,16 @@ internal fun ProgrammeStripCanvas(
         if (now in windowStart..windowEnd) {
             val nowX = ((now - windowStart) / 60_000f) * pxPerMin - scrollPx
             if (nowX in 0f..viewW) {
-                drawLine(color = nowColor, start = Offset(nowX, 0f), end = Offset(nowX, h), strokeWidth = nowLinePx)
+                drawLine(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(nowColor, nowColor.copy(alpha = 0.72f), nowColor.copy(alpha = 0.08f)),
+                        startY = 0f,
+                        endY = h,
+                    ),
+                    start = Offset(nowX, 0f),
+                    end = Offset(nowX, h),
+                    strokeWidth = nowLinePx,
+                )
             }
         }
     }
@@ -212,6 +224,21 @@ internal fun ProgrammeDetailDialog(
     // Denser variant for the Live TV catch-up picker, which opens this on top of an already-small
     // popup chain — full-size chrome dwarfed the picker it came from. Guide keeps the roomy layout.
     compact: Boolean = false,
+    // --- Recording (Plan D, Feature A). All defaulted, so the Live TV catch-up picker — which opens
+    // this dialog on top of the player and has no business scheduling anything — is unchanged.
+    /** Whether Record can be offered at all: still to come, or on a catch-up channel and already aired. */
+    canRecord: Boolean = false,
+    /** The recording already covering this programme, which decides what the button says. */
+    recording: RecordingEntity? = null,
+    /** The title of a recording this one would contend with, shown as a warning before committing (D10). */
+    clashWith: String? = null,
+    onRecord: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    onCancelRecording: () -> Unit = {},
+    /** Non-null when a standing "record every showing" rule already covers this title (D7). */
+    seriesRuleActive: Boolean = false,
+    onRecordSeries: () -> Unit = {},
+    onStopSeries: () -> Unit = {},
 ) {
     val colors = OwnTVTheme.colors
     val formatTime = rememberSystemTimeFormatter()
@@ -238,7 +265,7 @@ internal fun ProgrammeDetailDialog(
             // The dialog can be opened by a long-press on the programme cell; the OK key is often still
             // held when it appears, which would instantly fire the focused action. Swallow OK until it's
             // released once so the held long-press only reveals the dialog, then the user chooses.
-            Modifier.fillMaxSize().modalScrim().longPressMenuGuard(),
+            Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup().longPressMenuGuard(),
             contentAlignment = Alignment.Center,
         ) {
             // Scrollable: long XMLTV descriptions can exceed a small screen's height. widthIn (not a
@@ -258,6 +285,19 @@ internal fun ProgrammeDetailDialog(
                 if (!description.isNullOrBlank()) {
                     Spacer(Modifier.height(if (compact) 10.dp else 14.dp))
                     Text(description.orEmpty(), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                }
+                // The clash, said before the user commits to anything. A live programme cannot wait
+                // its turn — "start when the other finishes" would mean "start half-way through"
+                // (D10) — so this is a warning at the moment of choosing, not a failure afterwards.
+                if (canRecord && clashWith != null && recording == null) {
+                    Spacer(Modifier.height(if (compact) 10.dp else 14.dp))
+                    Text(
+                        stringResource(R.string.recording_clash_with, clashWith),
+                        style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                        // The app's warning red, the same one a failed download and a failed
+                        // restore already use. There is no named error role in OwnTVTheme.
+                        color = Color(0xFFEF4444),
+                    )
                 }
                 Spacer(Modifier.height(if (compact) 16.dp else 24.dp))
                 // FlowRow so the actions wrap to a second line on narrower screens instead of the last
@@ -281,6 +321,53 @@ internal fun ProgrammeDetailDialog(
                         OwnTVButton(stringResource(R.string.content_epg_watch_channel), onClick = onWatch, style = OwnTVButtonStyle.SECONDARY, compact = compact)
                     } else {
                         OwnTVButton(stringResource(R.string.content_epg_watch_channel), onClick = onWatch, icon = OwnTVIcon.PLAY, compact = compact, modifier = Modifier.focusRequester(fr))
+                    }
+                    // Record. What it offers depends on what is already true of this programme, so
+                    // the button never lies: nothing yet → Record (or "from catch-up" when the
+                    // programme has already been on); running → Stop; scheduled → Cancel.
+                    if (canRecord) {
+                        when (recording?.status) {
+                            RecordingStatus.RECORDING -> OwnTVButton(
+                                stringResource(R.string.recording_stop),
+                                onClick = onStopRecording,
+                                style = OwnTVButtonStyle.SECONDARY,
+                                compact = compact,
+                            )
+                            RecordingStatus.SCHEDULED -> OwnTVButton(
+                                stringResource(R.string.common_cancel),
+                                onClick = onCancelRecording,
+                                style = OwnTVButtonStyle.SECONDARY,
+                                compact = compact,
+                            )
+                            // Already recorded, or failed and worth another go: Record again is the
+                            // honest offer, and the Recordings screen is where the result lives.
+                            else -> OwnTVButton(
+                                stringResource(
+                                    if (programme.stopMs <= System.currentTimeMillis()) {
+                                        R.string.recording_from_archive
+                                    } else {
+                                        R.string.recording_record
+                                    },
+                                ),
+                                onClick = onRecord,
+                                style = OwnTVButtonStyle.SECONDARY,
+                                compact = compact,
+                            )
+                        }
+                    }
+                    // "Every showing" only for a programme still to come — a rule is a standing
+                    // instruction about the future, and offering it on last night's repeat would
+                    // promise something it cannot do.
+                    if (canRecord && programme.stopMs > System.currentTimeMillis()) {
+                        OwnTVButton(
+                            stringResource(
+                                if (seriesRuleActive) R.string.recording_stop_series
+                                else R.string.recording_record_series,
+                            ),
+                            onClick = if (seriesRuleActive) onStopSeries else onRecordSeries,
+                            style = OwnTVButtonStyle.SECONDARY,
+                            compact = compact,
+                        )
                     }
                     // Favourite the channel without leaving the guide; the label flips in place.
                     OwnTVButton(

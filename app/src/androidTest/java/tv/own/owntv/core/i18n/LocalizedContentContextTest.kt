@@ -51,7 +51,7 @@ class LocalizedContentContextTest {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val prefs = app.getSharedPreferences("locale_write_path_test", Context.MODE_PRIVATE)
         try {
-            val store = LocaleStore(prefs, app)
+            val store = LocaleStore.overPreferences(prefs, app)
             runBlocking { store.set("de") }
             assertEquals("Java default locale must follow the selected tag", "de", Locale.getDefault().language)
             assertEquals("LocaleList default must follow the selected tag", "de", LocaleList.getDefault()[0].language)

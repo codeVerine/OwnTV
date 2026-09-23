@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -106,7 +107,7 @@ fun RemoteSetupScreen(
                         Spacer(Modifier.height(14.dp))
                         state.qr?.let { qr ->
                             Image(
-                                bitmap = qr,
+                                bitmap = qr.asImageBitmap(),
                                 contentDescription = stringResource(R.string.common_qr_code_companion_url),
                                 modifier = Modifier.size(188.dp).clip(RoundedCornerShape(14.dp)).background(Color.White).padding(9.dp),
                                 contentScale = ContentScale.Fit,

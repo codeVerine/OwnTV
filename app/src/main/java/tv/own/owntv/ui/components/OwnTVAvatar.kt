@@ -1,7 +1,12 @@
 package tv.own.owntv.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -24,15 +29,35 @@ object OwnTVAvatars {
 }
 
 @Composable
-fun OwnTVAvatar(avatarId: Int, modifier: Modifier = Modifier) {
+fun OwnTVAvatar(avatarId: Int, modifier: Modifier = Modifier, imagePath: String = "") {
     // Phase 7 — avatarId -1 = "no avatar" → show the Rank 1 ProfileIcon as a default silhouette.
-    if (avatarId == -1) {
+    if (avatarId == -1 && imagePath.isBlank()) {
         ProfileIcon(color = Color(0xFF54F2E2), modifier = modifier.padding(4.dp))
         return
     }
     val i = ((avatarId % OwnTVAvatars.COUNT) + OwnTVAvatars.COUNT) % OwnTVAvatars.COUNT
-    Canvas(modifier = modifier) { drawAvatar(i) }
+    Box(modifier = modifier) {
+        // The drawn tile stays underneath the picture rather than being replaced by it. It costs
+        // nothing (a few Canvas paths), it fills the gap while the file is being read, and — the
+        // reason it is done this way — it is what the user sees if the picture has gone: a profile
+        // whose image was cleaned up with the app's storage falls back to the tile it always had,
+        // instead of a blank hole, with no file-existence check on every single composition.
+        if (avatarId != -1) {
+            Canvas(modifier = Modifier.matchParentSize()) { drawAvatar(i) }
+        }
+        if (imagePath.isNotBlank()) {
+            AsyncImage(
+                model = java.io.File(imagePath),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize().clip(AvatarShape),
+            )
+        }
+    }
 }
+
+/** Matches the rounding the drawn tiles use, so a picture sits in the same shape as a tile. */
+private val AvatarShape = RoundedCornerShape(percent = 30)
 
 private val BG = listOf(
     Color(0xFFF59E0B), // 0 lightning — amber
@@ -54,7 +79,32 @@ private fun DrawScope.drawAvatar(i: Int) {
     val ink = Color(0xFF10181C)
     val bg = BG[i]
 
-    drawRoundRect(bg, size = Size(s, s), cornerRadius = CornerRadius(s * 0.30f))
+    // A lit gradient rather than one flat colour, with a soft sheen across the top corner and a
+    // hairline rim. The shapes are unchanged — what made these read as placeholders next to the rest
+    // of the app was the flat fill, not the drawings.
+    drawRoundRect(
+        brush = androidx.compose.ui.graphics.Brush.linearGradient(
+            colors = listOf(bg.lighten(TILE_TOP_LIGHTEN), bg, bg.darken(TILE_BOTTOM_DARKEN)),
+            start = Offset(0f, 0f),
+            end = Offset(s, s),
+        ),
+        size = Size(s, s),
+        cornerRadius = CornerRadius(s * 0.30f),
+    )
+    drawRoundRect(
+        brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+            colors = listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
+            endY = s * 0.55f,
+        ),
+        size = Size(s, s),
+        cornerRadius = CornerRadius(s * 0.30f),
+    )
+    drawRoundRect(
+        color = Color.White.copy(alpha = 0.14f),
+        size = Size(s, s),
+        cornerRadius = CornerRadius(s * 0.30f),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = s * 0.012f),
+    )
 
     when (i) {
         0 -> { // Lightning bolt
@@ -137,3 +187,21 @@ private fun pentagon(center: Offset, r: Float): Path = Path().apply {
     }
     close()
 }
+
+/** How much lighter the top-left corner of a tile is than its base colour, and darker the bottom. */
+private const val TILE_TOP_LIGHTEN = 0.22f
+private const val TILE_BOTTOM_DARKEN = 0.14f
+
+private fun Color.lighten(amount: Float) = Color(
+    red = red + (1f - red) * amount,
+    green = green + (1f - green) * amount,
+    blue = blue + (1f - blue) * amount,
+    alpha = alpha,
+)
+
+private fun Color.darken(amount: Float) = Color(
+    red = red * (1f - amount),
+    green = green * (1f - amount),
+    blue = blue * (1f - amount),
+    alpha = alpha,
+)

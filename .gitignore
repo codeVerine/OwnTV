@@ -26,9 +26,12 @@ AGENT_HANDOVER.md
 keystore.properties
 signing.properties
 
-# Internal planning documents — kept local, never committed
+# Internal planning documents — kept local, never committed. `future_work/` is the core repo's name
+# for the same thing; it is listed here too so the same folder name is safe to use anywhere in the
+# suite and can never become a committed leak.
 future-plan/
 audit/
+future_work/
 
 # The PRODUCTION Cloudflare Workers — kept local, never committed.
 #

@@ -17,7 +17,7 @@ enum class BackupError { EXPORT, READ, IMPORT }
 class BackupViewModel(
     private val backup: BackupManager,
     private val profileDao: tv.own.owntv.core.database.dao.ProfileDao,
-    private val settings: tv.own.owntv.features.settings.data.SettingsRepository,
+    private val settings: tv.own.owntv.core.settings.SettingsRepository,
     private val companion: tv.own.owntv.core.companion.CompanionController,
 ) : ViewModel() {
 

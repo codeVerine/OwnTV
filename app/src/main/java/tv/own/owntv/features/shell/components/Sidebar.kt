@@ -1,6 +1,12 @@
 package tv.own.owntv.features.shell.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
@@ -27,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import tv.own.owntv.features.shell.MainSection
+import tv.own.owntv.core.nav.MainSection
 import tv.own.owntv.R
 import tv.own.owntv.ui.components.FocusableSurface
 import tv.own.owntv.ui.components.NavAccentBar
@@ -56,8 +63,9 @@ import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.RailPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
+import tv.own.owntv.ui.theme.animationsOn
 import tv.own.owntv.ui.theme.glass
 
 /**
@@ -71,6 +79,7 @@ fun Sidebar(
     onSelect: (MainSection) -> Unit,
     visibleSections: Set<MainSection>,
     avatarId: Int,
+    avatarPath: String = "",
     onPickAvatar: () -> Unit,
     profileName: String,
     sourceSummary: String?,
@@ -79,6 +88,9 @@ fun Sidebar(
     onFocused: () -> Unit,
     counts: (MainSection) -> Int = { 0 },
     topInset: Dp = Dimens.TopBarHeight,
+    /** Non-null while a mini player or an audio session is alive — see [NowPlayingRail]. */
+    nowPlaying: NowPlayingRail? = null,
+    onNowPlaying: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = OwnTVTheme.colors
@@ -92,11 +104,13 @@ fun Sidebar(
     // lands in the rail instead of stranding focus in the content area.
     // v4.3.0 — the selected section may also be hidden (Nav menu customization); if so, land focus on the
     // first visible browse item (or Settings if every browse item is hidden) so the rail always has a target.
+    // Plan Z — Settings no longer has a rail item of its own: it lives behind More, so the rail's
+    // target for both of them is the More item.
     val focusSection = when {
         selected == MainSection.SEARCH -> MainSection.HOME
-        selected == MainSection.SETTINGS -> MainSection.SETTINGS
+        selected == MainSection.SETTINGS || selected == MainSection.MORE -> MainSection.MORE
         selected in visibleSections -> selected
-        else -> MainSection.browseOrder.firstOrNull { it in visibleSections } ?: MainSection.SETTINGS
+        else -> MainSection.browseOrder.firstOrNull { it in visibleSections } ?: MainSection.MORE
     }
 
     Column(
@@ -127,6 +141,15 @@ fun Sidebar(
         // an "up" press from the first nav item either.
         AppLogo()
         Spacer(Modifier.height(12.dp))
+
+        // The one way back into a docked mini player from every screen (§8 tier 1). Sits directly under
+        // the brand mark, above the browse block, and only exists while there is something to return to.
+        // It is NOT a MainSection: OK moves focus into the mini window instead of navigating anywhere,
+        // so Nav menu customization neither hides it nor counts it.
+        if (nowPlaying != null) {
+            NowPlayingItem(state = nowPlaying, onClick = onNowPlaying)
+            Spacer(Modifier.height(10.dp))
+        }
 
         // Phase 3 — the nav is vertically centered between the logo and the profile, BUT the rail
         // scrolls when UI zoom makes the fixed item list taller than the panel (otherwise the top/bottom
@@ -159,14 +182,16 @@ fun Sidebar(
                     )
                     Spacer(Modifier.height(4.dp))
                 }
-                // Settings closes out the nav block.
+                // More closes out the nav block (Plan Z — it used to be Settings, which is now the
+                // first row inside More). It stays lit while Settings itself is open, because that
+                // is where the user is: one level in from here.
                 NavItem(
-                    section = MainSection.SETTINGS,
-                    active = selected == MainSection.SETTINGS,
+                    section = MainSection.MORE,
+                    active = selected == MainSection.MORE || selected == MainSection.SETTINGS,
                     expanded = expanded,
                     count = 0,
-                    onClick = { onSelect(MainSection.SETTINGS) },
-                    modifier = if (focusSection == MainSection.SETTINGS) {
+                    onClick = { onSelect(MainSection.MORE) },
+                    modifier = if (focusSection == MainSection.MORE) {
                         Modifier.focusRequester(selectedItemFocusRequester)
                     } else Modifier,
                 )
@@ -185,11 +210,101 @@ fun Sidebar(
         ProfileCard(
             expanded = expanded,
             avatarId = avatarId,
+            avatarPath = avatarPath,
             profileName = profileName,
             sourceSummary = sourceSummary,
             onPickAvatar = onPickAvatar,
             onSwitchProfile = onSwitchProfile,
         )
+    }
+}
+
+/**
+ * What the rail's "Now Playing" item shows: the docked channel's logo, or the equalizer while Audio
+ * Mode is running (there is no picture to stand for then).
+ */
+data class NowPlayingRail(val logoUrl: String?, val audioMode: Boolean, val playing: Boolean)
+
+/**
+ * The Now Playing rail item — a logo tile inside a pulsing accent ring, with the label below it.
+ *
+ * The ring pulses so a docked window that is otherwise off in a corner announces itself; the pulse is
+ * dropped entirely when the user has turned animations off, leaving a static ring at the same weight.
+ */
+@Composable
+private fun NowPlayingItem(
+    state: NowPlayingRail,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = OwnTVTheme.colors
+    val shape = RoundedCornerShape(13.dp)
+    val pulse = if (animationsOn) {
+        val transition = rememberInfiniteTransition(label = "nowPlayingRing")
+        transition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse),
+            label = "nowPlayingRingAlpha",
+        ).value
+    } else {
+        0.7f
+    }
+    FocusableSurface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = shape,
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+        selectedContainerColor = Color.Transparent,
+        surface = GlassSurface.SIDEBAR,
+        showFocusBorder = false,
+        contentAlignment = Alignment.Center,
+    ) { focused ->
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(39.dp)
+                    .clip(shape)
+                    .glass(surface = GlassSurface.SIDEBAR, baseFill = Color.Transparent, shape = shape)
+                    .background(
+                        if (focused) colors.primary else colors.primary.copy(alpha = 0.18f),
+                        shape,
+                    )
+                    .border(
+                        width = if (focused) 2.dp else 1.5.dp,
+                        color = if (focused) colors.onPrimary else colors.primary.copy(alpha = pulse),
+                        shape = shape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                val content = if (focused) colors.onPrimary else colors.primary
+                when {
+                    state.audioMode -> tv.own.owntv.player.Equalizer(
+                        playing = state.playing,
+                        color = content,
+                        modifier = Modifier.width(22.dp).height(16.dp),
+                    )
+                    !state.logoUrl.isNullOrBlank() -> AsyncImage(
+                        model = state.logoUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        modifier = Modifier.size(26.dp),
+                    )
+                    else -> OwnTVIcon(OwnTVIcon.PLAY, tint = content, filled = true, modifier = Modifier.size(20.dp))
+                }
+            }
+            Text(
+                stringResource(R.string.shell_now_playing),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (focused) colors.onSurface else colors.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
+        }
     }
 }
 
@@ -218,6 +333,7 @@ private fun AppLogo(modifier: Modifier = Modifier) {
 private fun ProfileCard(
     expanded: Boolean,
     avatarId: Int,
+    avatarPath: String = "",
     profileName: String,
     sourceSummary: String?,
     onPickAvatar: () -> Unit,
@@ -229,7 +345,7 @@ private fun ProfileCard(
     if (!expanded) {
         // Fixed nav: just the avatar — click opens the profile switcher ("who's watching"), long-press
         // changes the avatar picture. Pinned top-left, always in the same spot.
-        AvatarButton(avatarId = avatarId, sizeDp = 56, onClick = onSwitchProfile, onLongClick = onPickAvatar)
+        AvatarButton(avatarId = avatarId, avatarPath = avatarPath, sizeDp = 56, onClick = onSwitchProfile, onLongClick = onPickAvatar)
         return
     }
 
@@ -249,7 +365,7 @@ private fun ProfileCard(
             modifier = Modifier.fillMaxWidth().padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            AvatarButton(avatarId = avatarId, sizeDp = 64, onClick = onPickAvatar)
+            AvatarButton(avatarId = avatarId, avatarPath = avatarPath, sizeDp = 64, onClick = onPickAvatar)
             Spacer(Modifier.height(10.dp))
             Text(
                 profileName.ifBlank { stringResource(R.string.common_own_tv_user) },
@@ -302,7 +418,7 @@ private fun ProfileCard(
 }
 
 @Composable
-private fun AvatarButton(avatarId: Int, sizeDp: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
+private fun AvatarButton(avatarId: Int, avatarPath: String, sizeDp: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     FocusableSurface(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -315,7 +431,7 @@ private fun AvatarButton(avatarId: Int, sizeDp: Int, onClick: () -> Unit, onLong
         contentAlignment = Alignment.Center,
         surface = GlassSurface.SIDEBAR,
     ) { _ ->
-        OwnTVAvatar(avatarId = avatarId, modifier = Modifier.size((sizeDp - 4).dp))
+        OwnTVAvatar(avatarId = avatarId, imagePath = avatarPath, modifier = Modifier.size((sizeDp - 4).dp))
     }
 }
 
@@ -427,4 +543,5 @@ private val MainSection.navIcon: OwnTVIcon
         MainSection.DOWNLOADS -> OwnTVIcon.DOWNLOADS
         MainSection.EPG -> OwnTVIcon.EPG
         MainSection.SETTINGS -> OwnTVIcon.SETTINGS
+        MainSection.MORE -> OwnTVIcon.MORE
     }

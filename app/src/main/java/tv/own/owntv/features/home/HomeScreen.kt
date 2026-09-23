@@ -1,6 +1,9 @@
 package tv.own.owntv.features.home
 
 import android.content.Context
+import tv.own.owntv.core.home.GuideSliceState
+import tv.own.owntv.core.home.HeroItem
+import tv.own.owntv.core.home.TrendingHomeItem
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -90,6 +93,9 @@ import tv.own.owntv.core.database.entity.MetadataCacheEntity
 import tv.own.owntv.core.database.dao.TrendingDao
 import tv.own.owntv.core.launcher.LauncherContinuationItem
 import tv.own.owntv.core.launcher.LauncherWatchNextType
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
+import tv.own.owntv.core.model.HomeTrendingStyle
 import tv.own.owntv.player.HeroPreviewEngine
 import tv.own.owntv.ui.components.BrandLockup
 import tv.own.owntv.ui.components.FocusableSurface
@@ -105,7 +111,7 @@ import tv.own.owntv.ui.components.ContentPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.format.formatSystemTime
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
 import tv.own.owntv.features.shell.components.MediaDetailsScreen
@@ -115,7 +121,6 @@ import tv.own.owntv.core.trending.ProviderVariantParser
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.foundation.layout.widthIn
-import tv.own.owntv.ui.theme.PopupFontTheme
 import java.util.Calendar
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -295,6 +300,12 @@ fun HomeScreen(
         }
     }
 
+    // The poster row is an ordinary row, so the hero's "do not scroll me" rule must not survive a
+    // switch to it.
+    LaunchedEffect(state.config.trendingStyle) {
+        if (state.config.trendingStyle == HomeTrendingStyle.POSTERS) trendingRowFocused.value = false
+    }
+
     LaunchedEffect(trendingRowFocused.value) {
         if (trendingRowFocused.value && renderRows.firstOrNull() == HomeRow.TRENDING) {
             listState.animateScrollToItem(0, 0)
@@ -333,7 +344,27 @@ fun HomeScreen(
                 }
             }
             when (row) {
-                HomeRow.TRENDING -> if (state.trendingItems.size >= TrendingDao.MIN_ELIGIBLE_ITEMS) {
+                // Two shapes, the user's choice: the full hero, or the plain strip of posters the
+                // rest of Home is made of. Same items, same order, either way.
+                HomeRow.TRENDING -> if (state.trendingItems.size < TrendingDao.MIN_ELIGIBLE_ITEMS) {
+                    // Too few titles to be a "trending" row at all, so the row is not drawn. An empty
+                    // block rather than a bare `Unit`: the compiler reads that one as an expression
+                    // whose value is thrown away, and says so on every build.
+                } else if (state.config.trendingStyle == HomeTrendingStyle.POSTERS) {
+                    TrendingPosterRow(
+                        title = row.displayTitle(),
+                        items = state.trendingItems,
+                        onItemClick = { item ->
+                            onActivateTrending(item) {
+                                trendingToast.show(trendingUnavailableMessage)
+                                vm.refresh()
+                            }
+                        },
+                        onFocus = onNonHeroFocused,
+                        firstItemFocusRequester = firstItemFocusRequester ?: trendingPrimaryFocus,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
                     TrendingHeroSection(
                         items = state.trendingItems,
                         activeIndex = state.activeTrendingIndex,
@@ -646,12 +677,13 @@ private fun TrendingHeroSection(
         }
     val displaySignals = ProviderVariantParser.displaySignals(snapshot.providerRawName)
     val typeLabel = if (item is TrendingHomeItem.Movie) movieLabel else seriesLabel
+    val providerLanguage = snapshot.providerLanguage
     val languageBadge = when {
-        snapshot.providerLanguage == preferredLanguage ->
+        providerLanguage == preferredLanguage ->
             stringResource(R.string.home_trending_language_choice, preferredLanguage)
-        snapshot.providerLanguage == "EN" -> stringResource(R.string.home_trending_english_fallback)
-        snapshot.providerLanguage == null -> stringResource(R.string.home_trending_untagged_fallback)
-        else -> stringResource(R.string.home_trending_other_fallback, snapshot.providerLanguage)
+        providerLanguage == "EN" -> stringResource(R.string.home_trending_english_fallback)
+        providerLanguage == null -> stringResource(R.string.home_trending_untagged_fallback)
+        else -> stringResource(R.string.home_trending_other_fallback, providerLanguage)
     }
     val reasonTitle = stringResource(R.string.home_trending_reason_title, snapshot.trendingRank, typeLabel)
     val reasonCopy = when {
@@ -665,8 +697,7 @@ private fun TrendingHeroSection(
     }
     val seasonCount = (item as? TrendingHomeItem.Series)?.let { seasonCounts[it.series.id] }
 
-    PopupFontTheme {
-      Column(
+    Column(
           modifier = modifier
               .height(538.dp)
               .clip(RoundedCornerShape(18.dp))
@@ -895,7 +926,6 @@ private fun TrendingHeroSection(
                 modifier = Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(colors.primary),
             )
         }
-      }
     }
 }
 
@@ -1713,6 +1743,61 @@ private fun ContinueWatchingRow(
                             onClick = { onItemClick(item) },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Now Trending drawn as posters — the alternative to the hero, for anyone who wants Home to be one
+ * consistent set of rows. Read-only, like the hero: core's worker decides what is in it.
+ */
+@Composable
+private fun TrendingPosterRow(
+    title: String,
+    items: List<TrendingHomeItem>,
+    onItemClick: (TrendingHomeItem) -> Unit,
+    onFocus: () -> Unit,
+    firstItemFocusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.titleSmall,
+            color = OwnTVTheme.colors.primary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = Dimens.HomeRowPaddingH),
+        )
+        Spacer(Modifier.height(10.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = Dimens.HomeRowPaddingH),
+            modifier = Modifier.focusGroup(),
+        ) {
+            itemsIndexed(items, key = { _, item -> item.stableKey }) { index, item ->
+                val itemModifier =
+                    if (firstItemFocusRequester != null && index == 0) {
+                        Modifier.focusRequester(firstItemFocusRequester)
+                    } else {
+                        Modifier
+                    }
+                Box(Modifier.width(150.dp)) {
+                    PosterCard(
+                        posterUrl = when (item) {
+                            is TrendingHomeItem.Movie -> item.movie.posterUrl
+                            is TrendingHomeItem.Series -> item.series.posterUrl
+                        },
+                        title = when (item) {
+                            is TrendingHomeItem.Movie -> item.movie.name
+                            is TrendingHomeItem.Series -> item.series.name
+                        },
+                        progressFraction = null,
+                        modifier = itemModifier,
+                        onFocus = onFocus,
+                        onClick = { onItemClick(item) },
+                    )
                 }
             }
         }

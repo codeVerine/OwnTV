@@ -3,6 +3,7 @@ package tv.own.owntv.features.settings.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import tv.own.owntv.core.settings.StartupChannelRef
 
 class StartupChannelRefTest {
     @Test

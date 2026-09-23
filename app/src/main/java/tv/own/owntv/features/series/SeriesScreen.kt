@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,13 +52,18 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import tv.own.owntv.features.live.LiveRailItem
+import tv.own.owntv.features.live.displayLabel
 import org.koin.androidx.compose.koinViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -69,16 +76,18 @@ import tv.own.owntv.core.database.entity.SeriesEntity
 import tv.own.owntv.features.customize.MoveToCategoryDialog
 import tv.own.owntv.ui.components.TextInputDialog
 import tv.own.owntv.core.model.DownloadStatus
-import tv.own.owntv.features.live.LiveKey
 import tv.own.owntv.features.live.displayLabel
-import tv.own.owntv.features.settings.data.PanelSection
+import tv.own.owntv.core.settings.PanelSection
 import tv.own.owntv.features.settings.data.BrowseColumnGap
 import tv.own.owntv.features.settings.data.BrowseColumnDividerSpace
 import tv.own.owntv.features.settings.data.BrowseContainerPadding
 import tv.own.owntv.features.settings.data.browsePanelGapTotal
 import tv.own.owntv.features.settings.data.computePanelWidths
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.features.settings.rememberPanelShares
+import tv.own.owntv.features.settings.data.computeCinematicLayout
+import tv.own.owntv.features.settings.data.defaultPanelShares
+import tv.own.owntv.features.shell.components.CategoryContextMenu
 import tv.own.owntv.features.shell.components.CategoryRail
 import tv.own.owntv.features.shell.components.PreviewPane
 import tv.own.owntv.features.shell.components.RailCategory
@@ -88,9 +97,13 @@ import tv.own.owntv.ui.components.InAppToast
 import tv.own.owntv.ui.components.rememberInAppToast
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
+import tv.own.owntv.core.model.ContentMenu
+import tv.own.owntv.ui.components.MenuAction
+import tv.own.owntv.ui.components.arranged
 import tv.own.owntv.ui.components.OwnTVIcon
 import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.PosterCard
+import tv.own.owntv.ui.components.ProviderChip
 import tv.own.owntv.ui.components.ProgressRing
 import tv.own.owntv.ui.components.ResumeDialog
 import tv.own.owntv.ui.components.formatTimestamp
@@ -106,15 +119,18 @@ import tv.own.owntv.ui.components.trapVerticalFocusExit
 import tv.own.owntv.ui.components.SortChip
 import tv.own.owntv.ui.components.formatCount
 import tv.own.owntv.ui.components.ContentPanelFill
+import tv.own.owntv.ui.components.RailPanelFill
 import tv.own.owntv.ui.components.PreviewPanelFill
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.dialogPanel
 import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.gridFocusTarget
 import tv.own.owntv.ui.theme.Dimens
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.format.localizedInteger
+import tv.own.owntv.ui.format.rememberAirDateFormatter
+import tv.own.owntv.core.live.LiveKey
 
 @Composable
 fun SeriesScreen(
@@ -123,8 +139,24 @@ fun SeriesScreen(
     restoreFocus: Boolean = false,
     onRestored: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Pins the grid to one folder and takes the category rail away — how More → Favourites and
+     * More → History show shows without a second copy of this grid existing.
+     */
+    lockedKey: LiveKey? = null,
 ) {
     val vm: SeriesViewModel = koinViewModel()
+    // Locking and unlocking are one pair: the pin belongs to this screen's lifetime, not to the view
+    // model's. On the television that view model is a single instance shared with the browse section,
+    // so a pin left behind froze its category rail. `DisposableEffect` (not `LaunchedEffect`) also
+    // means the pin is in place before the first frame, so the list never flashes the wrong folder.
+    if (lockedKey != null) {
+        val pinned = lockedKey
+        DisposableEffect(pinned) {
+            vm.lock(pinned)
+            onDispose { vm.unlock() }
+        }
+    }
     val openedSeries by vm.openedSeries.collectAsStateWithLifecycle()
 
     // Track leaving a show so the grid can put focus back on the poster you came from (the episode
@@ -150,6 +182,7 @@ fun SeriesScreen(
             onChildFocused = onChildFocused,
             restoreSelected = returnFromShow,
             onRestoredSelected = { returnFromShow = false },
+            lockedKey = lockedKey,
             modifier = modifier,
         )
     }
@@ -193,28 +226,33 @@ private fun SeriesContextMenu(
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            OwnTVButton(
-                if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite),
-                onClick = onToggleFavorite, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.FAVORITE,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-            if (canMove) OwnTVButton(stringResource(R.string.content_move), onClick = onMove, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            if (canMove) OwnTVButton(stringResource(R.string.content_move_to_category), onClick = onMoveToCategory, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            if (isHistory) OwnTVButton(stringResource(R.string.content_remove_history), onClick = onRemoveFromHistory, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            OwnTVButton(stringResource(R.string.common_hide), onClick = onHide, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            OwnTVButton(stringResource(R.string.content_download_all_episodes), onClick = onDownload, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.DOWNLOADS, modifier = Modifier.fillMaxWidth())
-            if (hasTmdbDetails) {
-                OwnTVButton(stringResource(R.string.content_tmdb_details), onClick = onShowDetails, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.MENU, modifier = Modifier.fillMaxWidth())
+            // The menu as data: same actions, same gating, same order as the buttons that used to be
+            // written out here one by one. Close is not in the list — it stays pinned last.
+            val actions = buildList {
+                add(MenuAction("favourite", if (isFavorite) stringResource(R.string.content_remove_favourite) else stringResource(R.string.content_add_favourite), OwnTVIcon.FAVORITE, onClick = onToggleFavorite))
+                if (canMove) add(MenuAction("move", stringResource(R.string.content_move), onClick = onMove))
+                if (canMove) add(MenuAction("move_to_category", stringResource(R.string.content_move_to_category), onClick = onMoveToCategory))
+                if (isHistory) add(MenuAction("remove_history", stringResource(R.string.content_remove_history), onClick = onRemoveFromHistory))
+                add(MenuAction("hide", stringResource(R.string.common_hide), onClick = onHide))
+                add(MenuAction("download", stringResource(R.string.content_download_all_episodes), OwnTVIcon.DOWNLOADS, onClick = onDownload))
+                if (hasTmdbDetails) add(MenuAction("tmdb_details", stringResource(R.string.content_tmdb_details), OwnTVIcon.MENU, onClick = onShowDetails))
+                // Play Trailer (§7.3 U4) — only when TMDB actually has a trailer for this show (§11.1 gating).
+                trailerKey?.let { key -> add(MenuAction("play_trailer", stringResource(R.string.content_play_trailer)) { onPlayTrailer(key) }) }
+                // Refetch TMDB details (§11.2 U5a) — clear a wrong/stale match (or a 7-day "no match" cache) and re-search.
+                if (canRefetchTmdb) {
+                    add(MenuAction("refetch_tmdb", stringResource(R.string.content_refetch_tmdb), onClick = onRefetch))
+                    // Set TMDB name (§11.2 U5b) — hand-type the exact TMDB title when the auto-match is wrong.
+                    add(MenuAction("set_tmdb_name", stringResource(R.string.content_set_tmdb_name), onClick = onSetTmdbName))
+                }
             }
-            // Play Trailer (§7.3 U4) — only when TMDB actually has a trailer for this show (§11.1 gating).
-            trailerKey?.let { key ->
-                OwnTVButton(stringResource(R.string.content_play_trailer), onClick = { onPlayTrailer(key) }, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            }
-            // Refetch TMDB details (§11.2 U5a) — clear a wrong/stale match (or a 7-day "no match" cache) and re-search.
-            if (canRefetchTmdb) {
-                OwnTVButton(stringResource(R.string.content_refetch_tmdb), onClick = onRefetch, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-                // Set TMDB name (§11.2 U5b) — hand-type the exact TMDB title when the auto-match is wrong.
-                OwnTVButton(stringResource(R.string.content_set_tmdb_name), onClick = onSetTmdbName, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
+            arranged(ContentMenu.SERIES, actions).forEachIndexed { index, action ->
+                OwnTVButton(
+                    action.label,
+                    onClick = action.onClick,
+                    style = OwnTVButtonStyle.SECONDARY,
+                    icon = action.icon,
+                    modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(focus) else Modifier),
+                )
             }
             Spacer(Modifier.height(4.dp))
             OwnTVButton(stringResource(R.string.content_close), onClick = onDismiss, modifier = Modifier.fillMaxWidth())
@@ -228,18 +266,21 @@ private fun SeriesGrid(
     onChildFocused: () -> Unit,
     restoreSelected: Boolean = false,
     onRestoredSelected: () -> Unit = {},
+    /** Non-null while this grid is a More screen's stage — see [SeriesScreen]. */
+    lockedKey: LiveKey? = null,
     modifier: Modifier,
 ) {
     val alreadyDownloadedMessage = stringResource(R.string.content_already_downloaded)
     val refetchingTmdbMessage = stringResource(R.string.content_refetching_tmdb)
     val researchingTmdbMessage = stringResource(R.string.content_researching_tmdb)
     val railItems by vm.railItems.collectAsStateWithLifecycle()
+    val providerNames by vm.providerNames.collectAsStateWithLifecycle()
     val selectedKey by vm.selectedKey.collectAsStateWithLifecycle()
     val count by vm.count.collectAsStateWithLifecycle()
     val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val searchQuery by vm.searchQuery.collectAsStateWithLifecycle()
     val sortMode by vm.sortMode.collectAsStateWithLifecycle()
-    val viewMode by vm.viewMode.collectAsStateWithLifecycle()
+    val storedViewMode by vm.viewMode.collectAsStateWithLifecycle()
     val selectedSeries by vm.selectedSeries.collectAsStateWithLifecycle()
     val selectedSeriesMeta by vm.selectedSeriesMeta.collectAsStateWithLifecycle()
     val selectedSeriesDownloads by vm.selectedSeriesDownloads.collectAsStateWithLifecycle()
@@ -248,6 +289,13 @@ private fun SeriesGrid(
     val toast = rememberInAppToast()
     val series = vm.series.collectAsLazyPagingItems()
     val moveState by vm.moveState.collectAsStateWithLifecycle()
+    val categoryMoveState by vm.categoryMoveState.collectAsStateWithLifecycle()
+    var contextCategory by remember { mutableStateOf<LiveRailItem?>(null) }
+    // The rail row a category menu was opened from, kept after the menu closes so the cursor can go
+    // back to that exact row. Held as a key, not an index: a Move changes the row's position.
+    var contextCategoryKey by remember { mutableStateOf<LiveKey?>(null) }
+    var railFocusRow by remember { mutableStateOf<Int?>(null) }
+    val railFocus = remember { FocusRequester() }
     var contextSeries by remember { mutableStateOf<tv.own.owntv.core.database.entity.SeriesEntity?>(null) }
     // The series the "Move to category…" flow is moving (issue #87), with the origin captured at
     // menu-open time (the rail can't change under the modal, but capturing is still safer).
@@ -280,6 +328,12 @@ private fun SeriesGrid(
     // CH+- key paging (grid + category rail). gridPaneFocused/railPaneFocused gate which pane acts.
     val scope = rememberCoroutineScope()
     val settingsVm: tv.own.owntv.features.settings.SettingsViewModel = koinViewModel()
+    val vodLayout by settingsVm.vodLayout.collectAsStateWithLifecycle()
+    val cinematic = vodLayout == SettingsRepository.VodLayout.CINEMATIC
+    val cinematicDetailsPct by settingsVm.cinematicDetailsHeight(PanelSection.SERIES).collectAsStateWithLifecycle()
+    // Cinematic is grid-only. The stored choice is deliberately not rewritten, so switching back to
+    // Separate restores the user's List.
+    val viewMode = if (cinematic) SettingsRepository.VodViewMode.GRID else storedViewMode
     val chNavEnabled by settingsVm.chNavEnabled.collectAsStateWithLifecycle()
     val chNavUpSkip by settingsVm.chNavUpSkip.collectAsStateWithLifecycle()
     val chNavDownSkip by settingsVm.chNavDownSkip.collectAsStateWithLifecycle()
@@ -300,6 +354,19 @@ private fun SeriesGrid(
     val catListState = androidx.compose.foundation.lazy.rememberLazyListState()
     var gridPaneFocused by remember { mutableStateOf(false) }
     var railPaneFocused by remember { mutableStateOf(false) }
+    // Tiles the provider gave no artwork for: ask for the TMDB poster already cached from an earlier
+    // focus, so the placeholder is only shown when nothing at all is known (mirrors Movies).
+    val cachedPosters by vm.cachedPosters.collectAsStateWithLifecycle()
+    LaunchedEffect(effectiveGridState, effectiveListState, viewMode, series) {
+        val grid = viewMode != SettingsRepository.VodViewMode.LIST
+        snapshotFlow {
+            val indices = if (grid) effectiveGridState.layoutInfo.visibleItemsInfo.map { it.index }
+            else effectiveListState.layoutInfo.visibleItemsInfo.map { it.index }
+            indices.filter { it < series.itemCount }
+                .mapNotNull { series.peek(it) }
+                .filter { it.posterUrl.isNullOrBlank() }
+        }.distinctUntilChanged().collect { vm.onPosterlessVisible(it) }
+    }
 
     // Back from a show's episodes: scroll the grid to the poster you opened, then focus it. It may be
     // far down and not composed, so without scrolling the focus request fails and focus falls to the
@@ -338,7 +405,7 @@ private fun SeriesGrid(
     //     list no longer contains it, so focus the NEAREST surviving neighbour by position (the item
     //     that slid into the removed slot, else the new last item, else first item). Only if the whole
     //     category is now empty do we let focus leave (there's nothing here to land on).
-    LaunchedEffect(contextSeries, moveItem, creatingCategory) {
+    LaunchedEffect(contextSeries, moveItem, creatingCategory, moveState) {
         if (contextSeries != null) return@LaunchedEffect
         // Opening the TMDB Details window closes the menu; let the window keep focus (it traps focus and
         // refocuses the series on close), don't yank it back to the grid here.
@@ -347,9 +414,11 @@ private fun SeriesGrid(
         if (setTmdbNameSeries != null) return@LaunchedEffect
         // Same for the trailer player.
         if (trailerVideoKey != null) return@LaunchedEffect
-        // The context menu closes before MoveToCategoryDialog (and its nested name prompt) opens.
-        // Do not focus the grid behind either modal; re-run this effect when the whole flow closes.
-        if (moveItem != null || creatingCategory) return@LaunchedEffect
+        // The context menu closes before MoveToCategoryDialog (and its nested name prompt) opens, and
+        // the reorder overlay owns focus while it is up. Do not focus the grid behind any of them;
+        // this effect re-runs when the whole flow closes and restores the row below.
+        if (moveItem != null || creatingCategory || moveState != null) return@LaunchedEffect
+
         val targetId = contextSeriesId
         if (targetId == null) { contextSeriesIndex = -1; return@LaunchedEffect }
         val items = series.itemSnapshotList.items
@@ -384,27 +453,81 @@ private fun SeriesGrid(
     // Manual panel widths (Settings → Panel Width Adjustment). The saved percentages now resolve
     // against the inside of one shared content container; no stored value is rewritten.
     val panelShares = rememberPanelShares(PanelSection.SERIES, settingsVm)
+    // The focused show's artwork is the Cinematic background. Nothing else reads this.
+    val cinematicBackdrop = if (!cinematic) null else {
+        val meta = selectedSeriesMeta?.takeIf { it.seriesId == selectedSeries?.id }?.cache
+        tv.own.owntv.core.metadata.MetadataImages.backdrop(meta?.backdropPath, size = "w1280")
+            ?: selectedSeries?.backdropUrl?.takeIf { it.isNotBlank() }
+    }
+    tv.own.owntv.features.shell.components.CinematicBrowse(enabled = cinematic, backdropUrl = cinematicBackdrop, rounded = lockedKey == null) {
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .roundedPanel(fillColor = ContentPanelFill)
-            .padding(BrowseContainerPadding)
+            // Plan Z — while pinned, the More screen hosting this pane owns the panel and its
+            // padding, so the tab strip above the list is inside the same box rather than floating
+            // over the wallpaper next to a second one.
+            .then(
+                // Cinematic keeps the padding but never the plate — an opaque panel here would
+                // cover the backdrop it exists to show.
+                if (lockedKey != null) {
+                    Modifier
+                } else if (cinematic) {
+                    Modifier.padding(BrowseContainerPadding)
+                } else {
+                    Modifier.roundedPanel(fillColor = ContentPanelFill).padding(BrowseContainerPadding)
+                },
+            )
             .onFocusChanged { if (it.hasFocus) onChildFocused() },
     ) {
-    val previewVisible = panelShares?.preview != 0
+    // Cinematic has no preview column — the detail block above the grid replaces it.
+    val previewVisible = !cinematic && panelShares?.preview != 0
     val innerGapTotal = browsePanelGapTotal(previewVisible)
     val panels = panelShares?.let { computePanelWidths(it, maxWidth, innerGapTotal) }
+    // Cinematic resolves the same three stored numbers differently: two columns, and the third
+    // share as the detail block's height. See computeCinematicLayout for why.
+    val cine = if (!cinematic) null else {
+        computeCinematicLayout(
+            shares = panelShares ?: defaultPanelShares(PanelSection.SERIES, maxWidth),
+            detailsPercent = cinematicDetailsPct,
+            totalWidth = maxWidth,
+            totalHeight = maxHeight,
+        )
+    }
     Row(
         modifier = Modifier
             .fillMaxSize(),
     ) {
+        // Plan Z — More → Favourites and More → History pin this pane to one folder and put
+        // their own three tabs above it, so there is no category rail to draw.
+        if (lockedKey == null) {
         CategoryRail(
-            width = panels?.category ?: Dimens.RailWidthFixed,
-            categories = railItems.map { RailCategory(it.displayLabel(R.string.content_category_all_series), it.icon, showGenreDot = it.key is LiveKey.Folder) },
+            width = cine?.category ?: panels?.category ?: Dimens.RailWidthFixed,
+            categories = railItems.map {
+                RailCategory(
+                    it.displayLabel(R.string.content_category_all_series),
+                    it.icon,
+                    showGenreDot = it.key is LiveKey.Folder,
+                    providerName = it.providerName,
+                )
+            },
             selectedIndex = selectedIndex,
+            focusRowIndex = railFocusRow,
+            onRowFocused = { railFocusRow = null },
             onSelect = { idx -> railItems.getOrNull(idx)?.let { vm.select(it.key) } },
+            onLongSelect = { idx ->
+                railItems.getOrNull(idx)?.let { item ->
+                    if (item.key is LiveKey.Folder || item.key is LiveKey.Custom) {
+                        contextCategory = item
+                        contextCategoryKey = item.key
+                    }
+                }
+            },
             listState = catListState,
-            showPanel = false,
+            focusRequester = railFocus,
+            // Cinematic floats the category panel on the artwork as its own frosted plate; the
+            // Separate layout has the content panel behind it and needs none.
+            showPanel = cinematic,
+            panelFill = if (cinematic) RailPanelFill.copy(alpha = 0.55f) else null,
             modifier = Modifier
                 .onFocusChanged { railPaneFocused = it.hasFocus }
                 .chNavPaging(
@@ -428,10 +551,12 @@ private fun SeriesGrid(
         )
 
         Spacer(Modifier.width(BrowseColumnGap))
+        }
 
         Column(
             modifier = Modifier
-                .then(if (panels != null) Modifier.width(panels.list) else Modifier.weight(1.8f))
+                // Cinematic is two columns, so the content takes everything the rail leaves.
+                .then(if (cine != null) Modifier.width(cine.content) else if (panels != null) Modifier.width(panels.list) else Modifier.weight(1.8f))
                 .fillMaxSize()
                 .onFocusChanged { gridPaneFocused = it.hasFocus }
                 .chNavPaging(
@@ -485,17 +610,60 @@ private fun SeriesGrid(
                 }
                 // Held Up/Down can outrun the lazy grid's composition and escape this pane
                 // (landing on the top bar) — trap vertical exits; Left/Right/Back leave normally.
-                .trapVerticalFocusExit()
+                // Plan Z — while pinned there IS somewhere above to go: the More screen's tab
+                // strip. It owns the trap instead, so Up reaches the tabs and still cannot escape
+                // past them to the shell's top bar.
+                .then(if (lockedKey == null) Modifier.trapVerticalFocusExit() else Modifier)
                 .focusGroup()
         ) {
-            Text(stringResource(R.string.content_section_category, stringResource(R.string.common_nav_series), selectedLabel), style = MaterialTheme.typography.headlineLarge, color = OwnTVTheme.colors.onSurface)
-            Spacer(Modifier.height(4.dp))
-            Text(pluralStringResource(R.plurals.content_count_series, count, selectedLabel, count), style = MaterialTheme.typography.titleMedium, color = OwnTVTheme.colors.primary, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(14.dp))
+            if (cinematic) {
+                // The detail block takes the place of the big section heading: the artwork behind it
+                // already says which show this is, so the heading would be a second title.
+                val s = selectedSeries
+                val meta = selectedSeriesMeta?.takeIf { it.seriesId == s?.id }?.cache
+                if (s != null) {
+                    val tmdbWins = metadataMode.tmdbWins
+                    val year = if (tmdbWins) meta?.year ?: s.year else s.year ?: meta?.year
+                    val rating = if (tmdbWins) meta?.rating?.takeIf { it > 0 } ?: s.rating?.takeIf { it > 0 }
+                        else s.rating?.takeIf { it > 0 } ?: meta?.rating?.takeIf { it > 0 }
+                    val providerPlot = s.plot?.takeIf { it.isNotBlank() }
+                    tv.own.owntv.features.shell.components.CinematicDetails(
+                        title = s.name,
+                        logoUrl = tv.own.owntv.core.metadata.MetadataImages.logo(meta?.logoPath),
+                        metaLine = listOfNotNull(
+                            year?.let { localizedInteger(it, grouping = false) },
+                            rating?.let { stringResource(R.string.content_rating, it) },
+                        ).joinToString(stringResource(R.string.content_metadata_separator)),
+                        qualityBadges = tv.own.owntv.features.shell.components.cinematicQualityBadges(s.qualityRank, s.advertisedCapabilities),
+                        // A show's episodes are only synced once it is opened, so there is nothing
+                        // here to resume from until then — see the Series note in the plan.
+                        resumeLabel = null,
+                        genres = jsonStringList(meta?.genresJson),
+                        plot = if (tmdbWins) meta?.overview ?: providerPlot else providerPlot ?: meta?.overview,
+                        cast = tv.own.owntv.core.metadata.MetadataCast.parse(meta?.castJson),
+                        modifier = Modifier.heightIn(max = cine?.detailsHeight ?: Dp.Unspecified),
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
+                Text(
+                    pluralStringResource(R.plurals.content_count_series, count, selectedLabel, count),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = OwnTVTheme.colors.onSurface,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Text(stringResource(R.string.content_section_category, stringResource(R.string.common_nav_series), selectedLabel), style = MaterialTheme.typography.headlineLarge, color = OwnTVTheme.colors.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text(pluralStringResource(R.plurals.content_count_series, count, selectedLabel, count), style = MaterialTheme.typography.titleMedium, color = OwnTVTheme.colors.primary, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(14.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SearchBar(query = searchQuery, onQueryChange = vm::setSearchQuery, placeholder = stringResource(R.string.content_search_series, selectedLabel), modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
                 SortChip(mode = sortMode, onToggle = vm::toggleSort, playlistLabel = stringResource(R.string.content_provider))
+                // Cinematic is grid-only, so the toggle would be a button that changes nothing.
+                if (!cinematic) {
                 Spacer(Modifier.width(10.dp))
                 tv.own.owntv.ui.components.OwnTVButton(
                     label = stringResource(if (viewMode == SettingsRepository.VodViewMode.GRID) R.string.settings_view_grid else R.string.settings_view_list),
@@ -503,6 +671,7 @@ private fun SeriesGrid(
                     icon = if (viewMode == SettingsRepository.VodViewMode.GRID) OwnTVIcon.MENU else OwnTVIcon.SERIES,
                     style = tv.own.owntv.ui.components.OwnTVButtonStyle.SECONDARY,
                 )
+                }
             }
             Spacer(Modifier.height(14.dp))
 
@@ -527,7 +696,9 @@ private fun SeriesGrid(
                         if (s != null) {
                             SeriesListRow(
                                 series = s,
+                                posterUrl = s.posterUrl?.takeIf { it.isNotBlank() } ?: cachedPosters[s.id],
                                 isFavorite = favoriteIds.contains(s.id),
+                                providerName = providerNames[s.sourceId],
                                 modifier = Modifier.gridFocusTarget(
                                     itemId = s.id, index = index,
                                     contextId = contextSeriesId, contextFocus = contextFocus,
@@ -556,10 +727,11 @@ private fun SeriesGrid(
                         val s = series[index]
                         if (s != null) {
                             PosterCard(
-                                posterUrl = s.posterUrl,
+                                posterUrl = s.posterUrl?.takeIf { it.isNotBlank() } ?: cachedPosters[s.id],
                                 title = s.name,
                                 rating = s.rating,
                                 isFavorite = favoriteIds.contains(s.id),
+                                providerName = providerNames[s.sourceId],
                                 modifier = Modifier.gridFocusTarget(
                                     itemId = s.id, index = index,
                                     contextId = contextSeriesId, contextFocus = contextFocus,
@@ -613,7 +785,7 @@ private fun SeriesGrid(
                         .padding(Dimens.GapLarge),
                 ) {
                     // Non-focusable status strip — only present while this series' episodes are downloading.
-                    tv.own.owntv.ui.components.downloadStripFor(selectedSeriesDownloads)?.let {
+                    tv.own.owntv.core.download.downloadStripFor(selectedSeriesDownloads)?.let {
                         tv.own.owntv.ui.components.DownloadStatusStrip(it)
                         Spacer(Modifier.height(12.dp))
                     }
@@ -659,11 +831,12 @@ private fun SeriesGrid(
         }
     }
     }
+    }
 
     // Long-press a series → context menu.
     contextSeries?.let { s ->
         val cacheForS = selectedSeriesMeta?.takeIf { it.seriesId == s.id }?.cache
-        SeriesContextMenu(
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { contextSeries = null }) { SeriesContextMenu(
             title = s.name,
             isFavorite = favoriteIds.contains(s.id),
             canMove = selectedKey is LiveKey.Folder || selectedKey is LiveKey.Custom || selectedKey == LiveKey.Favorites,
@@ -696,7 +869,7 @@ private fun SeriesGrid(
             onSetTmdbName = { contextSeries = null; setTmdbNameSeries = s },
             onPlayTrailer = { key -> contextSeries = null; trailerVideoKey = key },
             onDismiss = { contextSeries = null },
-        )
+        ) }
     }
 
     // Move to… a combined category (issue #87), incl. the "＋ New category…" name prompt.
@@ -797,6 +970,57 @@ private fun SeriesGrid(
         )
     }
 
+    // Category Move mode overlay.
+    categoryMoveState?.let { ms ->
+        MoveOrderOverlay(
+            title = stringResource(R.string.content_move),
+            itemNames = ms.items,
+            activeIndex = ms.activeIndex,
+            onMoveUp = vm::moveCategoryUp,
+            onMoveDown = vm::moveCategoryDown,
+            onCommit = vm::commitCategoryMove,
+            onCancel = vm::cancelCategoryMove,
+        )
+    }
+
+    contextCategory?.let { item ->
+        CategoryContextMenu(
+            categoryName = item.displayLabel(R.string.content_category_all_series),
+            canHide = item.key is LiveKey.Folder || item.key is LiveKey.Custom,
+            canMove = item.key is LiveKey.Folder || item.key is LiveKey.Custom,
+            onHide = { vm.hideCategory(item.key); contextCategory = null },
+            onMove = { vm.enterCategoryMoveMode(item.key); contextCategory = null },
+            onDismiss = { contextCategory = null }
+        )
+    }
+
+    // Restore focus to the rail when the context menu or category move mode closes.
+    // Land on the row the menu was opened from; fall back to the column if that row is gone (Hide).
+    fun restoreToContextCategory() {
+        val row = contextCategoryKey?.let { k -> railItems.indexOfFirst { it.key == k } }?.takeIf { it >= 0 }
+        contextCategoryKey = null
+        if (row != null) railFocusRow = row else runCatching { railFocus.requestFocus() }
+    }
+    var catMenuWasOpen by remember { mutableStateOf(false) }
+    var categoryMoveWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(contextCategory, categoryMoveState) {
+        if (contextCategory != null) catMenuWasOpen = true
+        if (categoryMoveState != null) categoryMoveWasOpen = true
+
+        if (contextCategory == null && catMenuWasOpen && categoryMoveState == null) {
+            catMenuWasOpen = false
+            if (!categoryMoveWasOpen) {
+                kotlinx.coroutines.delay(60)
+                restoreToContextCategory()
+            }
+        }
+        if (categoryMoveState == null && categoryMoveWasOpen) {
+            categoryMoveWasOpen = false
+            kotlinx.coroutines.delay(60)
+            restoreToContextCategory()
+        }
+    }
+
     InAppToast(toast)
 }
 
@@ -829,6 +1053,7 @@ private fun buildSeriesDetails(
     return tv.own.owntv.features.shell.components.MediaDetailsUi(
         title = s.name,
         backdropUrl = backdrop,
+        logoUrl = tv.own.owntv.core.metadata.MetadataImages.logo(meta?.logoPath),
         posterUrl = poster,
         metaLine = metaLine,
         genres = jsonStringList(meta?.genresJson),
@@ -851,7 +1076,7 @@ private fun EpisodeDetailPane(
     nextUpEpisode: EpisodeEntity?,
     nextUpPositionMs: Long,
     onPlayNextUp: () -> Unit,
-    downloadStrip: tv.own.owntv.ui.components.DownloadStripState? = null,
+    downloadStrip: tv.own.owntv.core.download.DownloadStripState? = null,
 ) {
     val colors = OwnTVTheme.colors
     if (episode == null) {
@@ -864,7 +1089,9 @@ private fun EpisodeDetailPane(
         else episode.plot?.takeIf { it.isNotBlank() } ?: meta?.overview
     val bits = listOfNotNull(
         stringResource(R.string.content_season_episode, episode.seasonNumber, episode.episodeNumber),
-        meta?.year?.let { localizedInteger(it, grouping = false) },
+        // The full day where one is known; the bare year only when it is not, since on a long-running
+        // show the year is shared by hundreds of episodes and identifies none of them.
+        rememberAirDateLabel(episode, meta) ?: meta?.year?.let { localizedInteger(it, grouping = false) },
         meta?.rating?.takeIf { it > 0 }?.let { stringResource(R.string.content_rating, it) },
     )
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Dimens.GapLarge)) {
@@ -945,29 +1172,28 @@ private fun EpisodeContextMenu(
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            OwnTVButton(stringResource(R.string.content_download), onClick = onDownload, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.DOWNLOADS, modifier = Modifier.fillMaxWidth().focusRequester(focus))
-            // Phase B: one-off external playback, independent of the global "External player" toggle.
-            OwnTVButton(
-                stringResource(R.string.content_play_external), onClick = onPlayExternal, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAY,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            // Manual override of the ≥95% auto-detected watched state (option 2 of the design pass).
-            OwnTVButton(
-                if (watched) stringResource(R.string.content_mark_unwatched) else stringResource(R.string.content_mark_watched),
-                onClick = onToggleWatched,
-                style = OwnTVButtonStyle.SECONDARY,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (hasTmdbDetails) {
-                OwnTVButton(stringResource(R.string.content_tmdb_details), onClick = onShowDetails, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.MENU, modifier = Modifier.fillMaxWidth())
+            // The menu as data: same actions, same gating, same order as the buttons that used to be
+            // written out here one by one. Close is not in the list — it stays pinned last.
+            val actions = buildList {
+                add(MenuAction("download", stringResource(R.string.content_download), OwnTVIcon.DOWNLOADS, onClick = onDownload))
+                // Phase B: one-off external playback, independent of the global "External player" toggle.
+                add(MenuAction("play_external", stringResource(R.string.content_play_external), OwnTVIcon.PLAY, onClick = onPlayExternal))
+                // Manual override of the ≥95% auto-detected watched state (option 2 design pass).
+                add(MenuAction("mark_watched", if (watched) stringResource(R.string.content_mark_unwatched) else stringResource(R.string.content_mark_watched), onClick = onToggleWatched))
+                if (hasTmdbDetails) add(MenuAction("tmdb_details", stringResource(R.string.content_tmdb_details), OwnTVIcon.MENU, onClick = onShowDetails))
+                // Refetch TMDB details (§11.2 U5a) — clears this episode's cache AND its show's match, then re-searches.
+                if (canRefetchTmdb) add(MenuAction("refetch_tmdb", stringResource(R.string.content_refetch_tmdb), onClick = onRefetch))
+                // Delete subtitles — only when this episode has downloaded OpenSubtitles subs (§11).
+                onDeleteSubtitles?.let { add(MenuAction("delete_subtitles", stringResource(R.string.content_delete_subtitles), OwnTVIcon.SUBTITLE, onClick = it)) }
             }
-            // Refetch TMDB details (§11.2 U5a) — clear this episode's cache AND its show's match, then re-search.
-            if (canRefetchTmdb) {
-                OwnTVButton(stringResource(R.string.content_refetch_tmdb), onClick = onRefetch, style = OwnTVButtonStyle.SECONDARY, modifier = Modifier.fillMaxWidth())
-            }
-            // Delete subtitles — only when this episode has downloaded OpenSubtitles subs (§11).
-            onDeleteSubtitles?.let {
-                OwnTVButton(stringResource(R.string.content_delete_subtitles), onClick = it, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.SUBTITLE, modifier = Modifier.fillMaxWidth())
+            arranged(ContentMenu.EPISODE, actions).forEachIndexed { index, action ->
+                OwnTVButton(
+                    action.label,
+                    onClick = action.onClick,
+                    style = OwnTVButtonStyle.SECONDARY,
+                    icon = action.icon,
+                    modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(focus) else Modifier),
+                )
             }
             Spacer(Modifier.height(4.dp))
             OwnTVButton(stringResource(R.string.content_close), onClick = onDismiss, modifier = Modifier.fillMaxWidth())        }
@@ -984,7 +1210,10 @@ private fun buildEpisodeDetails(
     val still = tv.own.owntv.core.metadata.MetadataImages.backdrop(meta?.backdropPath ?: meta?.posterPath)
     val title = if (tmdbWins) meta?.title?.takeIf { it.isNotBlank() } ?: episodeDisplayTitle(ep) else episodeDisplayTitle(ep)
     val plot = if (tmdbWins) meta?.overview ?: ep.plot else ep.plot?.takeIf { it.isNotBlank() } ?: meta?.overview
-    val metaLine = listOfNotNull(meta?.year?.let { localizedInteger(it, grouping = false) }, meta?.rating?.takeIf { it > 0 }?.let { stringResource(R.string.content_rating, it) }).joinToString(stringResource(R.string.content_metadata_separator))
+    val metaLine = listOfNotNull(
+        rememberAirDateLabel(ep, meta) ?: meta?.year?.let { localizedInteger(it, grouping = false) },
+        meta?.rating?.takeIf { it > 0 }?.let { stringResource(R.string.content_rating, it) },
+    ).joinToString(stringResource(R.string.content_metadata_separator))
     return tv.own.owntv.features.shell.components.MediaDetailsUi(
         title = title,
         subtitle = stringResource(R.string.content_season_episode, ep.seasonNumber, ep.episodeNumber),
@@ -1292,6 +1521,7 @@ private fun EpisodeView(
                                     val completed = ep.id in completedIds
                                     EpisodeRow(
                                         episode = ep,
+                                        meta = seasonMeta[ep.id],
                                         lastWatched = ep.id == lastPlayedId,
                                         completed = completed,
                                         progressFraction = prog?.takeIf { !completed && it.durationMs > 0 }
@@ -1320,8 +1550,8 @@ private fun EpisodeView(
                             nextUpPositionMs = nextUpPos,
                             onPlayNextUp = { nextUpEp?.let { startEpisode(it) } },
                             // The focused episode's own download, else the whole-series aggregate.
-                            downloadStrip = (ep?.let { e -> episodeDownloadStates[e.id]?.let { tv.own.owntv.ui.components.downloadStripFor(listOf(it)) } })
-                                ?: tv.own.owntv.ui.components.downloadStripFor(openedSeriesDownloads),
+                            downloadStrip = (ep?.let { e -> episodeDownloadStates[e.id]?.let { tv.own.owntv.core.download.downloadStripFor(listOf(it)) } })
+                                ?: tv.own.owntv.core.download.downloadStripFor(openedSeriesDownloads),
                         )
                     }
                 }
@@ -1355,7 +1585,7 @@ private fun EpisodeView(
     contextEpisode?.let { ep ->
         val cacheForEp = selectedEpisodeMeta?.takeIf { it.episodeId == ep.id }?.cache
         val alreadyDownloaded = downloads[ep.id] != null
-        EpisodeContextMenu(
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { contextEpisode = null }) { EpisodeContextMenu(
             title = stringResource(R.string.content_season_episode_title, ep.seasonNumber, ep.episodeNumber, episodeDisplayTitle(ep)),
             watched = ep.id in completedIds,
             hasTmdbDetails = metadataMode.enrich && cacheForEp != null,
@@ -1379,17 +1609,17 @@ private fun EpisodeView(
             },
             onDeleteSubtitles = if (contextEpisodeSubs.isNotEmpty()) ({ showEpisodeDeleteSubs = true }) else null,
             onDismiss = { contextEpisode = null },
-        )
+        ) }
     }
 
     // Season/episode order popup for this series. Applies immediately; stays open so both rows can
     // be set in one visit.
     if (showSorting) {
-        SeriesSortingDialog(
+        tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = { showSorting = false }) { SeriesSortingDialog(
             order = seriesOrder,
             onChange = { seasonsDesc, episodesDesc -> vm.setSeriesOrder(seasonsDesc, episodesDesc) },
             onDismiss = { showSorting = false },
-        )
+        ) }
     }
 
     // Per-episode "Delete subtitles" popup (§11) — individual deletion; closes when none remain.
@@ -1575,6 +1805,7 @@ private fun EpisodeTile(
                     )
                 }
             }
+            val aired = rememberAirDateLabel(episode, meta)
             Text(
                 title,
                 style = MaterialTheme.typography.labelLarge,
@@ -1582,15 +1813,42 @@ private fun EpisodeTile(
                 fontWeight = if (focused) FontWeight.Medium else FontWeight.Normal,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth()
+                    .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = if (aired == null) 6.dp else 0.dp),
             )
+            if (aired != null) {
+                Text(
+                    aired,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp),
+                )
+            }
         }
     }
+}
+
+/**
+ * The day an episode first aired, ready to render, or null when nothing knows it. Asked for by a
+ * user whose series run to thousands of episodes, where the titles are near-identical and the
+ * number stops being a landmark long before episode nine hundred.
+ */
+@Composable
+private fun rememberAirDateLabel(
+    episode: EpisodeEntity,
+    meta: tv.own.owntv.core.database.entity.MetadataCacheEntity?,
+): String? {
+    val format = rememberAirDateFormatter()
+    val ms = tv.own.owntv.core.content.AirDate.of(episode.airDateMs, meta?.airDate)
+    return ms?.let(format)
 }
 
 @Composable
 private fun EpisodeRow(
     episode: EpisodeEntity,
+    meta: tv.own.owntv.core.database.entity.MetadataCacheEntity?,
     lastWatched: Boolean,
     completed: Boolean,
     progressFraction: Float?,
@@ -1638,6 +1896,15 @@ private fun EpisodeRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                rememberAirDateLabel(episode, meta)?.let { aired ->
+                    Text(
+                        aired,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 // Mark the episode you last watched so it's findable even when it isn't focused (#22).
                 if (lastWatched) {
                     Text(
@@ -1663,7 +1930,9 @@ private fun EpisodeRow(
 @Composable
 private fun SeriesListRow(
     series: SeriesEntity,
+    posterUrl: String?,
     isFavorite: Boolean,
+    providerName: String? = null,
     onFocus: () -> Unit,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
@@ -1688,8 +1957,8 @@ private fun SeriesListRow(
                 modifier = Modifier.size(width = 44.dp, height = 62.dp).clip(RoundedCornerShape(6.dp)).background(colors.surfaceContainerLowest),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!series.posterUrl.isNullOrBlank()) {
-                    AsyncImage(model = series.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                if (!posterUrl.isNullOrBlank()) {
+                    AsyncImage(model = posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
                 } else {
                     OwnTVIcon(OwnTVIcon.SERIES, tint = colors.onSurfaceVariant, modifier = Modifier.size(22.dp))
                 }
@@ -1711,8 +1980,9 @@ private fun SeriesListRow(
                 }
             }
             if (isFavorite) {
-                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.primary, modifier = Modifier.size(18.dp))
+                OwnTVIcon(OwnTVIcon.FAVORITE, tint = colors.favorite, filled = true, modifier = Modifier.size(18.dp))
             }
+            providerName?.let { ProviderChip(name = it) }
         }
     }
 }

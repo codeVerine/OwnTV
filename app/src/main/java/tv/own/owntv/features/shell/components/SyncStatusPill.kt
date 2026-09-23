@@ -18,6 +18,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.koinInject
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import tv.own.owntv.core.download.DownloadActivityTracker
+import tv.own.owntv.core.recording.RecordingActivityTracker
 import tv.own.owntv.core.sync.EpgActivityTracker
 import tv.own.owntv.core.sync.SyncActivityTracker
 import tv.own.owntv.core.sync.TrendingActivityTracker
@@ -37,7 +39,7 @@ import androidx.compose.ui.res.stringResource
 import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.compactCount
 import tv.own.owntv.ui.components.displayText
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.ui.theme.glass
 
@@ -59,10 +61,14 @@ fun SyncStatusPill(modifier: Modifier = Modifier) {
     val catalogTracker: SyncActivityTracker = koinInject()
     val epgTracker: EpgActivityTracker = koinInject()
     val trendingTracker: TrendingActivityTracker = koinInject()
+    val downloadTracker: DownloadActivityTracker = koinInject()
+    val recordingTracker: RecordingActivityTracker = koinInject()
     val connectivity: ConnectivityObserver = koinInject()
     val activeCatalog by catalogTracker.active.collectAsStateWithLifecycle()
     val activeEpg by epgTracker.active.collectAsStateWithLifecycle()
     val activeTrending by trendingTracker.active.collectAsStateWithLifecycle()
+    val activeDownload by downloadTracker.active.collectAsStateWithLifecycle()
+    val activeRecordings by recordingTracker.active.collectAsStateWithLifecycle()
     val lastCompleted by catalogTracker.lastCompleted.collectAsStateWithLifecycle()
     val lastTrendingCompleted by trendingTracker.lastCompleted.collectAsStateWithLifecycle()
 
@@ -72,7 +78,8 @@ fun SyncStatusPill(modifier: Modifier = Modifier) {
     var currentCompleted by remember { mutableStateOf<SyncActivityTracker.CompletedSync?>(null) }
     var currentTrendingCompleted by remember { mutableStateOf<TrendingActivityTracker.CompletedBuild?>(null) }
 
-    val anyActive = activeCatalog.isNotEmpty() || activeEpg.isNotEmpty() || activeTrending.isNotEmpty()
+    val anyActive = activeCatalog.isNotEmpty() || activeEpg.isNotEmpty() || activeTrending.isNotEmpty() ||
+        activeDownload != null || activeRecordings.isNotEmpty()
 
     LaunchedEffect(lastCompleted) {
         val completed = lastCompleted ?: return@LaunchedEffect
@@ -116,6 +123,12 @@ fun SyncStatusPill(modifier: Modifier = Modifier) {
     // Catalog syncs first (they're the slower, more interesting ones), then guides, in a stable
     // order so a row doesn't jump around as progress updates arrive.
     val rows = buildList<SyncLine> {
+        // Recordings first, always (D13). They are time-critical and unrecoverable — a sync that is
+        // collapsed into "+N more" can be watched again in a minute, a programme that is being
+        // recorded cannot. Then downloads, which are deliberately started and time-limited. Then the
+        // background syncs, which are the ones that can afford to be hidden.
+        activeRecordings.values.sortedBy { it.id }.forEach { add(SyncLine.Recording(it)) }
+        activeDownload?.let { add(SyncLine.Download(it)) }
         activeCatalog.values.sortedBy { it.sourceId }.forEach { add(SyncLine.Catalog(it)) }
         activeTrending.values.sortedBy { it.sourceId }.forEach {
             add(SyncLine.Trending(it))
@@ -210,6 +223,8 @@ fun SyncStatusPill(modifier: Modifier = Modifier) {
  */
 private sealed interface SyncLine {
     data class Catalog(val sync: SyncActivityTracker.ActiveSync) : SyncLine
+    data class Download(val download: DownloadActivityTracker.ActiveDownload) : SyncLine
+    data class Recording(val recording: tv.own.owntv.core.recording.RecordingProgress) : SyncLine
     data class Trending(val build: TrendingActivityTracker.ActiveBuild) : SyncLine
     data class TrendingDetail(val build: TrendingActivityTracker.ActiveBuild) : SyncLine
     data class Epg(val sync: EpgActivityTracker.ActiveEpgSync) : SyncLine
@@ -242,6 +257,20 @@ private fun SyncLine.text(): String = when (this) {
         val countsText = countParts.joinToString(stringResource(R.string.sync_counts_separator))
         if (countsText.isBlank()) stringResource(R.string.sync_status_epg, sync.sourceName)
         else stringResource(R.string.sync_status_epg_with_counts, sync.sourceName, countsText)
+    }
+    // No percentage: a recording ends on the clock, not on a byte count, so there is nothing to be
+    // a percentage of.
+    // With the size as it grows: a recording has no total to count towards, so the bytes already
+    // written are the only sign it is moving rather than stuck.
+    is SyncLine.Recording -> listOfNotNull(
+        stringResource(R.string.recording_pill_line, recording.title),
+        recording.bytes.takeIf { it > 0 }
+            ?.let { stringResource(R.string.common_size_mb, recordingSizeMb(it)) },
+    ).joinToString(stringResource(R.string.content_epg_bits_separator))
+    is SyncLine.Download -> {
+        val percent = download.progress?.let { (it * 100).toInt() }
+        if (percent == null) stringResource(R.string.sync_status_download, download.title)
+        else stringResource(R.string.sync_status_download_with_progress, download.title, percent)
     }
     is SyncLine.Trending -> when (build.stage) {
         TrendingActivityTracker.Stage.STARTING -> stringResource(R.string.sync_status_trending_starting, build.sourceName)
@@ -355,3 +384,10 @@ private fun trendingCompletedDetailLine(completed: TrendingActivityTracker.Compl
 
 /** Beyond this many concurrent syncs the pill summarises the rest, rather than covering the screen. */
 private const val MAX_ROWS = 4
+
+/** Megabytes to one decimal, formatted for the locale. */
+private fun recordingSizeMb(bytes: Long): String =
+    java.text.NumberFormat.getNumberInstance().apply {
+        minimumFractionDigits = 1
+        maximumFractionDigits = 1
+    }.format(bytes / 1_048_576.0)

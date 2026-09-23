@@ -38,8 +38,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -49,7 +47,7 @@ import kotlinx.coroutines.withContext
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.storage.StorageAccess
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import java.io.File
 
@@ -123,8 +121,10 @@ private fun StorageBrowserContent(
         runCatching { firstFocus.requestFocus() }
     }
 
-    Box(Modifier.fillMaxSize().modalScrim().focusGroup(), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(270.dp).clip(RoundedCornerShape(16.dp)).background(colors.surfaceContainerHigh).padding(14.dp)) {
+    Box(Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(), contentAlignment = Alignment.Center) {
+        // scroll = false: the listing below is a height-capped LazyColumn, which cannot nest inside
+        // dialogPanel's own vertical scroll.
+        Column(Modifier.dialogPanel(width = 270.dp, corner = 16.dp, padding = 14.dp, scroll = false)) {
             Text(title, style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(current?.absolutePath ?: stringResource(R.string.setup_pick_location), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -151,6 +151,16 @@ private fun StorageBrowserContent(
             val folders = listing.folders
             val files = listing.files
 
+            // Above the list, not below it. Below, the only way down to it was through every folder
+            // in the listing — about thirty presses in a full directory, for the one action the user
+            // opened a folder picker to perform. Above, it is a single Up from the first row no
+            // matter how long the listing is, and the list still opens focused so navigating first
+            // costs nothing.
+            if (mode == BrowseMode.FOLDER && current != null) {
+                OwnTVButton(stringResource(R.string.setup_use_folder), onClick = { current?.let(onPick) }, modifier = Modifier.fillMaxWidth(), compact = true)
+                Spacer(Modifier.height(8.dp))
+            }
+
             // Cap the list to the screen (minus dialog chrome) so the footer buttons stay reachable.
             val listMax = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp - 200.dp).coerceIn(140.dp, 200.dp)
             LazyColumn(Modifier.heightIn(max = listMax).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -174,10 +184,6 @@ private fun StorageBrowserContent(
             }
 
             Spacer(Modifier.height(12.dp))
-            if (mode == BrowseMode.FOLDER && current != null) {
-                OwnTVButton(stringResource(R.string.setup_use_folder), onClick = { current?.let(onPick) }, modifier = Modifier.fillMaxWidth(), compact = true)
-                Spacer(Modifier.height(8.dp))
-            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OwnTVButton(stringResource(R.string.common_cancel), onClick = onDismiss, style = OwnTVButtonStyle.SECONDARY, compact = true)
                 Spacer(Modifier.weight(1f))

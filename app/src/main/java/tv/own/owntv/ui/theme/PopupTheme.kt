@@ -3,6 +3,8 @@ package tv.own.owntv.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.isUnspecified
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Typography
@@ -27,14 +29,29 @@ fun PopupFontTheme(fontScale: Float = 1f, content: @Composable () -> Unit) {
         content()
         return
     }
+    val baseDensity = LocalDensity.current
+    val popupSizeScale = LocalPopupSizeScaleFactor.current
+    // The user's popup font size rides on the density's fontScale, not on the typography slots, so it
+    // reaches every sp inside the popup — hardcoded sizes and unstyled Text included. Multiplying the
+    // typography alone left buttons and input fields untouched, which read as "the setting does nothing".
+    val popupDensity = Density(
+        density = baseDensity.density * popupSizeScale,
+        fontScale = baseDensity.fontScale * LocalPopupFontScaleFactor.current /
+            (popupSizeScale * LocalUiFontScaleFactor.current),
+    )
+    // Only the caller's fixed design scale (0.70 host / 0.75 dense menus / 0.50 forms) stays here.
+    val effectiveFontScale = fontScale
     val t = MaterialTheme.typography
     val popupFamily = LocalPopupFontFamily.current
     fun androidx.compose.ui.text.TextStyle.popup() = copy(
         fontFamily = popupFamily,
-        fontSize = if (fontScale == 1f) fontSize else fontSize * fontScale,
-        lineHeight = if (fontScale == 1f || lineHeight.isUnspecified) lineHeight else lineHeight * fontScale,
+        fontSize = if (effectiveFontScale == 1f) fontSize else fontSize * effectiveFontScale,
+        lineHeight = if (effectiveFontScale == 1f || lineHeight.isUnspecified) lineHeight else lineHeight * effectiveFontScale,
     )
-    CompositionLocalProvider(LocalPopupTypographyApplied provides true) {
+    CompositionLocalProvider(
+        LocalPopupTypographyApplied provides true,
+        LocalDensity provides popupDensity,
+    ) {
         MaterialTheme(
             colorScheme = MaterialTheme.colorScheme,
             shapes = MaterialTheme.shapes,

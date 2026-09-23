@@ -52,6 +52,24 @@ fun rememberBestDateFormatter(
     return remember(formatter) { { ms -> formatter.format(Date(ms)) } }
 }
 
+/**
+ * A localized day for an episode's air date, formatted **in UTC** — see `AirDate` in core. An air
+ * date is a calendar day rather than an instant, and formatting UTC midnight in the device's own
+ * zone would show the day before to everyone west of it.
+ */
+@Composable
+fun rememberAirDateFormatter(): (Long) -> String {
+    val configuration = LocalConfiguration.current
+    val locale = configuration.locales[0]
+    val formatter = remember(locale) {
+        bestDateFormatter(locale, AIR_DATE_SKELETON, tv.own.owntv.core.content.AirDate.UTC)
+    }
+    return remember(formatter) { { ms -> formatter.format(Date(ms)) } }
+}
+
+/** Year, abbreviated month, day — the shortest form that still identifies a specific broadcast. */
+private const val AIR_DATE_SKELETON = "yMMMd"
+
 fun formatBestDate(
     context: Context,
     skeleton: String,

@@ -3,6 +3,8 @@ package tv.own.owntv.features.home
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import tv.own.owntv.R
+import tv.own.owntv.core.model.HomeLiveRowMode
+import tv.own.owntv.core.model.HomeRow
 
 @Composable
 fun HomeRow.displayTitle(): String = stringResource(

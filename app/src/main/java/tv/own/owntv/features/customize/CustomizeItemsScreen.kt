@@ -48,6 +48,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.model.MediaType
+import tv.own.owntv.features.settings.PickerDialog
 import tv.own.owntv.features.settings.SettingsViewModel
 import tv.own.owntv.ui.components.chNavPaging
 import tv.own.owntv.ui.components.FocusableSurface
@@ -60,10 +61,11 @@ import tv.own.owntv.ui.components.modalScrim
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
 import tv.own.owntv.ui.components.trapVerticalFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.LocalActionSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
-import tv.own.owntv.ui.theme.PopupFontTheme
+import tv.own.owntv.core.customize.MoveKind
+import tv.own.owntv.core.customize.SpanSelector
 
 /**
  * Category items screen — shows every item (channel/movie/series) in a category, including hidden
@@ -85,6 +87,7 @@ fun CustomizeItemsScreen(
     val rangeMode by vm.rangeMode.collectAsStateWithLifecycle()
     val rangeEndKey by vm.rangeEndKey.collectAsStateWithLifecycle()
     val rangeSelectedKeys by vm.rangeSelectedKeys.collectAsStateWithLifecycle()
+    val visibilityFilter by vm.visibilityFilter.collectAsStateWithLifecycle()
 
     // Propagate the category info from the parent ViewModel into the items ViewModel.
     val ctx = parentVm.ctxForItems()
@@ -117,6 +120,7 @@ fun CustomizeItemsScreen(
     var listPaneFocused by remember { mutableStateOf(false) }
     var focusedItemIndex by remember { mutableIntStateOf(0) }
     var renaming by remember { mutableStateOf<CustomizeItemRow?>(null) }
+    var showFilterPicker by remember { mutableStateOf(false) }
     // The item whose Hide button was clicked to close a range — opens the Show/Hide/Cancel prompt.
     var rangeEnd by remember { mutableStateOf<CustomizeItemRow?>(null) }
     // The item the "Move to…" dialog is moving (issue #87); creatingCategory swaps the dialog for the
@@ -124,26 +128,25 @@ fun CustomizeItemsScreen(
     var movingItem by remember { mutableStateOf<CustomizeItemRow?>(null) }
     var creatingCategory by remember { mutableStateOf(false) }
     val backFocus = remember { FocusRequester() }
+    val filterFocus = remember { FocusRequester() }
     val renameItemsFocus = remember { FocusRequester() }
     val autoCleanupFocus = remember { FocusRequester() }
-    // One FocusRequester per visible row, so a CH+/CH- jump lands focus on the target row's name.
-    val rowFocusers = remember(items.itemCount) { List(items.itemCount) { FocusRequester() } }
+    val rowFocusers = remember { mutableMapOf<String, FocusRequester>() }
     // Focus the row that opened a dialog (rename / move) when it closes (a dialog close can land
     // focus on the screen's first focusable otherwise).
     var dialogReturn by tv.own.owntv.ui.components.rememberDialogFocusRestore(
-        anyDialogOpen = renaming != null || rangeEnd != null || movingItem != null || creatingCategory,
+        anyDialogOpen = showFilterPicker || renaming != null || rangeEnd != null || movingItem != null || creatingCategory,
     )
     // Focus the first row once the screen opens (rows arrive via paging, so wait for them).
     var firstLanding by remember { mutableStateOf(true) }
 
-    // While a span is active, Back cancels the selection instead of leaving the screen.
     BackHandler { if (rangeAnchorKey != null) vm.cancelRange() else onBack() }
 
     LaunchedEffect(items.itemCount) {
         if (firstLanding && items.itemCount > 0) {
             firstLanding = false
             kotlinx.coroutines.delay(60)
-            runCatching { rowFocusers.firstOrNull()?.requestFocus() }
+            items[0]?.let { rowFocusers[it.key] }?.let { runCatching { it.requestFocus() } }
         } else if (firstLanding && items.itemCount == 0) {
             // Empty custom categories are valid. Their screen still needs a deterministic focus
             // owner while Paging is empty (and the first row takes over later if data arrives).
@@ -177,7 +180,23 @@ fun CustomizeItemsScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
+            Spacer(Modifier.width(16.dp))
+            OwnTVButton(
+                label = stringResource(
+                    R.string.settings_customize_filter_button,
+                    stringResource(
+                        when (visibilityFilter) {
+                            CustomizeVisibilityFilter.ALL -> R.string.settings_customize_filter_all
+                            CustomizeVisibilityFilter.VISIBLE -> R.string.settings_customize_filter_visible
+                            CustomizeVisibilityFilter.HIDDEN -> R.string.settings_customize_filter_hidden
+                        },
+                    ),
+                ),
+                onClick = { dialogReturn = filterFocus; showFilterPicker = true },
+                style = OwnTVButtonStyle.SECONDARY,
+                modifier = Modifier.focusRequester(filterFocus),
+            )
+            }
         Spacer(Modifier.height(4.dp))
         Text(
             when (section) {
@@ -263,7 +282,7 @@ fun CustomizeItemsScreen(
                     onJumpToIndex = { idx ->
                         scope.jumpLazyListTo(listState, idx) {
                             // Land focus on the target row's name (the first focusable in the row).
-                            rowFocusers.getOrNull(idx)?.let { runCatching { it.requestFocus() } }
+                            items[idx]?.let { rowFocusers[it.key] }?.let { runCatching { it.requestFocus() } }
                         }
                     },
                 ),
@@ -276,13 +295,14 @@ fun CustomizeItemsScreen(
                 val row = items[index] ?: return@items
                 val inMoveRange = rangeAnchorKey != null && rangeMode == SpanSelector.Mode.MOVE
                 val inRenameRange = rangeAnchorKey != null && rangeMode == SpanSelector.Mode.RENAME
+                val isInSpan = row.key in rangeSelectedKeys || renaming?.key == row.key
                 ItemRow(
                     row = row,
                     isLive = isLive,
                     inRangeMode = rangeAnchorKey != null && rangeMode == SpanSelector.Mode.HIDE,
                     inRenameRange = inRenameRange,
-                    isInSpan = row.key in rangeSelectedKeys,
-                    focusRequester = rowFocusers.getOrNull(index),
+                    isInSpan = isInSpan,
+                    focusRequester = remember(row.key) { rowFocusers.getOrPut(row.key) { FocusRequester() } },
                     upFocusRequester = backFocus.takeIf { index == 0 },
                     onRowFocused = { focusedItemIndex = index },
                     // While a move span is active every arrow acts on the whole block, not this row.
@@ -290,34 +310,53 @@ fun CustomizeItemsScreen(
                     onMoveDown = { if (inMoveRange) vm.moveRange(row, MoveKind.DOWN) else vm.move(row, up = false) },
                     onMoveTop = { if (inMoveRange) vm.moveRange(row, MoveKind.TOP) else vm.moveToEdge(row, top = true) },
                     onMoveBottom = { if (inMoveRange) vm.moveRange(row, MoveKind.BOTTOM) else vm.moveToEdge(row, top = false) },
-                    onMoveLongPress = { vm.beginMoveRange(row) },
+                    onMoveLongPress = { dialogReturn = rowFocusers[row.key]; vm.beginMoveRange(row) },
                     // Long-press Rename anchors a rename span; while one is active, pressing Rename on
                     // a second row opens the bulk rename flow over the whole span. On the anchor row
                     // itself it cancels, mirroring the Show/Hide span behavior.
-                    onRename = { dialogReturn = rowFocusers.getOrNull(index); renaming = row },
-                    onRenameLongPress = { vm.beginRenameRange(row) },
+                    onRename = { dialogReturn = rowFocusers[row.key]; renaming = row },
+                    onRenameLongPress = { dialogReturn = rowFocusers[row.key]; vm.beginRenameRange(row) },
                     onPickRenameEnd = {
                         if (row.key == rangeAnchorKey) {
                             vm.cancelRange()
                         } else {
-                            dialogReturn = rowFocusers.getOrNull(index)
+                            dialogReturn = rowFocusers[row.key]
                             // No active span (anchor vanished?) — fall back to the single rename.
                             if (vm.finishRenameRange(row) == null) renaming = row
                         }
                     },
-                    onMove = { dialogReturn = rowFocusers.getOrNull(index); movingItem = row },
+                    onMove = { dialogReturn = rowFocusers[row.key]; movingItem = row },
                     onToggleHidden = { vm.setItemHidden(row, !row.hidden) },
-                    onHideLongPress = { vm.beginRange(row) },
+                    onHideLongPress = { dialogReturn = rowFocusers[row.key]; vm.beginRange(row) },
                     onPickRangeEnd = {
                         if (row.key == rangeAnchorKey) vm.cancelRange()
                         else {
-                            dialogReturn = rowFocusers.getOrNull(index)
+                            dialogReturn = rowFocusers[row.key]
                             rangeEnd = row
                         }
                     },
                 )
             }
         }
+    }
+
+    if (showFilterPicker) {
+        PickerDialog(
+            title = stringResource(R.string.settings_customize_filter_title),
+            options = listOf(
+                CustomizeVisibilityFilter.ALL.name to stringResource(R.string.settings_customize_filter_all),
+                CustomizeVisibilityFilter.VISIBLE.name to stringResource(R.string.settings_customize_filter_visible),
+                CustomizeVisibilityFilter.HIDDEN.name to stringResource(R.string.settings_customize_filter_hidden),
+            ),
+            selected = visibilityFilter.name,
+            onSelect = { value ->
+                CustomizeVisibilityFilter.entries.firstOrNull { it.name == value }
+                    ?.let(vm::setVisibilityFilter)
+                scope.launch { listState.scrollToItem(0) }
+                showFilterPicker = false
+            },
+            onDismiss = { showFilterPicker = false },
+        )
     }
 
     renaming?.let { row ->
@@ -380,7 +419,7 @@ private fun ItemsRangeHideDialog(count: Int, onHide: () -> Unit, onShow: () -> U
     val hideFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { hideFocus.requestFocus() } }
     BackHandler { onDismiss() }
-    PopupFontTheme {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     Box(
         modifier = Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(),
         contentAlignment = Alignment.Center,
@@ -436,8 +475,8 @@ private fun ItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            // Tint every row in the span while a range is in progress, so the selected block is obvious.
-            .background(if (isInSpan) colors.primaryContainer else colors.surfaceContainerHigh)
+            // Highlight active span with a translucent tint so button focus remains clear.
+            .background(if (isInSpan) colors.primaryContainer.copy(alpha = 0.35f) else colors.surfaceContainerHigh)
             .padding(horizontal = 16.dp, vertical = 8.dp)
             // CH+- paging: a focusGroup with a FocusRequester so a jump lands focus on this row's
             // first focusable (the name); report up whenever any of the row's buttons gains focus.
@@ -448,6 +487,7 @@ private fun ItemRow(
         // Name — focusable, no click action in Phase 1 (reserved).
         FocusableSurface(
             onClick = { },
+            selected = isInSpan,
             modifier = Modifier
                 .weight(1f)
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
@@ -490,13 +530,13 @@ private fun ItemRow(
         Spacer(Modifier.width(10.dp))
         // Long-pressing any arrow anchors a move span; pressing an arrow on a second row picks the
         // span end and moves the whole block, and keeps it selected for further steps.
-        OwnTVButton("⤒", onClick = onMoveTop, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY)
+        OwnTVButton("⤒", onClick = onMoveTop, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY, selected = isInSpan)
         Spacer(Modifier.width(6.dp))
-        OwnTVButton("↑", onClick = onMoveUp, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY)
+        OwnTVButton("↑", onClick = onMoveUp, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY, selected = isInSpan)
         Spacer(Modifier.width(6.dp))
-        OwnTVButton("↓", onClick = onMoveDown, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY)
+        OwnTVButton("↓", onClick = onMoveDown, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY, selected = isInSpan)
         Spacer(Modifier.width(6.dp))
-        OwnTVButton("⤓", onClick = onMoveBottom, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY)
+        OwnTVButton("⤓", onClick = onMoveBottom, onLongClick = onMoveLongPress, style = OwnTVButtonStyle.SECONDARY, selected = isInSpan)
         // Live TV channels get a per-row Rename button; Movies/Series get bulk rename only (Phase 2).
         if (isLive) {
             Spacer(Modifier.width(6.dp))
@@ -507,12 +547,13 @@ private fun ItemRow(
                 onClick = { if (inRenameRange) onPickRenameEnd() else onRename() },
                 onLongClick = onRenameLongPress,
                 style = OwnTVButtonStyle.SECONDARY,
+                selected = isInSpan,
             )
         }
         Spacer(Modifier.width(6.dp))
         // Move to… a user's combined category (issue #87). Always available — Live and non-Live rows
         // alike can join a custom category.
-        OwnTVButton(stringResource(R.string.settings_customize_move_to), onClick = onMove, style = OwnTVButtonStyle.SECONDARY)
+        OwnTVButton(stringResource(R.string.settings_customize_move_to), onClick = onMove, style = OwnTVButtonStyle.SECONDARY, selected = isInSpan)
         Spacer(Modifier.width(6.dp))
         OwnTVButton(
             label = stringResource(if (row.hidden) R.string.common_show else R.string.common_hide),
@@ -521,6 +562,7 @@ private fun ItemRow(
             onClick = { if (inRangeMode) onPickRangeEnd() else onToggleHidden() },
             onLongClick = onHideLongPress,
             style = OwnTVButtonStyle.SECONDARY,
+            selected = isInSpan,
         )
     }
 }

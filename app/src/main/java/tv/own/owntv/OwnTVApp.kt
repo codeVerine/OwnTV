@@ -12,16 +12,20 @@ import coil3.request.allowRgb565
 import coil3.request.crossfade
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okio.Path.Companion.toOkioPath
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 import org.koin.core.logger.Level
+import tv.own.owntv.core.util.Perf
+import tv.own.owntv.core.di.coreModule
+import tv.own.owntv.core.di.databaseModule
+import tv.own.owntv.core.di.dataModule
 import tv.own.owntv.di.appModule
-import tv.own.owntv.di.databaseModule
-import tv.own.owntv.di.dataModule
 import tv.own.owntv.di.playerModule
+import tv.own.owntv.ui.theme.subtitleFontResource
 
 class OwnTVApp : Application(), SingletonImageLoader.Factory, androidx.work.Configuration.Provider {
 
@@ -74,10 +78,34 @@ class OwnTVApp : Application(), SingletonImageLoader.Factory, androidx.work.Conf
     override fun onCreate() {
         Perf.begin() // zero-point for the OwnTVPerf startup timeline (adb logcat -s OwnTVPerf)
         super.onCreate()
+        // Core has its own BuildConfig, which carries none of this: a library gets no version at all,
+        // and the edge key and the maintainer switch are the app's build inputs. Hand them over before
+        // the first reader — CrashRecorder, two lines down (see CoreBuildInfo).
+        tv.own.owntv.core.CoreBuildInfo.versionName = BuildConfig.VERSION_NAME
+        tv.own.owntv.core.CoreBuildInfo.versionCode = BuildConfig.VERSION_CODE
+        tv.own.owntv.core.CoreBuildInfo.edgeKey = BuildConfig.TMDB_EDGE_KEY
+        tv.own.owntv.core.CoreBuildInfo.devTools = BuildConfig.DEV_TOOLS
+        tv.own.owntv.core.CoreBuildInfo.debug = BuildConfig.DEBUG
+        tv.own.owntv.core.CoreBuildInfo.diagnosticBuild = BuildConfig.DIAGNOSTIC_BUILD
+        // This app's own releases, which the in-app updater asks about. Core defaults to exactly
+        // this value, so the line changes nothing today — it is here so the television names its own
+        // repository instead of relying on core to guess it, the same as the phone app does. A
+        // default that happens to be right for one app is a trap for every other one.
+        tv.own.owntv.core.CoreBuildInfo.releaseRepo = "ahXN00/OwnTV"
+        // First thing after the context exists: a crash from here on leaves a trace on disk that the
+        // user can export from Settings, instead of being lost with the process.
+        tv.own.owntv.core.util.CrashRecorder.diagnostics = { tv.own.owntv.player.LiveDiagnosticsLog.snapshot() }
+        tv.own.owntv.core.util.CrashRecorder.install(this)
+        // Core learns a panel's session limit while syncing; the engine is what acts on it. Registered
+        // before Koin so the very first source flow already reaches the player (see LiveSessionLimit).
+        tv.own.owntv.core.player.LiveSessionLimit.report = tv.own.owntv.player.LiveStreamQuirks::rememberSessionLimit
+        // Four of the five subtitle faces are this app's own res/font files, so the engine asks us for
+        // the id rather than owning the assets (see SubtitleFontAssets).
+        tv.own.owntv.player.SubtitleFontAssets.resourceOf = { it.subtitleFontResource }
         startKoin {
             androidLogger(if (BuildConfig.DEBUG) Level.ERROR else Level.NONE)
             androidContext(this@OwnTVApp)
-            modules(appModule, databaseModule, dataModule, playerModule)
+            modules(coreModule, appModule, databaseModule, dataModule, playerModule)
         }
         Perf.stamp("koin-started")
         // Detailed playback logging follows the setting for the WHOLE process. It used to be observed by
@@ -85,7 +113,7 @@ class OwnTVApp : Application(), SingletonImageLoader.Factory, androidx.work.Conf
         // until the user happened to open Live TV, and a fault during startup, a VOD open or an EPG sync
         // produced an empty report from a user who had deliberately turned logging on.
         appScope.launch {
-            val settings = GlobalContext.get().get<tv.own.owntv.features.settings.data.SettingsRepository>()
+            val settings = GlobalContext.get().get<tv.own.owntv.core.settings.SettingsRepository>()
             settings.detailedDiagnostics.collect { on ->
                 tv.own.owntv.player.LiveDiagnosticsLog.enabled =
                     on || BuildConfig.DEBUG || BuildConfig.DIAGNOSTIC_BUILD
@@ -127,9 +155,15 @@ class OwnTVApp : Application(), SingletonImageLoader.Factory, androidx.work.Conf
         // unusable. OkHttp then needs retryOnConnectionFailure to try the next resolved address (the TV's
         // browser already does this fallback). Derive one long-lived client so Coil keeps the app-wide
         // proxy, DNS, UA, TLS and connection-pool configuration while regaining alternate-route fallback.
+        // The shared client is also pinned to HTTP/1.1, because IPTV panels answer an HTTP/2 handshake
+        // with RST_STREAM(PROTOCOL_ERROR). Image CDNs are the opposite case: image.tmdb.org negotiates
+        // h2, and a poster grid opens dozens of requests to that one host at once. Over HTTP/1.1 those
+        // queue behind OkHttp's per-host connection limit; over h2 they multiplex on a single connection.
+        // Restore protocol negotiation for images only — the panel-facing client keeps its 1.1 pin.
         val imageHttpClient = GlobalContext.get().get<OkHttpClient>()
             .newBuilder()
             .retryOnConnectionFailure(true)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .build()
         return ImageLoader.Builder(context)
             .components { add(OkHttpNetworkFetcherFactory(callFactory = { imageHttpClient })) }

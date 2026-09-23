@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 import tv.own.owntv.core.subtitles.OpenSubtitlesAccountManager
 import tv.own.owntv.core.subtitles.OpenSubtitlesAuthStore
 import tv.own.owntv.core.subtitles.OpenSubtitlesClient
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 
 /** Backs the OpenSubtitles account screen (subtitle plan §5.3): active profile's session + sign-in/out. */
 class OpenSubtitlesViewModel(

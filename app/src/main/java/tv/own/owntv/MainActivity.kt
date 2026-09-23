@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import androidx.room.useWriterConnection
 import android.view.WindowManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,6 +41,7 @@ import org.koin.android.ext.android.get
 import org.koin.android.ext.android.inject
 import org.koin.androidx.compose.koinViewModel
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import tv.own.owntv.core.util.Perf
 import tv.own.owntv.core.launcher.LauncherDeepLink
 import tv.own.owntv.features.profiles.ProfileGate
 import tv.own.owntv.features.profiles.ProfileGateSessionViewModel
@@ -49,15 +51,15 @@ import tv.own.owntv.features.shell.OwnTVShell
 import tv.own.owntv.features.shell.ShellViewModel
 import tv.own.owntv.ui.theme.BlurredBackdrop
 import tv.own.owntv.ui.theme.BackdropLuminanceMap
-import tv.own.owntv.ui.theme.GlassConfig
+import tv.own.owntv.core.theme.GlassConfig
 import tv.own.owntv.ui.theme.GlassMotionState
 import tv.own.owntv.ui.theme.LocalBlurredBackdrop
 import tv.own.owntv.ui.theme.LocalGlass
 import tv.own.owntv.ui.theme.LocalGlassMotion
 import tv.own.owntv.ui.theme.LocalUiFontScaleFactor
 import tv.own.owntv.ui.theme.OwnTVTheme
-import tv.own.owntv.ui.theme.UiFontScale
-import tv.own.owntv.ui.theme.UiZoom
+import tv.own.owntv.core.theme.UiFontScale
+import tv.own.owntv.core.theme.UiZoom
 import tv.own.owntv.ui.theme.stackBlur
 import tv.own.owntv.ui.theme.supportsBackdropBlur
 import kotlin.math.abs
@@ -160,8 +162,14 @@ class MainActivity : ComponentActivity() {
     private fun probeDatabase(): String? {
         var error: String? = null
         val worker = Thread {
-            runCatching { get<tv.own.owntv.core.database.OwnTVDatabase>().openHelper.readableDatabase }
-                .onFailure { error = it.message ?: it.javaClass.simpleName }
+            // Core configures a SQLiteDriver (its plan Phase B), and `openHelper` throws outright
+            // once one is set. Opening a connection is what this probe was always really doing —
+            // forcing Room to run the migration chain now rather than inside the first query.
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    get<tv.own.owntv.core.database.OwnTVDatabase>().useWriterConnection { }
+                }
+            }.onFailure { error = it.message ?: it.javaClass.simpleName }
         }
         worker.start()
         worker.join(DB_PROBE_TIMEOUT_MS)
@@ -225,6 +233,7 @@ class MainActivity : ComponentActivity() {
             val bgImagePath by viewModel.bgImagePath.collectAsStateWithLifecycle()
             val glassConfig by viewModel.glassConfig.collectAsStateWithLifecycle()
             val avatarId by viewModel.avatarId.collectAsStateWithLifecycle()
+            val avatarPath by viewModel.avatarPath.collectAsStateWithLifecycle()
             val profileName by viewModel.profileName.collectAsStateWithLifecycle()
             val sourceSummary by viewModel.sourceSummary.collectAsStateWithLifecycle()
             val playlists by viewModel.playlists.collectAsStateWithLifecycle()
@@ -308,6 +317,8 @@ class MainActivity : ComponentActivity() {
                 animationLevel = animationLevel,
                 mainFontFamily = fontCustomization.mainFamily,
                 popupFontFamily = fontCustomization.popupFamily,
+                popupFontSizePercent = fontCustomization.popupFontSizePercent,
+                popupSizePercent = fontCustomization.popupSizePercent,
             ) {
                 val base = LocalDensity.current
                 // Glass is "always on" (Option B): panels go translucent whenever at least one surface is
@@ -328,7 +339,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(glassActive, effectiveGlass.depthEffects, animationLevel) {
                     glassMotion.setEnabled(
                         glassActive && effectiveGlass.depthEffects &&
-                            animationLevel == tv.own.owntv.ui.theme.AnimationLevel.FULL,
+                            animationLevel == tv.own.owntv.core.theme.AnimationLevel.FULL,
                     )
                 }
                 // Phase 4 — real backdrop blur. Load+blur the background once (cached) when glass is on,
@@ -425,6 +436,9 @@ class MainActivity : ComponentActivity() {
                                 onSetFontCustomization = viewModel::setFontCustomization,
                                 avatarId = avatarId,
                                 onSetAvatar = viewModel::setAvatar,
+                                avatarPath = avatarPath,
+                                onSetCustomAvatar = { file -> viewModel.setCustomAvatar(file) },
+                                onClearCustomAvatar = viewModel::clearCustomAvatar,
                                 profileName = profileName,
                                 sourceSummary = sourceSummary,
                                 playlists = playlists,

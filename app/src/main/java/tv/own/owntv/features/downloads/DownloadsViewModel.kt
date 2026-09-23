@@ -25,7 +25,7 @@ import tv.own.owntv.core.database.dao.SeriesDao
 import tv.own.owntv.core.database.entity.DownloadEntity
 import tv.own.owntv.core.download.DownloadManager
 import tv.own.owntv.core.model.MediaType
-import tv.own.owntv.features.settings.data.SettingsRepository
+import tv.own.owntv.core.settings.SettingsRepository
 import tv.own.owntv.player.OwnTVPlayer
 
 /** Phase 12 — lists the active profile's downloads and plays completed ones from local storage. */
@@ -88,9 +88,30 @@ class DownloadsViewModel(
     }
 
     /** Free/total space on the download volume — recomputed whenever the download list changes. */
-    val storage: StateFlow<tv.own.owntv.core.download.DownloadStorageInfo?> = downloads
-        .mapLatest { downloadManager.storageInfo() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /**
+     * Free and total space on the volume the downloads are written to.
+     *
+     * Keyed on the download **root** as well as on the list, and the root is the one that matters:
+     * keyed on the list alone, changing the folder left the bar showing the old volume's numbers
+     * until the app was restarted — and on a screen with no downloads yet, the list never changes at
+     * all, so it never refreshed. Found on the television the first time the folder was pointed at a
+     * USB stick.
+     */
+    val storage: StateFlow<tv.own.owntv.core.download.DownloadStorageInfo?> =
+        combine(downloads, settings.downloadRoot) { _, _ -> Unit }
+            .mapLatest { downloadManager.storageInfo() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Where downloads are written. Plan Z moved this preference out of Settings and onto the gear
+     * beside this screen's title — it is the one thing on the screen it is about.
+     */
+    val downloadRoot: StateFlow<String> = settings.downloadRoot
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    fun setDownloadRoot(path: String) {
+        viewModelScope.launch { settings.setDownloadRoot(path) }
+    }
 
     private val _lastPlayedId = MutableStateFlow<Long?>(null)
     val lastPlayedId: StateFlow<Long?> = _lastPlayedId.asStateFlow()

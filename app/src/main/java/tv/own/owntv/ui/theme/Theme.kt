@@ -9,6 +9,12 @@ import androidx.tv.material3.ColorScheme
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import androidx.tv.material3.lightColorScheme
+import tv.own.owntv.core.theme.AccentColor
+import tv.own.owntv.core.theme.AnimationLevel
+import tv.own.owntv.core.theme.AppFontFamily
+import tv.own.owntv.core.theme.PopupFontScale
+import tv.own.owntv.core.theme.PopupSizeScale
+import tv.own.owntv.core.theme.ThemeMode
 
 /**
  * Available OwnTV themes. Persisted via DataStore and selectable from Settings → Theme.
@@ -89,6 +95,8 @@ fun OwnTVTheme(
     animationLevel: AnimationLevel = AnimationLevel.FULL,
     mainFontFamily: AppFontFamily = AppFontFamily.SYSTEM_SANS,
     popupFontFamily: AppFontFamily = AppFontFamily.LORA,
+    popupFontSizePercent: Int = PopupFontScale.DEFAULT,
+    popupSizePercent: Int = PopupSizeScale.DEFAULT,
     content: @Composable () -> Unit,
 ) {
     val useDark = when (themeMode) {
@@ -111,6 +119,8 @@ fun OwnTVTheme(
         LocalAnimationLevel provides animationLevel,
         LocalMainFontFamily provides mainFontFamily.asComposeFamily(),
         LocalPopupFontFamily provides popupFontFamily.asComposeFamily(),
+        LocalPopupFontScaleFactor provides PopupFontScale.factor(popupFontSizePercent),
+        LocalPopupSizeScaleFactor provides PopupSizeScale.factor(popupSizePercent),
     ) {
         MaterialTheme(
             colorScheme = schemeFrom(colors),

@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 
 /**
@@ -63,6 +63,8 @@ fun NumberInputDialog(
     warnAbove: Int? = null,
     warningText: String? = null,
     suffix: String = "",
+    /** What the field holds. Defaults to the channel-skip wording this dialog was first written for. */
+    fieldLabel: String? = null,
     onSet: (Int) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
@@ -70,12 +72,23 @@ fun NumberInputDialog(
     val colors = OwnTVTheme.colors
     val fieldFocus = remember { FocusRequester() }
     val minusFocus = remember { FocusRequester() }
+    val plusFocus = remember { FocusRequester() }
     val keyboard: SoftwareKeyboardController? = LocalSoftwareKeyboardController.current
     var text by remember { mutableStateOf(value.toString()) }
 
     // Keep the field in sync with the incoming value when it changes from outside (e.g. − / + taps).
     LaunchedEffect(value) { text = value.toString() }
-    LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
+    // Land on a stepper rather than the field. Focusing a text field on a television puts the remote
+    // into edit mode and raises the on-screen keyboard, which then swallows the D-pad: the − / +
+    // buttons and Reset / Save all become hard to reach for the one job most people open this dialog
+    // to do, nudging a number by one. The field is still one D-pad press away for typing a big value.
+    //
+    // − is disabled at the minimum and + at the maximum, and a disabled button cannot take focus —
+    // asking it to would leave the dialog with no focus at all, which is the very complaint this
+    // change answers. So land on whichever stepper is live; at 0 of 0..max that is +.
+    LaunchedEffect(Unit) {
+        runCatching { (if (value > min) minusFocus else plusFocus).requestFocus() }
+    }
 
     fun commit(parsed: Int) {
         val clamped = parsed.coerceIn(min, max)
@@ -92,7 +105,7 @@ fun NumberInputDialog(
         onDismiss()
     }
 
-    tv.own.owntv.ui.theme.PopupFontTheme {
+    OwnTVPopup(onDismissRequest = onDismiss) {
         Box(Modifier.fillMaxSize().modalScrim().trapAllFocusExit().focusGroup(), contentAlignment = Alignment.Center) {
             Column(
                 modifier = Modifier.dialogPanel(width = 320.dp, corner = 16.dp, padding = 16.dp),
@@ -114,13 +127,13 @@ fun NumberInputDialog(
                             // Digits only; never let a non-numeric char into the field.
                             text = raw.filter { it.isDigit() }.take(7) // take(7) guards against paste bombs
                         },
-                        label = stringResource(R.string.common_items_per_skip),
+                        label = fieldLabel ?: stringResource(R.string.common_items_per_skip),
                         modifier = Modifier.width(130.dp),
                         focusRequester = fieldFocus,
                         placeholder = value.toString(),
                         keyboardType = KeyboardType.Number,
                     )
-                    StepBtn(stringResource(R.string.common_plus), enabled = value < max) {
+                    StepBtn(stringResource(R.string.common_plus), enabled = value < max, modifier = Modifier.focusRequester(plusFocus)) {
                         commit(value + step)
                     }
                 }

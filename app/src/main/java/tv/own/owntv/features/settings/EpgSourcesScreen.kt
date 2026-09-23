@@ -45,8 +45,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import tv.own.owntv.R
 import tv.own.owntv.core.epg.EpgSource
-import tv.own.owntv.features.settings.data.EpgAutoRefresh
+import tv.own.owntv.core.settings.GuideRetention
+import tv.own.owntv.ui.components.DayStepperDialog
+import tv.own.owntv.core.settings.EpgAutoRefresh
+import tv.own.owntv.core.settings.EpgRefresh
+import tv.own.owntv.core.settings.PlaylistRefresh
 import tv.own.owntv.ui.components.FocusableSurface
+import tv.own.owntv.ui.components.rememberDialogFocusRestore
 import tv.own.owntv.ui.components.OwnTVButton
 import tv.own.owntv.ui.components.OwnTVButtonStyle
 import tv.own.owntv.ui.components.dialogPanel
@@ -56,7 +61,7 @@ import tv.own.owntv.ui.components.OwnTVSpinner
 import tv.own.owntv.ui.components.OwnTVTextField
 import tv.own.owntv.ui.components.roundedPanel
 import tv.own.owntv.ui.components.trapAllFocusExit
-import tv.own.owntv.ui.theme.GlassSurface
+import tv.own.owntv.core.theme.GlassSurface
 import tv.own.owntv.ui.theme.OwnTVTheme
 import tv.own.owntv.core.sync.work.EpgSyncState
 import tv.own.owntv.core.util.classifySyncFailure
@@ -74,11 +79,16 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
     val autoRefreshMap by vm.autoRefresh.collectAsStateWithLifecycle()
     val useLogosIds by vm.useLogos.collectAsStateWithLifecycle()
     val deletingIds by vm.deletingIds.collectAsStateWithLifecycle()
+    // How far ahead the guide is stored. Global rather than per-source: it is one horizon that every
+    // feed is trimmed to, and the grid can only scroll as far as the shortest answer. Collected up
+    // here because the stepper dialog below sits outside the Column that shows the row.
+    val guideDays by vm.guideDaysToKeep.collectAsStateWithLifecycle()
     val colors = OwnTVTheme.colors
 
     var editing by remember { mutableStateOf<EpgSource?>(null) }
     var adding by remember { mutableStateOf(startOnAdd) }
     var confirmDelete by remember { mutableStateOf<EpgSource?>(null) }
+    var editingGuideDays by remember { mutableStateOf(false) }
     val addFocus = remember { FocusRequester() }
 
     // Per-row focus restore (mirrors ManageSourcesScreen / MoviesScreen): track the row the user is
@@ -128,7 +138,7 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
     if (adding || editing != null) {
         EpgSourceForm(
             initial = editing,
-            initialAutoRefresh = editing?.let { autoRefreshMap[it.id] } ?: EpgAutoRefresh.OFF,
+            initialAutoRefresh = editing?.let { autoRefreshMap[it.id] } ?: EpgRefresh.OFF,
             initialUseLogos = editing?.let { it.id in useLogosIds } ?: false,
             loadPlaylistOptions = { vm.playlistEpgOptions() },
             onSave = { name, url, ua, autoRefresh, useLogos ->
@@ -172,6 +182,28 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
             stringResource(R.string.settings_epg_sources_description),
             style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.widthIn(max = 700.dp),
         )
+        Spacer(Modifier.height(16.dp))
+
+        FocusableSurface(
+            onClick = { editingGuideDays = true },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            contentAlignment = Alignment.CenterStart,
+            surface = GlassSurface.CARDS,
+        ) { _ ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.settings_epg_guide_days),
+                    style = MaterialTheme.typography.bodyLarge, color = colors.onSurface,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    pluralStringResource(R.plurals.settings_epg_guide_days_value, guideDays, guideDays),
+                    style = MaterialTheme.typography.bodyLarge, color = colors.primary,
+                )
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
 
         if (sources.isEmpty()) {
@@ -185,7 +217,7 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
                         .collectAsStateWithLifecycle(EpgSyncState.Idle)
                     EpgRow(
                         source = source,
-                        autoRefresh = autoRefreshMap[source.id] ?: EpgAutoRefresh.OFF,
+                        autoRefresh = autoRefreshMap[source.id] ?: EpgRefresh.OFF,
                         counts = { vm.counts(source.id) },
                         syncState = syncState,
                         deleting = source.id in deletingIds,
@@ -205,6 +237,23 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
         }
     }
 
+    if (editingGuideDays) {
+        DayStepperDialog(
+            title = stringResource(R.string.settings_epg_guide_days),
+            hint = stringResource(
+                R.string.settings_epg_guide_days_hint,
+                GuideRetention.MIN_DAYS,
+                GuideRetention.MAX_DAYS,
+            ),
+            initialDays = guideDays,
+            minDays = GuideRetention.MIN_DAYS,
+            maxDays = GuideRetention.MAX_DAYS,
+            label = { days -> pluralStringResource(R.plurals.settings_epg_guide_days_value, days, days) },
+            onConfirm = { vm.setGuideDaysToKeep(it); editingGuideDays = false },
+            onDismiss = { editingGuideDays = false },
+        )
+    }
+
     confirmDelete?.let { s ->
         ConfirmDialog(
             title = stringResource(R.string.settings_epg_sources_delete_title, s.name),
@@ -214,6 +263,14 @@ fun EpgSourcesScreen(onBack: () -> Unit, modifier: Modifier = Modifier, startOnA
         )
     }
 }
+
+@Composable
+private fun epgRefreshLabel(refresh: EpgRefresh): String =
+    if (refresh.mode == EpgAutoRefresh.MANUAL) {
+        pluralStringResource(R.plurals.settings_sources_refresh_days, refresh.manualDays, refresh.manualDays)
+    } else {
+        epgAutoRefreshLabel(refresh.mode)
+    }
 
 @Composable
 private fun epgAutoRefreshLabel(mode: EpgAutoRefresh): String = stringResource(
@@ -226,13 +283,14 @@ private fun epgAutoRefreshLabel(mode: EpgAutoRefresh): String = stringResource(
         EpgAutoRefresh.HOURS_12 -> R.string.settings_epg_refresh_12h
         EpgAutoRefresh.HOURS_24 -> R.string.settings_epg_refresh_24h
         EpgAutoRefresh.HOURS_48 -> R.string.settings_epg_refresh_48h
+        EpgAutoRefresh.MANUAL -> R.string.settings_sources_refresh_manual
     },
 )
 
 @Composable
 private fun EpgRow(
     source: EpgSource,
-    autoRefresh: EpgAutoRefresh,
+    autoRefresh: EpgRefresh,
     counts: suspend () -> Triple<Int, Int, Int>,
     syncState: EpgSyncState,
     deleting: Boolean,
@@ -283,10 +341,10 @@ private fun EpgRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (autoRefresh != EpgAutoRefresh.OFF) {
+                if (autoRefresh.mode != EpgAutoRefresh.OFF) {
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        stringResource(R.string.settings_sources_auto_refresh, epgAutoRefreshLabel(autoRefresh)),
+                        stringResource(R.string.settings_sources_auto_refresh, epgRefreshLabel(autoRefresh)),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onPrimaryContainer,
                         modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(colors.surfaceContainerHighest).padding(horizontal = 8.dp, vertical = 2.dp),
@@ -295,7 +353,15 @@ private fun EpgRow(
                     )
                 }
             }
-            Text(source.url, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // A Stalker portal's own guide has no address to show — it comes through the portal
+            // session rather than being downloaded — so the row says what it is instead of printing
+            // the internal marker that stands in for its URL.
+            val subtitle = if (tv.own.owntv.core.repository.EpgRepository.stalkerSourceIdOf(source.url) != null) {
+                stringResource(R.string.settings_epg_sources_portal_guide)
+            } else {
+                source.url
+            }
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             val catchupNote = count?.third?.takeIf { it > 0 }?.let {
                 pluralStringResource(R.plurals.settings_epg_sources_catchup, it, it)
@@ -356,10 +422,10 @@ private fun EpgRow(
 @Composable
 internal fun EpgSourceForm(
     initial: EpgSource?,
-    initialAutoRefresh: EpgAutoRefresh,
+    initialAutoRefresh: EpgRefresh,
     initialUseLogos: Boolean,
     loadPlaylistOptions: suspend () -> List<EpgSourcesViewModel.PlaylistEpg>,
-    onSave: (name: String, url: String, userAgent: String?, autoRefresh: EpgAutoRefresh, useLogos: Boolean) -> Unit,
+    onSave: (name: String, url: String, userAgent: String?, autoRefresh: EpgRefresh, useLogos: Boolean) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -371,13 +437,20 @@ internal fun EpgSourceForm(
     var useLogos by remember { mutableStateOf(initialUseLogos) }
     var showPlaylistPicker by remember { mutableStateOf(false) }
     var showAutoRefreshPicker by remember { mutableStateOf(false) }
+    var showManualDays by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(60); runCatching { firstFocus.requestFocus() } }
     BackHandler { onCancel() }
 
+    // Both pickers here open from controls further down the form, so closing one used to drop focus
+    // back on the Name field at the top and scroll the form with it.
+    val scrollState = rememberScrollState()
+    val dialogFocus = rememberDialogFocusRestore(showPlaylistPicker || showAutoRefreshPicker, scrollState)
+    val autoRefreshRowFocus = remember { FocusRequester() }
+
     Column(
         modifier = modifier.fillMaxSize().roundedPanel()
-            .verticalScroll(rememberScrollState()) // scroll so lower fields/buttons stay reachable on small screens / large zoom
+            .verticalScroll(scrollState) // scroll so lower fields/buttons stay reachable on small screens / large zoom
             .padding(horizontal = 40.dp, vertical = 28.dp),
     ) {
         Text(stringResource(if (initial == null) R.string.settings_epg_sources_add else R.string.settings_epg_sources_edit), style = MaterialTheme.typography.headlineLarge, color = colors.onSurface)
@@ -387,13 +460,16 @@ internal fun EpgSourceForm(
         val fillButtonFocus = remember { FocusRequester() }
         OwnTVTextField(url, { url = it }, label = stringResource(R.string.settings_epg_sources_url), placeholder = stringResource(R.string.settings_epg_sources_url_hint), modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp).focusProperties { down = fillButtonFocus })
         Spacer(Modifier.height(8.dp))
-        OwnTVButton(stringResource(R.string.settings_epg_sources_fill_playlist), onClick = { showPlaylistPicker = true }, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAYLIST, modifier = Modifier.focusRequester(fillButtonFocus))
+        OwnTVButton(stringResource(R.string.settings_epg_sources_fill_playlist), onClick = { dialogFocus.value = fillButtonFocus; showPlaylistPicker = true }, style = OwnTVButtonStyle.SECONDARY, icon = OwnTVIcon.PLAYLIST, modifier = Modifier.focusRequester(fillButtonFocus))
         Spacer(Modifier.height(14.dp))
         OwnTVTextField(ua, { ua = it }, label = stringResource(R.string.settings_epg_sources_user_agent), placeholder = stringResource(R.string.settings_epg_sources_user_agent_hint), modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp))
 
         Spacer(Modifier.height(14.dp))
         // Auto-refresh dropdown — same Off/Startup/staleness-threshold semantics as playlist sources.
-        EpgAutoRefreshRow(selected = autoRefresh) { showAutoRefreshPicker = true }
+        EpgAutoRefreshRow(selected = autoRefresh, modifier = Modifier.focusRequester(autoRefreshRowFocus)) {
+            dialogFocus.value = autoRefreshRowFocus
+            showAutoRefreshPicker = true
+        }
 
         Spacer(Modifier.height(10.dp))
         // Per-feed logo override: this guide's <icon src> replaces the playlist's channel logos.
@@ -409,7 +485,17 @@ internal fun EpgSourceForm(
     if (showPlaylistPicker) {
         PlaylistEpgPicker(
             load = loadPlaylistOptions,
-            onPick = { opt -> if (name.isBlank()) name = opt.name; url = opt.url; showPlaylistPicker = false },
+            onPick = { opt ->
+                showPlaylistPicker = false
+                if (tv.own.owntv.core.repository.EpgRepository.stalkerSourceIdOf(opt.url) != null) {
+                    // Nothing to fill in: a portal guide is fetched through the playlist's own session,
+                    // so showing the user an internal marker in a URL box would be worse than useless.
+                    onSave(opt.name, opt.url, ua, autoRefresh, useLogos)
+                } else {
+                    if (name.isBlank()) name = opt.name
+                    url = opt.url
+                }
+            },
             onDismiss = { showPlaylistPicker = false },
         )
     }
@@ -417,12 +503,26 @@ internal fun EpgSourceForm(
         PickerDialog(
             title = stringResource(R.string.settings_epg_sources_auto_refresh_title),
             options = EpgAutoRefresh.entries.map { it.name to epgAutoRefreshLabel(it) },
-            selected = autoRefresh.name,
+            selected = autoRefresh.mode.name,
             onSelect = { value ->
-                autoRefresh = runCatching { EpgAutoRefresh.valueOf(value) }.getOrDefault(EpgAutoRefresh.OFF)
+                val mode = runCatching { EpgAutoRefresh.valueOf(value) }.getOrDefault(EpgAutoRefresh.OFF)
                 showAutoRefreshPicker = false
+                // "Every N days" needs the N, so it opens the same stepper the playlist picker uses.
+                if (mode == EpgAutoRefresh.MANUAL) showManualDays = true else autoRefresh = EpgRefresh(mode)
             },
             onDismiss = { showAutoRefreshPicker = false },
+        )
+    }
+    if (showManualDays) {
+        DayStepperDialog(
+            title = stringResource(R.string.settings_sources_refresh_days_title),
+            hint = stringResource(R.string.settings_sources_refresh_days_hint),
+            initialDays = autoRefresh.manualDays,
+            minDays = PlaylistRefresh.MIN_MANUAL_DAYS,
+            maxDays = PlaylistRefresh.MAX_MANUAL_DAYS,
+            label = { days -> pluralStringResource(R.plurals.settings_sources_refresh_days, days, days) },
+            onConfirm = { autoRefresh = EpgRefresh(EpgAutoRefresh.MANUAL, it); showManualDays = false },
+            onDismiss = { showManualDays = false },
         )
     }
 }
@@ -454,11 +554,11 @@ private fun EpgUseLogosRow(enabled: Boolean, onClick: () -> Unit) {
 
 /** A focusable settings row showing the current EPG auto-refresh selection; opens a picker on click. */
 @Composable
-private fun EpgAutoRefreshRow(selected: EpgAutoRefresh, onClick: () -> Unit) {
+private fun EpgAutoRefreshRow(selected: EpgRefresh, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = OwnTVTheme.colors
     FocusableSurface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+        modifier = modifier.fillMaxWidth().widthIn(max = 680.dp),
         shape = RoundedCornerShape(14.dp),
         surface = GlassSurface.CARDS,
         contentAlignment = Alignment.CenterStart,
@@ -473,7 +573,7 @@ private fun EpgAutoRefreshRow(selected: EpgAutoRefresh, onClick: () -> Unit) {
                 )
             }
             Text(
-                epgAutoRefreshLabel(selected),
+                epgRefreshLabel(selected),
                 style = MaterialTheme.typography.titleMedium,
                 color = colors.primary,
             )
@@ -487,6 +587,7 @@ private fun PlaylistEpgPicker(
     onPick: (EpgSourcesViewModel.PlaylistEpg) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    tv.own.owntv.ui.components.OwnTVPopup(onDismissRequest = onDismiss) {
     val colors = OwnTVTheme.colors
     val options by produceState<List<EpgSourcesViewModel.PlaylistEpg>?>(initialValue = null) { value = runCatching { load() }.getOrDefault(emptyList()) }
     val firstFocus = remember { FocusRequester() }
@@ -512,7 +613,13 @@ private fun PlaylistEpgPicker(
                         ) { _ ->
                             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
                                 Text(opt.name, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
-                                Text(opt.url, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                // A portal guide has no address to show — say what it is instead.
+                                val subtitle = if (tv.own.owntv.core.repository.EpgRepository.stalkerSourceIdOf(opt.url) != null) {
+                                    stringResource(R.string.settings_epg_sources_portal_guide)
+                                } else {
+                                    opt.url
+                                }
+                                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -523,5 +630,6 @@ private fun PlaylistEpgPicker(
                 OwnTVButton(stringResource(R.string.settings_close), onClick = onDismiss, style = OwnTVButtonStyle.SECONDARY)
             }
         }
+    }
     }
 }

@@ -134,7 +134,7 @@ fun DnsSettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
         GroupLabel(stringResource(R.string.settings_dns_custom))
         Row2(
-            icon = OwnTVIcon.SEARCH,
+            icon = OwnTVIcon.DNS,
             title = stringResource(R.string.settings_dns_use_custom),
             desc = stringResource(R.string.settings_dns_toggle_description),
             chip = stringResource(if (effectiveEnabled) R.string.common_on else R.string.common_off),

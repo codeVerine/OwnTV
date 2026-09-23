@@ -240,14 +240,18 @@ fun OpenSubtitlesAccountScreen(onBack: () -> Unit, modifier: Modifier = Modifier
                     ).joinToString(stringResource(R.string.player_subtitles_tags_separator))
                         .ifBlank { stringResource(R.string.player_subtitles_free_account) },
                     downloadsLabel = stringResource(R.string.player_subtitles_downloads),
-                    downloadsValue = if (session.remainingDownloads != null && session.allowedDownloads != null) {
-                        pluralStringResource(
-                            R.plurals.player_subtitles_remaining_short,
-                            session.remainingDownloads,
-                            session.remainingDownloads,
-                            session.allowedDownloads,
-                        )
-                    } else stringResource(R.string.player_subtitles_language_not_set),
+                    downloadsValue = run {
+                        val remaining = session.remainingDownloads
+                        val allowed = session.allowedDownloads
+                        if (remaining != null && allowed != null) {
+                            pluralStringResource(
+                                R.plurals.player_subtitles_remaining_short,
+                                remaining,
+                                remaining,
+                                allowed,
+                            )
+                        } else stringResource(R.string.player_subtitles_language_not_set)
+                    },
                     resetsLabel = stringResource(R.string.player_subtitles_resets),
                     resetsValue = openSubtitlesResetLabel(session.resetTime),
                     connectionLabel = stringResource(R.string.settings_metadata_connection),
@@ -404,7 +408,8 @@ fun OpenSubtitlesAccountScreen(onBack: () -> Unit, modifier: Modifier = Modifier
                 vm.signIn(signInUser.trim(), signInPass, signInStay)
                 signInPass = ""
             },
-            onDismiss = { showSignIn = false; signInUser = ""; signInPass = "" },
+            // Back returns to the local/remote chooser rather than closing both levels.
+            onDismiss = { showSignIn = false; signInPass = ""; showSetupChooser = true },
         )
     }
 
